@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(openspec instructions *)",
+      "Bash(openspec status *)",
+      "Bash(openspec list *)",
+      "Bash(pnpm *)",
+      "Bash(curl -s http://localhost:3777/health)",
+      "Bash(node src/server.js)",
+      "Bash(node_modules/.bin/wxt dev *)",
+      "Bash(node_modules/.bin/wxt build *)",
+      "Bash(curl -s http://localhost:3000)",
+      "Bash(../node_modules/.bin/wxt dev *)",
+      "Bash(kill 93168)",
+      "Bash(node_modules/.bin/wxt prepare *)",
+      "Bash(wxt build *)",
+      "Bash(node scripts/to-markdown.js README.md package.json)"
+    ]
+  }
+}

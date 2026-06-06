@@ -1,0 +1,183 @@
+## 1. 项目设置（使用 WXT 框架）
+
+- [x] 1.1 使用 WXT 初始化扩展项目（`pnpm wxt init browser-image-recorder`）
+- [x] 1.2 创建根 `package.json` 配置 pnpm 工作区
+- [x] 1.3 创建 `pnpm-workspace.yaml` 用于 monorepo 设置（extension + proxy）
+- [x] 1.4 配置 `wxt.config.ts`（设置扩展名称、版本、权限）
+- [x] 1.5 创建 proxy 目录结构（独立于 WXT 扩展项目）
+- [x] 1.6 添加 `.gitignore`（忽略 node_modules、.wxt、.output、images 等）
+
+## 2. 本地代理服务 (Local Proxy Service)
+
+- [x] 2.1 初始化 `proxy/package.json` 配置依赖（express、cors）
+- [x] 2.2 配置 Express body 解析限制（limit: '50mb'）以处理大图片
+- [x] 2.3 实现图片哈希工具（SHA-256，截断为 16 个字符）
+- [x] 2.4 实现 `POST /save-image` 端点（接收 JSON：url、mimeType、data）
+- [x] 2.5 实现两种 base64 格式解析（data URL 和纯 base64）
+- [x] 2.6 使用 `Buffer.from()` 转换 base64 为二进制数据
+- [x] 2.7 实现文件名生成（timestamp + basename + ext）
+- [x] 2.8 实现标准 MIME 类型到扩展名映射表：
+  - [x] 2.8.1 JPEG: `image/jpeg` → `.jpg`
+  - [x] 2.8.2 PNG: `image/png` → `.png`
+  - [x] 2.8.3 GIF: `image/gif` → `.gif`
+  - [x] 2.8.4 WebP: `image/webp` → `.webp`
+  - [x] 2.8.5 BMP: `image/bmp` → `.bmp`
+  - [x] 2.8.6 TIFF: `image/tiff` → `.tiff`
+  - [x] 2.8.7 SVG: `image/svg+xml` → `.svg`（特殊处理）
+  - [x] 2.8.8 ICO: `image/x-icon` → `.ico`
+- [x] 2.9 实现 `GET /images` 端点（列出所有存储的图片）
+- [x] 2.10 实现 `GET /images/:hash` 端点（检索特定图片）
+- [x] 2.11 实现 `DELETE /images/:hash` 端点（删除图片）
+- [x] 2.12 实现 `GET /health` 端点（健康检查）：
+  - [x] 2.12.1 返回 200 OK 和 `{"status": "ok"}` 响应
+  - [x] 2.12.2 可选返回额外信息（uptime、storagePath、totalImages）
+  - [x] 2.12.3 确保响应时间 < 100ms（快速响应）
+  - [x] 2.12.4 处理异常情况返回 500 状态码
+- [x] 2.13 实现默认存储路径 `~/Downloads/chrome-history`
+- [x] 2.14 实现 `POST /config/storage-path` 端点（接收和验证路径）
+- [x] 2.15 实现 `GET /config/storage-path` 端点（返回当前配置）
+- [x] 2.16 实现路径验证和创建逻辑（自动创建目录）
+- [x] 2.17 实现跨平台路径支持（macOS/Linux `~`，Windows 盘符）
+- [x] 2.18 实现路径配置持久化（配置文件或环境变量）
+- [x] 2.19 添加可配置的端口支持（默认：3777）
+- [x] 2.20 添加 CORS 配置用于扩展通信
+- [x] 2.21 使用 curl 命令测试代理服务
+
+## 3. Chrome 扩展（使用 WXT 框架）
+
+- [x] 3.1 在 WXT 项目中创建入口点结构：
+  - [x] 3.1.1 `entrypoints/background.ts`（Service Worker）
+  - [x] 3.1.2 `entrypoints/devtools/index.ts`（DevTools 入口）
+  - [x] 3.1.3 `entrypoints/devtools/panel/index.ts`（DevTools 面板）
+  - [x] 3.1.4 `entrypoints/devtools/panel/App.tsx`（面板主组件）
+- [x] 3.2 配置扩展权限（在 `wxt.config.ts` 中添加权限）
+- [x] 3.3 创建扩展图标（使用 WXT 的 public/ 目录）
+- [x] 3.4 在 DevTools 入口中注册面板（使用 WXT API）
+- [x] 3.5 实现捕获开关功能（默认关闭）：
+  - [x] 3.5.1 DevTools 面板打开时开关默认为禁用状态
+  - [x] 3.5.2 用户需手动点击"启用捕获"按钮开始捕获
+  - [x] 3.5.3 刷新面板后开关保持关闭状态
+  - [x] 3.5.4 实现开关按钮 UI（切换按钮样式）
+- [x] 3.6 在面板顶部实现服务状态指示器（绿点/红点）：
+  - [x] 3.5.1 创建状态圆点 UI 元素（CSS 样式：绿色/红色圆点）
+  - [x] 3.5.2 实现初始状态检查（面板打开时立即检查）
+  - [x] 3.5.3 实现定期状态检查（每 5 秒调用 `/health` 端点）
+  - [x] 3.5.4 根据响应更新圆点颜色（在线→绿色，离线→红色）
+  - [x] 3.5.5 可选添加状态文字提示（"Service offline"/"Service connected"）
+- [x] 3.6 实现 DevTools Network 监听器（在 panel/index.ts）
+- [x] 3.6 实现图片类型判断（检查响应头 Content-Type）
+- [x] 3.7 使用 `request.getContent()` 获取图片内容
+- [x] 3.8 实现 base64 数据处理（处理 encoding 参数）
+- [x] 3.9 从响应头提取 MIME 类型
+- [x] 3.10 实现主流图片格式识别和分类：
+  - [x] 3.10.1 JPEG/JPG (`image/jpeg`)
+  - [x] 3.10.2 PNG (`image/png`)
+  - [x] 3.10.3 WebP (`image/webp`)
+  - [x] 3.10.4 GIF (`image/gif`)
+  - [x] 3.10.5 BMP (`image/bmp`)
+  - [x] 3.10.6 TIFF (`image/tiff`)
+- [x] 3.11 在 background.ts 中处理消息传递和代理通信
+- [x] 3.12 实现后台与 DevTools 面板的通信（使用 WXT 的 messaging API）
+- [x] 3.13 实现多标签页状态管理：
+  - [x] 3.13.1 实现 `Map<tabId, CaptureState>` 状态存储结构
+  - [x] 3.13.2 定义 CaptureState 数据结构（isEnabled、capturedImages、captureCount等）
+  - [x] 3.13.3 监听 `chrome.tabs.onRemoved` 事件清理状态
+  - [x] 3.13.4 监听 `chrome.tabs.onReplaced` 事件处理刷新
+  - [x] 3.13.5 实现标签页关闭/刷新时的状态清理逻辑
+  - [x] 3.13.6 实现面板仅显示当前标签页的捕获列表
+  - [x] 3.13.7 实现全局统计信息汇总（所有标签页）
+- [x] 3.14 实现 HTTP POST 发送图片到本地代理
+- [x] 3.15 实现 SVG 图片特殊处理：
+  - [x] 3.15.1 检测 `Content-Type: image/svg+xml`
+  - [x] 3.15.2 标记为"已跳过（SVG）"，不调用 getContent()
+  - [x] 3.15.3 不发送到代理服务
+  - [x] 3.15.4 在统计中增加"跳过的 SVG 数量"
+- [x] 3.16 添加代理连接失败的错误处理
+- [x] 3.17 实现大图片处理和警告机制
+- [x] 3.18 在面板中实现图片类型过滤器 UI：
+  - [x] 3.18.1 提供格式选择框（勾选支持的格式）
+  - [x] 3.18.2 默认勾选主流格式（JPEG、PNG、WebP）
+  - [x] 3.18.3 可选勾选次要格式（GIF、BMP、TIFF）
+  - [x] 3.18.4 显示 SVG 但默认不勾选（标注为不支持）
+- [x] 3.19 在面板中实现存储路径配置UI（输入框和保存按钮）
+- [x] 3.20 实现默认路径显示（`~/Downloads/chrome-history`）
+- [x] 3.21 实现路径输入和验证功能
+- [x] 3.22 使用 Chrome Storage API 持久化路径配置
+- [x] 3.19 实现配置变更时同步到本地代理（调用 `/config/storage-path` 端点）
+- [x] 3.20 在面板中实现实时捕获列表显示：
+  - [x] 3.20.1 显示字段：文件名、URL、大小、MIME类型、时间
+  - [x] 3.20.2 按捕获时间降序排序
+  - [x] 3.20.3 最多显示最近 100 张图片
+  - [x] 3.20.4 达到100张时显示黄色警告条
+- [x] 3.21 在面板中实现统计信息显示：
+  - [x] 3.21.1 当前标签页统计（捕获数、跳过数、失败数、总大小）
+  - [x] 3.21.2 全局统计（所有标签页汇总）
+  - [x] 3.21.3 增加"跳过的 SVG 数量"统计项
+- [x] 3.22 在面板中实现配置选项（代理端点、过滤规则）
+- [x] 3.23 在面板中实现开关切换功能
+- [x] 3.19 实现最小图片尺寸过滤器
+- [x] 3.20 实现域名白名单功能
+- [x] 3.21 实现图片类型过滤器
+- [x] 3.22 实现请求队列化或并发限制
+- [x] 3.23 处理多标签页 DevTools 连接管理
+- [x] 3.24 处理 DevTools 关闭后的状态管理
+
+## 4. 集成与测试（使用 WXT 开发模式）
+
+- [x] 4.1 启动 WXT 开发模式（`pnpm wxt dev`）并测试热重载
+- [x] 4.2 测试服务状态指示器功能：
+  - [x] 4.2.1 测试初始状态显示（绿点表示在线）
+  - [x] 4.2.2 测试服务离线时显示红点
+  - [x] 4.2.3 测试状态自动恢复（离线→在线）
+  - [x] 4.2.4 测试定期状态检查间隔（每 5 秒）
+  - [x] 4.2.5 测试状态文字提示显示（可选）
+- [x] 4.3 测试健康检查端点 `/health`：
+  - [x] 4.3.1 验证返回 200 OK 和正确 JSON 格式
+  - [x] 4.3.2 验证响应时间 < 100ms
+  - [x] 4.3.3 测试异常情况返回 500 状态码
+- [x] 4.4 测试默认存储路径设置（`~/Downloads/chrome-history`）
+- [ ] 4.3 测试 DevTools 面板路径配置UI（输入、验证、保存）
+- [ ] 4.4 测试路径配置持久化（Chrome Storage API）
+- [ ] 4.5 测试路径配置同步到代理服务（调用配置端点）
+- [ ] 4.6 测试跨平台路径格式支持
+- [ ] 4.7 测试自动创建新存储目录
+- [ ] 4.8 测试 DevTools Network API 图片拦截流程
+- [ ] 4.9 测试 Content-Type 图片类型判断
+- [ ] 4.10 测试 request.getContent() 和 encoding 处理
+- [ ] 4.11 测试 base64 数据格式解析（data URL 和纯 base64）
+- [ ] 4.12 测试动态加载图片捕获（AJAX、懒加载）
+- [ ] 4.13 测试 CSS 背景图片捕获
+- [ ] 4.14 测试大尺寸图片处理（超过 10MB）
+- [ ] 4.15 测试重复检测（同一图片保存两次）
+- [ ] 4.16 通过代理 API 测试图片检索
+- [ ] 4.17 测试 DevTools 面板开关切换功能
+- [ ] 4.18 测试多标签页 DevTools 连接管理
+- [ ] 4.19 测试各种图片格式（按优先级测试）：
+  - [ ] 4.19.1 主流格式：JPEG (`image/jpeg`)
+  - [ ] 4.19.2 主流格式：PNG (`image/png`)
+  - [ ] 4.19.3 主流格式：WebP (`image/webp`)
+  - [ ] 4.19.4 次要格式：GIF (`image/gif`)
+  - [ ] 4.19.5 次要格式：BMP (`image/bmp`)
+  - [ ] 4.19.6 次要格式：TIFF (`image/tiff`)
+- [ ] 4.20 测试 MIME 类型到扩展名映射：
+  - [ ] 4.20.1 验证 JPEG 保存为 `.jpg` 文件
+  - [ ] 4.20.2 验证 PNG 保存为 `.png` 文件
+  - [ ] 4.20.3 验证 WebP 保存为 `.webp` 文件
+  - [ ] 4.20.4 验证 GIF 保存为 `.gif` 文件
+- [ ] 4.21 测试图片类型过滤器功能：
+  - [ ] 4.21.1 测试仅勾选 JPEG 格式
+  - [ ] 4.21.2 测试仅勾选 PNG 格式
+  - [ ] 4.21.3 测试勾选多个格式组合
+- [ ] 4.22 测试图片过滤规则（尺寸、域名）
+- [ ] 4.21 测试并发请求队列化和限制
+- [ ] 4.22 测试 DevTools 关闭后的状态保持
+
+## 5. 构建与发布（使用 WXT）
+
+- [x] 5.1 构建 Chrome 扩展生产版本（`pnpm wxt build -b chrome`）
+- [x] 5.2 测试构建后的扩展在 Chrome 中加载
+- [x] 5.3 验证 manifest.json 自动生成正确
+- [x] 5.4 创建 README 包含 WXT 开发说明
+- [x] 5.5 添加代理 API 文档
+- [x] 5.6 添加扩展安装和开发说明（WXT 流程）
+- [x] 5.7 添加使用示例和截图

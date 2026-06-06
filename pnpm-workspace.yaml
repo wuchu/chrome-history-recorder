@@ -1,0 +1,6 @@
+packages:
+  - 'extension'
+  - 'proxy'
+allowBuilds:
+  esbuild: false
+  spawn-sync: false
