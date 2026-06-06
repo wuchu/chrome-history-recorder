@@ -1,6 +1,7 @@
 packages:
   - 'extension'
   - 'proxy'
+  - 'ai-classify'
 allowBuilds:
   esbuild: false
   spawn-sync: false

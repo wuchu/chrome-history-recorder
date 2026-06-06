@@ -10,7 +10,7 @@ const app = express();
 // Configuration
 const PORT = process.env.PORT || 3777;
 const DEFAULT_STORAGE_PATH = path.join(os.homedir(), 'Downloads', 'chrome-history');
-const MAX_BODY_SIZE = '50mb';
+const MAX_BODY_SIZE = '100mb'; // Increased to support video files
 
 // Current storage path (can be configured)
 let currentStoragePath = DEFAULT_STORAGE_PATH;
@@ -36,6 +36,7 @@ function generateHash(buffer) {
  */
 function getExtensionFromMimeType(mimeType) {
   const mimeToExt = {
+    // Image types
     'image/jpeg': '.jpg',
     'image/png': '.png',
     'image/gif': '.gif',
@@ -44,7 +45,14 @@ function getExtensionFromMimeType(mimeType) {
     'image/tiff': '.tiff',
     'image/svg+xml': '.svg',
     'image/x-icon': '.ico',
-    'image/vnd.microsoft.icon': '.ico'
+    'image/vnd.microsoft.icon': '.ico',
+    // Video types
+    'video/mp4': '.mp4',
+    'video/webm': '.webm',
+    'video/quicktime': '.mov',
+    'video/x-msvideo': '.avi',
+    'video/ogg': '.ogv',
+    'video/x-matroska': '.mkv'
   };
   return mimeToExt[mimeType] || '.bin';
 }
@@ -336,30 +344,19 @@ app.delete('/images/:hash', (req, res) => {
  */
 app.get('/health', (req, res) => {
   try {
-    // Get basic stats
-    const totalImages = (() => {
-      let count = 0;
-      const walkDir = (dir) => {
-        const files = fs.readdirSync(dir);
-        for (const file of files) {
-          const filePath = path.join(dir, file);
-          const stat = fs.statSync(filePath);
-          if (stat.isDirectory()) {
-            walkDir(filePath);
-          } else if (stat.isFile()) {
-            count++;
-          }
-        }
+    // Get detailed stats by media type
+    const getMediaStats = () => {
+      const stats = {
+        totalImages: 0,
+        totalVideos: 0,
+        totalImageSize: 0,
+        totalVideoSize: 0
       };
-      if (fs.existsSync(currentStoragePath)) {
-        walkDir(currentStoragePath);
-      }
-      return count;
-    })();
 
-    const totalSize = (() => {
-      let size = 0;
+      const videoExtensions = ['.mp4', '.webm', '.mov', '.avi', '.ogv', '.mkv'];
+
       const walkDir = (dir) => {
+        if (!fs.existsSync(dir)) return;
         const files = fs.readdirSync(dir);
         for (const file of files) {
           const filePath = path.join(dir, file);
@@ -367,22 +364,33 @@ app.get('/health', (req, res) => {
           if (stat.isDirectory()) {
             walkDir(filePath);
           } else if (stat.isFile()) {
-            size += stat.size;
+            const ext = path.extname(file).toLowerCase();
+            if (videoExtensions.includes(ext)) {
+              stats.totalVideos++;
+              stats.totalVideoSize += stat.size;
+            } else {
+              stats.totalImages++;
+              stats.totalImageSize += stat.size;
+            }
           }
         }
       };
-      if (fs.existsSync(currentStoragePath)) {
-        walkDir(currentStoragePath);
-      }
-      return size;
-    })();
+
+      walkDir(currentStoragePath);
+      return stats;
+    };
+
+    const mediaStats = getMediaStats();
 
     res.json({
       status: 'ok',
       uptime: Math.floor(process.uptime()),
       storagePath: currentStoragePath,
-      totalImages: totalImages,
-      totalSize: totalSize
+      totalImages: mediaStats.totalImages,
+      totalVideos: mediaStats.totalVideos,
+      totalImageSize: mediaStats.totalImageSize,
+      totalVideoSize: mediaStats.totalVideoSize,
+      totalSize: mediaStats.totalImageSize + mediaStats.totalVideoSize
     });
   } catch (error) {
     res.status(500).json({ status: 'error', error: error.message });
@@ -436,6 +444,7 @@ app.get('/config/storage-path', (req, res) => {
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`Image Recorder Proxy Service running on port ${PORT}`);
+  console.log(`Media Recorder Proxy Service running on port ${PORT}`);
   console.log(`Storage directory: ${currentStoragePath}`);
+  console.log(`Max upload size: ${MAX_BODY_SIZE}`);
 });

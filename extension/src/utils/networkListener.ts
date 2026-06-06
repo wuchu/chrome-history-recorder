@@ -1,20 +1,24 @@
 /**
- * Network listener for intercepting image requests in DevTools
+ * Network listener for intercepting image and video requests in DevTools
  * This module runs in the DevTools panel context and monitors all network requests
  */
 
-export interface ImageRequest {
+export interface MediaRequest {
   url: string;
   mimeType: string;
   size: number;
   request: any;
+  type: 'image' | 'video';
 }
 
 export class NetworkListener {
   private isListening: boolean = false;
-  private capturedImages: ImageRequest[] = [];
+  private capturedImages: MediaRequest[] = [];
+  private capturedVideos: MediaRequest[] = [];
   private skippedSvgCount: number = 0;
-  private failedCount: number = 0;
+  private skippedVideoCount: number = 0;
+  private failedImageCount: number = 0;
+  private failedVideoCount: number = 0;
   private proxyEndpoint: string = 'http://localhost:3777';
 
   // Filter settings
@@ -23,7 +27,12 @@ export class NetworkListener {
     'image/png',
     'image/webp'
   ]);
-  private minFileSize: number = 10 * 1024; // 10KB default
+  private enabledVideoTypes: Set<string> = new Set([
+    'video/mp4',
+    'video/webm'
+  ]);
+  private minFileSize: number = 10 * 1024; // 10KB default for images
+  private minVideoSize: number = 1 * 1024 * 1024; // 1MB default for videos
   private domainWhitelist: Set<string> = new Set(); // Empty = all domains allowed
 
   /**
@@ -41,6 +50,17 @@ export class NetworkListener {
   ];
 
   /**
+   * Supported MIME types for video capture
+   */
+  private readonly SUPPORTED_VIDEO_TYPES = [
+    'video/mp4',
+    'video/webm',
+    'video/quicktime',  // MOV
+    'video/x-msvideo',  // AVI
+    'video/ogg'         // OGV
+  ];
+
+  /**
    * SVG MIME type (special handling - skipped)
    */
   private readonly SVG_MIME_TYPE = 'image/svg+xml';
@@ -53,7 +73,7 @@ export class NetworkListener {
   /**
    * Request queue for managing concurrent uploads
    */
-  private requestQueue: ImageRequest[] = [];
+  private requestQueue: MediaRequest[] = [];
   private activeRequests: number = 0;
 
   /**
@@ -90,10 +110,10 @@ export class NetworkListener {
   private async handleRequest(request: any): Promise<void> {
     if (!this.isListening) return;
 
-    // Check if request is an image
+    // Check if request is an image or video
     const mimeType = this.getMimeType(request);
-    if (!mimeType || !mimeType.startsWith('image/')) {
-      return; // Not an image
+    if (!mimeType) {
+      return; // No MIME type
     }
 
     // Get URL
@@ -108,48 +128,85 @@ export class NetworkListener {
     // Get file size from Content-Length header
     const size = this.getContentLength(request);
 
-    // Handle SVG (special case - skip)
-    if (mimeType === this.SVG_MIME_TYPE) {
-      this.skippedSvgCount++;
-      console.log(`Skipped SVG: ${url}`);
-      return;
+    // Handle based on MIME type
+    if (mimeType.startsWith('image/')) {
+      // Handle SVG (special case - skip)
+      if (mimeType === this.SVG_MIME_TYPE) {
+        this.skippedSvgCount++;
+        console.log(`Skipped SVG: ${url}`);
+        return;
+      }
+
+      // Apply image filters
+      if (!this.applyFilters(mimeType, size, url, 'image')) {
+        return; // Filtered out
+      }
+
+      // Create media request object
+      const mediaRequest: MediaRequest = {
+        url,
+        mimeType,
+        size,
+        request,
+        type: 'image'
+      };
+
+      // Add to queue and process
+      this.requestQueue.push(mediaRequest);
+      this.processQueue();
+    } else if (mimeType.startsWith('video/')) {
+      // Apply video filters
+      if (!this.applyFilters(mimeType, size, url, 'video')) {
+        this.skippedVideoCount++;
+        return; // Filtered out
+      }
+
+      // Create media request object
+      const mediaRequest: MediaRequest = {
+        url,
+        mimeType,
+        size,
+        request,
+        type: 'video'
+      };
+
+      // Add to queue and process
+      this.requestQueue.push(mediaRequest);
+      this.processQueue();
     }
-
-    // Apply filters
-    if (!this.applyFilters(mimeType, size, url)) {
-      return; // Filtered out
-    }
-
-    // Create image request object
-    const imageRequest: ImageRequest = {
-      url,
-      mimeType,
-      size,
-      request
-    };
-
-    // Add to queue and process
-    this.requestQueue.push(imageRequest);
-    this.processQueue();
   }
 
   /**
    * Apply filter rules
    */
-  private applyFilters(mimeType: string, size: number, url: string): boolean {
-    // 1. Check image type filter
-    if (!this.enabledImageTypes.has(mimeType)) {
-      console.log(`Filtered out by type: ${mimeType}`);
-      return false;
+  private applyFilters(mimeType: string, size: number, url: string, mediaType: 'image' | 'video'): boolean {
+    if (mediaType === 'image') {
+      // 1. Check image type filter
+      if (!this.enabledImageTypes.has(mimeType)) {
+        console.log(`Filtered out by image type: ${mimeType}`);
+        return false;
+      }
+
+      // 2. Check file size filter for images
+      if (size < this.minFileSize) {
+        console.log(`Filtered out by image size: ${size} < ${this.minFileSize}`);
+        return false;
+      }
+    } else if (mediaType === 'video') {
+      // 1. Check video type filter
+      if (!this.enabledVideoTypes.has(mimeType)) {
+        console.log(`Filtered out by video type: ${mimeType}`);
+        return false;
+      }
+
+      // 2. Check file size filter for videos
+      if (size < this.minVideoSize) {
+        console.log(`Filtered out by video size: ${size} < ${this.minVideoSize}`);
+        return false;
+      }
     }
 
-    // 2. Check file size filter
-    if (size < this.minFileSize) {
-      console.log(`Filtered out by size: ${size} < ${this.minFileSize}`);
-      return false;
-    }
-
-    // 3. Check domain whitelist
+    // 3. Check domain whitelist (applies to both)
     if (this.domainWhitelist.size > 0) {
       try {
         const hostname = new URL(url).hostname;
@@ -171,17 +228,21 @@ export class NetworkListener {
    */
   private async processQueue(): Promise<void> {
     while (this.requestQueue.length > 0 && this.activeRequests < this.MAX_CONCURRENT) {
-      const imageRequest = this.requestQueue.shift();
-      if (imageRequest) {
+      const mediaRequest = this.requestQueue.shift();
+      if (mediaRequest) {
         this.activeRequests++;
-        this.captureAndSendImage(imageRequest)
+        this.captureAndSendMedia(mediaRequest)
           .then(() => {
             this.activeRequests--;
             this.processQueue(); // Continue processing
           })
           .catch((error) => {
-            console.error('Failed to capture image:', error);
-            this.failedCount++;
+            console.error(`Failed to capture ${mediaRequest.type}:`, error);
+            if (mediaRequest.type === 'image') {
+              this.failedImageCount++;
+            } else {
+              this.failedVideoCount++;
+            }
             this.activeRequests--;
             this.processQueue(); // Continue processing
           });
@@ -190,26 +251,26 @@ export class NetworkListener {
   }
 
   /**
-   * Capture image content and send to proxy
+   * Capture media content and send to proxy
    */
-  private async captureAndSendImage(imageRequest: ImageRequest): Promise<void> {
+  private async captureAndSendMedia(mediaRequest: MediaRequest): Promise<void> {
     try {
-      // Get image content using DevTools API
-      const content = await this.getImageContent(imageRequest.request);
+      // Get content using DevTools API
+      const content = await this.getMediaContent(mediaRequest.request);
 
       if (!content) {
-        throw new Error('Failed to get image content');
+        throw new Error('Failed to get media content');
       }
 
-      // Send to proxy service
+      // Send to proxy service (use same endpoint for both image and video)
       const response = await fetch(`${this.proxyEndpoint}/save-image`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          url: imageRequest.url,
-          mimeType: imageRequest.mimeType,
+          url: mediaRequest.url,
+          mimeType: mediaRequest.mimeType,
           data: content
         })
       });
@@ -220,28 +281,35 @@ export class NetworkListener {
 
       const result = await response.json();
 
-      // Add to captured images list
-      this.capturedImages.push({
-        url: imageRequest.url,
-        mimeType: imageRequest.mimeType,
-        size: imageRequest.size,
+      // Add to appropriate captured list
+      const capturedItem: MediaRequest = {
+        url: mediaRequest.url,
+        mimeType: mediaRequest.mimeType,
+        size: mediaRequest.size,
         request: {
           hash: result.hash,
           filename: result.filename,
           captureTime: new Date()
-        }
-      });
+        },
+        type: mediaRequest.type
+      };
 
-      console.log(`Captured image: ${result.filename}`);
+      if (mediaRequest.type === 'image') {
+        this.capturedImages.push(capturedItem);
+      } else {
+        this.capturedVideos.push(capturedItem);
+      }
+
+      console.log(`Captured ${mediaRequest.type}: ${result.filename}`);
     } catch (error) {
       throw error;
     }
   }
 
   /**
-   * Get image content from request
+   * Get media content from request
    */
-  private async getImageContent(request: any): Promise<string | null> {
+  private async getMediaContent(request: any): Promise<string | null> {
     try {
       return new Promise((resolve, reject) => {
         request.getContent((content: string, encoding: string) => {
@@ -303,8 +371,15 @@ export class NetworkListener {
   /**
    * Get captured images
    */
-  getCapturedImages(): ImageRequest[] {
+  getCapturedImages(): MediaRequest[] {
     return this.capturedImages;
+  }
+
+  /**
+   * Get captured videos
+   */
+  getCapturedVideos(): MediaRequest[] {
+    return this.capturedVideos;
   }
 
   /**
@@ -312,18 +387,35 @@ export class NetworkListener {
    */
   getStats() {
     return {
-      capturedCount: this.capturedImages.length,
+      capturedImageCount: this.capturedImages.length,
+      capturedVideoCount: this.capturedVideos.length,
       skippedSvgCount: this.skippedSvgCount,
-      failedCount: this.failedCount,
-      totalSize: this.capturedImages.reduce((sum, img) => sum + img.size, 0)
+      skippedVideoCount: this.skippedVideoCount,
+      failedImageCount: this.failedImageCount,
+      failedVideoCount: this.failedVideoCount,
+      totalImageSize: this.capturedImages.reduce((sum, img) => sum + img.size, 0),
+      totalVideoSize: this.capturedVideos.reduce((sum, vid) => sum + vid.size, 0)
     };
   }
 
   /**
-   * Clear captured images
+   * Clear captured media
    */
   clearImages(): void {
     this.capturedImages = [];
+  }
+
+  clearVideos(): void {
+    this.capturedVideos = [];
+  }
+
+  clearAll(): void {
+    this.capturedImages = [];
+    this.capturedVideos = [];
+    this.skippedSvgCount = 0;
+    this.skippedVideoCount = 0;
+    this.failedImageCount = 0;
+    this.failedVideoCount = 0;
   }
 
   /**
@@ -341,10 +433,24 @@ export class NetworkListener {
   }
 
   /**
-   * Set minimum file size (in bytes)
+   * Set enabled video types
+   */
+  setEnabledVideoTypes(types: string[]): void {
+    this.enabledVideoTypes = new Set(types);
+  }
+
+  /**
+   * Set minimum file size (in bytes) for images
    */
   setMinFileSize(size: number): void {
     this.minFileSize = size;
+  }
+
+  /**
+   * Set minimum file size (in bytes) for videos
+   */
+  setMinVideoSize(size: number): void {
+    this.minVideoSize = size;
   }
 
   /**
@@ -360,7 +466,9 @@ export class NetworkListener {
   getFilterSettings() {
     return {
       enabledImageTypes: Array.from(this.enabledImageTypes),
+      enabledVideoTypes: Array.from(this.enabledVideoTypes),
       minFileSize: this.minFileSize,
+      minVideoSize: this.minVideoSize,
       domainWhitelist: Array.from(this.domainWhitelist)
     };
   }

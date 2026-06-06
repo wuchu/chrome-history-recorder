@@ -7,16 +7,16 @@ export default defineConfig({
   outDir: ".wxt",
   // entrypointsDir: "src/entrypoints",
   manifest: {
-    name: 'Image Recorder',
-    description: 'Capture images from web pages using DevTools API',
-    version: '0.1.0',
+    name: 'Media Recorder',
+    description: 'Capture images and videos from web pages using DevTools API',
+    version: '0.2.0',
     permissions: [
       'activeTab',
       'storage',
       'downloads'
     ],
     host_permissions: [
-      '<all_urls>'  // 允许访问所有域名，用于拦截所有网站的图片
+      '<all_urls>'  // 允许访问所有域名，用于拦截所有网站的媒体
     ],
     devtools_page: 'devtools.html'
   }

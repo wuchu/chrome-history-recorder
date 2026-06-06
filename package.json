@@ -1,17 +1,19 @@
 {
-  "name": "browser-image-recorder",
-  "version": "0.1.0",
+  "name": "browser-media-recorder",
+  "version": "0.2.0",
   "private": true,
-  "description": "Chrome extension for capturing images using DevTools API",
+  "description": "Chrome extension for capturing images and videos using DevTools API",
   "scripts": {
     "dev": "pnpm --filter extension dev",
     "dev:proxy": "pnpm --filter proxy dev",
     "build": "pnpm --filter extension build",
+    "zip": "pnpm --filter extension zip",
     "start": "pnpm --filter proxy start"
   },
   "keywords": [
     "chrome-extension",
     "image-capture",
+    "video-capture",
     "devtools",
     "wxt"
   ],

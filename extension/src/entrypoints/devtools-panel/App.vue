@@ -1,5 +1,5 @@
 <template>
-  <div class="image-recorder-panel">
+  <div class="media-recorder-panel">
     <!-- Status indicators -->
     <div class="status-bar">
       <div class="service-status">
@@ -15,34 +15,66 @@
 
     <!-- Statistics -->
     <div class="stats-section">
-      <div class="stat-item">
-        <span class="label">已捕获:</span>
-        <span class="value">{{ captureCount }}</span>
+      <div class="stats-group">
+        <div class="stats-title">图片</div>
+        <div class="stat-item">
+          <span class="label">已捕获:</span>
+          <span class="value">{{ imageCaptureCount }}</span>
+        </div>
+        <div class="stat-item">
+          <span class="label">跳过:</span>
+          <span class="value">{{ skippedSvgCount }}</span>
+        </div>
+        <div class="stat-item">
+          <span class="label">失败:</span>
+          <span class="value failed">{{ failedImageCount }}</span>
+        </div>
+        <div class="stat-item">
+          <span class="label">大小:</span>
+          <span class="value">{{ formatSize(totalImageSize) }}</span>
+        </div>
       </div>
-      <div class="stat-item">
-        <span class="label">跳过SVG:</span>
-        <span class="value">{{ skippedSvgCount }}</span>
-      </div>
-      <div class="stat-item">
-        <span class="label">失败:</span>
-        <span class="value failed">{{ failedCount }}</span>
-      </div>
-      <div class="stat-item">
-        <span class="label">总大小:</span>
-        <span class="value">{{ formatSize(totalSize) }}</span>
+      <div class="stats-group">
+        <div class="stats-title">视频</div>
+        <div class="stat-item">
+          <span class="label">已捕获:</span>
+          <span class="value">{{ videoCaptureCount }}</span>
+        </div>
+        <div class="stat-item">
+          <span class="label">跳过:</span>
+          <span class="value">{{ skippedVideoCount }}</span>
+        </div>
+        <div class="stat-item">
+          <span class="label">失败:</span>
+          <span class="value failed">{{ failedVideoCount }}</span>
+        </div>
+        <div class="stat-item">
+          <span class="label">大小:</span>
+          <span class="value">{{ formatSize(totalVideoSize) }}</span>
+        </div>
       </div>
     </div>
 
-    <!-- Image list -->
-    <div class="image-list-header">
-      <span>捕获的图片 ({{ images.length }})</span>
-      <button v-if="images.length > 0" @click="clearImages" class="clear-btn">清空列表</button>
+    <!-- Media list with tabs -->
+    <div class="media-tabs">
+      <button :class="{ active: activeTab === 'images' }" @click="activeTab = 'images'">
+        图片 {{ images.length }}
+      </button>
+      <button :class="{ active: activeTab === 'videos' }" @click="activeTab = 'videos'">
+        视频 {{ videos.length }}
+      </button>
     </div>
-    <div class="image-list">
-      <div v-for="image in images" :key="image.url" class="image-item">
-        <div class="image-info">
-          <div class="image-url" :title="image.url">{{ truncateUrl(image.url) }}</div>
-          <div class="image-meta">
+
+    <!-- Image list -->
+    <div v-show="activeTab === 'images'" class="media-list-header">
+      <span>捕获的图片</span>
+      <button v-if="images.length > 0" @click="clearImages" class="clear-btn">清空</button>
+    </div>
+    <div v-show="activeTab === 'images'" class="media-list">
+      <div v-for="image in images" :key="image.url" class="media-item">
+        <div class="media-info">
+          <div class="media-url" :title="image.url">{{ truncateUrl(image.url) }}</div>
+          <div class="media-meta">
             <span>{{ formatSize(image.size) }}</span>
             <span class="separator">|</span>
             <span>{{ image.mimeType }}</span>
@@ -50,11 +82,34 @@
             <span v-if="image.request?.filename" class="filename">{{ image.request.filename }}</span>
           </div>
         </div>
-        <div class="image-status success">✓</div>
+        <div class="media-status success">✓</div>
       </div>
-      <div v-if="images.length === 0" class="no-images">
+      <div v-if="images.length === 0" class="no-media">
         <p>暂无捕获的图片</p>
-        <p>点击"开始捕获"按钮开始监听网络请求</p>
+      </div>
+    </div>
+
+    <!-- Video list -->
+    <div v-show="activeTab === 'videos'" class="media-list-header">
+      <span>捕获的视频</span>
+      <button v-if="videos.length > 0" @click="clearVideos" class="clear-btn">清空</button>
+    </div>
+    <div v-show="activeTab === 'videos'" class="media-list">
+      <div v-for="video in videos" :key="video.url" class="media-item video-item">
+        <div class="media-info">
+          <div class="media-url" :title="video.url">{{ truncateUrl(video.url) }}</div>
+          <div class="media-meta">
+            <span>{{ formatSize(video.size) }}</span>
+            <span class="separator">|</span>
+            <span>{{ video.mimeType }}</span>
+            <span v-if="video.request?.filename" class="separator">|</span>
+            <span v-if="video.request?.filename" class="filename">{{ video.request.filename }}</span>
+          </div>
+        </div>
+        <div class="media-status success">✓</div>
+      </div>
+      <div v-if="videos.length === 0" class="no-media">
+        <p>暂无捕获的视频</p>
       </div>
     </div>
 
@@ -71,23 +126,68 @@
         <input v-model="proxyEndpoint" type="text" placeholder="http://localhost:3777">
         <button @click="saveProxyEndpoint">应用</button>
       </div>
+
+      <h4>图片过滤</h4>
+      <div class="config-item">
+        <label>最小大小:</label>
+        <input v-model.number="minImageSizeKB" type="number" placeholder="10" min="1">
+        <span class="unit">KB</span>
+        <button @click="saveImageFilters">应用</button>
+      </div>
+
+      <h4>视频过滤</h4>
+      <div class="config-item">
+        <label>最小大小:</label>
+        <input v-model.number="minVideoSizeMB" type="number" placeholder="1" min="0.1" step="0.1">
+        <span class="unit">MB</span>
+        <button @click="saveVideoFilters">应用</button>
+      </div>
+      <div class="config-item video-types">
+        <label>视频类型:</label>
+        <div class="checkbox-group">
+          <label><input type="checkbox" v-model="videoTypes.mp4"> MP4</label>
+          <label><input type="checkbox" v-model="videoTypes.webm"> WebM</label>
+          <label><input type="checkbox" v-model="videoTypes.mov"> MOV</label>
+          <label><input type="checkbox" v-model="videoTypes.avi"> AVI</label>
+        </div>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from 'vue';
-import { NetworkListener, type ImageRequest } from '../../utils/networkListener';
+import { ref, reactive, onMounted, onUnmounted } from 'vue';
+import { NetworkListener, type MediaRequest } from '../../utils/networkListener';
 
 const serviceOnline = ref(false);
 const isCapturing = ref(false);
-const captureCount = ref(0);
+const activeTab = ref<'images' | 'videos'>('images');
+
+// Image stats
+const imageCaptureCount = ref(0);
 const skippedSvgCount = ref(0);
-const failedCount = ref(0);
-const totalSize = ref(0);
-const images = ref<ImageRequest[]>([]);
+const failedImageCount = ref(0);
+const totalImageSize = ref(0);
+const images = ref<MediaRequest[]>([]);
+
+// Video stats
+const videoCaptureCount = ref(0);
+const skippedVideoCount = ref(0);
+const failedVideoCount = ref(0);
+const totalVideoSize = ref(0);
+const videos = ref<MediaRequest[]>([]);
+
+// Config
 const storagePath = ref('~/Downloads/chrome-history');
 const proxyEndpoint = ref('http://localhost:3777');
+const minImageSizeKB = ref(10);
+const minVideoSizeMB = ref(1);
+const videoTypes = reactive({
+  mp4: true,
+  webm: true,
+  mov: false,
+  avi: false
+});
 
 let currentTabId: number | null = null;
 let healthCheckInterval: ReturnType<typeof setInterval> | null = null;
@@ -97,7 +197,8 @@ let networkListener: NetworkListener | null = null;
 const formatSize = (bytes: number) => {
   if (bytes < 1024) return bytes + ' B';
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
 };
 
 const truncateUrl = (url: string) => {
@@ -117,11 +218,17 @@ const updateStats = () => {
   if (!networkListener) return;
 
   const stats = networkListener.getStats();
-  captureCount.value = stats.capturedCount;
+  imageCaptureCount.value = stats.capturedImageCount;
   skippedSvgCount.value = stats.skippedSvgCount;
-  failedCount.value = stats.failedCount;
-  totalSize.value = stats.totalSize;
+  failedImageCount.value = stats.failedImageCount;
+  totalImageSize.value = stats.totalImageSize;
   images.value = networkListener.getCapturedImages();
+
+  videoCaptureCount.value = stats.capturedVideoCount;
+  skippedVideoCount.value = stats.skippedVideoCount;
+  failedVideoCount.value = stats.failedVideoCount;
+  totalVideoSize.value = stats.totalVideoSize;
+  videos.value = networkListener.getCapturedVideos();
 };
 
 const toggleCapture = async () => {
@@ -131,13 +238,12 @@ const toggleCapture = async () => {
 
   if (isCapturing.value) {
     networkListener.startListening();
-    console.log('Started capturing images');
+    console.log('Started capturing media');
   } else {
     networkListener.stopListening();
-    console.log('Stopped capturing images');
+    console.log('Stopped capturing media');
   }
 
-  // Notify background script about state change
   if (currentTabId) {
     await chrome.runtime.sendMessage({
       type: 'setCaptureEnabled',
@@ -150,6 +256,12 @@ const toggleCapture = async () => {
 const clearImages = () => {
   if (!networkListener) return;
   networkListener.clearImages();
+  updateStats();
+};
+
+const clearVideos = () => {
+  if (!networkListener) return;
+  networkListener.clearVideos();
   updateStats();
 };
 
@@ -174,28 +286,65 @@ const saveProxyEndpoint = () => {
   }
 };
 
+const saveImageFilters = () => {
+  if (!networkListener) return;
+  networkListener.setMinFileSize(minImageSizeKB.value * 1024);
+  chrome.storage.local.set({ minImageSizeKB: minImageSizeKB.value });
+};
+
+const saveVideoFilters = () => {
+  if (!networkListener) return;
+  const enabledTypes: string[] = [];
+  if (videoTypes.mp4) enabledTypes.push('video/mp4');
+  if (videoTypes.webm) enabledTypes.push('video/webm');
+  if (videoTypes.mov) enabledTypes.push('video/quicktime');
+  if (videoTypes.avi) enabledTypes.push('video/x-msvideo');
+
+  networkListener.setEnabledVideoTypes(enabledTypes);
+  networkListener.setMinVideoSize(minVideoSizeMB.value * 1024 * 1024);
+  chrome.storage.local.set({
+    minVideoSizeMB: minVideoSizeMB.value,
+    enabledVideoTypes: enabledTypes
+  });
+};
+
 onMounted(async () => {
-  // Get current tab ID
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   currentTabId = tab.id ?? null;
 
-  // Load saved settings
-  const saved = await chrome.storage.local.get(['storagePath', 'proxyEndpoint']);
+  const saved = await chrome.storage.local.get([
+    'storagePath', 'proxyEndpoint', 'minImageSizeKB',
+    'minVideoSizeMB', 'enabledVideoTypes'
+  ]);
+
   if (saved.storagePath) storagePath.value = saved.storagePath;
   if (saved.proxyEndpoint) proxyEndpoint.value = saved.proxyEndpoint;
+  if (saved.minImageSizeKB) minImageSizeKB.value = saved.minImageSizeKB;
+  if (saved.minVideoSizeMB) minVideoSizeMB.value = saved.minVideoSizeMB;
 
-  // Initialize NetworkListener
+  if (saved.enabledVideoTypes) {
+    videoTypes.mp4 = saved.enabledVideoTypes.includes('video/mp4');
+    videoTypes.webm = saved.enabledVideoTypes.includes('video/webm');
+    videoTypes.mov = saved.enabledVideoTypes.includes('video/quicktime');
+    videoTypes.avi = saved.enabledVideoTypes.includes('video/x-msvideo');
+  }
+
   networkListener = new NetworkListener();
   networkListener.setProxyEndpoint(proxyEndpoint.value);
+  networkListener.setMinFileSize(minImageSizeKB.value * 1024);
+  networkListener.setMinVideoSize(minVideoSizeMB.value * 1024 * 1024);
 
-  // Check service health
+  const enabledVideoTypes: string[] = [];
+  if (videoTypes.mp4) enabledVideoTypes.push('video/mp4');
+  if (videoTypes.webm) enabledVideoTypes.push('video/webm');
+  if (videoTypes.mov) enabledVideoTypes.push('video/quicktime');
+  if (videoTypes.avi) enabledVideoTypes.push('video/x-msvideo');
+  networkListener.setEnabledVideoTypes(enabledVideoTypes);
+
   await checkServiceHealth();
   healthCheckInterval = setInterval(checkServiceHealth, 5000);
-
-  // Update stats periodically
   statsUpdateInterval = setInterval(updateStats, 1000);
 
-  // Notify background that DevTools is open
   if (currentTabId) {
     await chrome.runtime.sendMessage({
       type: 'devToolsOpened',
@@ -203,20 +352,17 @@ onMounted(async () => {
     });
   }
 
-  console.log('Image Recorder panel initialized');
+  console.log('Media Recorder panel initialized');
 });
 
 onUnmounted(() => {
-  // Stop capturing if active
   if (networkListener && isCapturing.value) {
     networkListener.stopListening();
   }
 
-  // Clear intervals
   if (healthCheckInterval) clearInterval(healthCheckInterval);
   if (statsUpdateInterval) clearInterval(statsUpdateInterval);
 
-  // Notify background that DevTools is closed
   if (currentTabId) {
     chrome.runtime.sendMessage({
       type: 'devToolsClosed',
@@ -227,7 +373,7 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.image-recorder-panel {
+.media-recorder-panel {
   padding: 16px;
   font-family: system-ui, -apple-system, sans-serif;
   font-size: 13px;
@@ -289,24 +435,57 @@ onUnmounted(() => {
 
 .stats-section {
   display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
+  gap: 24px;
   padding: 12px;
   background: #f5f5f5;
   border-radius: 4px;
   margin-bottom: 16px;
 }
 
+.stats-group {
+  flex: 1;
+}
+
+.stats-title {
+  font-weight: bold;
+  margin-bottom: 8px;
+  color: #333;
+  border-bottom: 1px solid #ddd;
+  padding-bottom: 4px;
+}
+
 .stat-item {
   display: flex;
   gap: 8px;
+  margin-bottom: 4px;
 }
 
 .stat-item .label { color: #666; }
 .stat-item .value { font-weight: bold; }
 .stat-item .value.failed { color: #f44336; }
 
-.image-list-header {
+.media-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.media-tabs button {
+  padding: 6px 16px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: #f5f5f5;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.media-tabs button.active {
+  background: #4caf50;
+  color: white;
+  border-color: #4caf50;
+}
+
+.media-list-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -328,14 +507,14 @@ onUnmounted(() => {
   background: #f57c00;
 }
 
-.image-list {
-  max-height: 400px;
+.media-list {
+  max-height: 300px;
   overflow-y: auto;
   border: 1px solid #e0e0e0;
   border-radius: 4px;
 }
 
-.image-item {
+.media-item {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -344,20 +523,28 @@ onUnmounted(() => {
   transition: background 0.2s ease;
 }
 
-.image-item:hover {
+.media-item:hover {
   background: #f9f9f9;
 }
 
-.image-item:last-child {
+.media-item:last-child {
   border-bottom: none;
 }
 
-.image-info {
+.video-item {
+  background: #fff8e1;
+}
+
+.video-item:hover {
+  background: #ffecb3;
+}
+
+.media-info {
   flex: 1;
   overflow: hidden;
 }
 
-.image-url {
+.media-url {
   color: #333;
   font-size: 12px;
   white-space: nowrap;
@@ -365,38 +552,38 @@ onUnmounted(() => {
   text-overflow: ellipsis;
 }
 
-.image-meta {
+.media-meta {
   font-size: 11px;
   color: #888;
   margin-top: 2px;
 }
 
-.image-meta .separator {
+.media-meta .separator {
   margin: 0 6px;
   color: #ccc;
 }
 
-.image-meta .filename {
+.media-meta .filename {
   color: #4caf50;
   font-weight: 500;
 }
 
-.image-status {
+.media-status {
   margin-left: 12px;
   font-size: 16px;
 }
 
-.image-status.success {
+.media-status.success {
   color: #4caf50;
 }
 
-.no-images {
+.no-media {
   padding: 32px;
   text-align: center;
   color: #999;
 }
 
-.no-images p {
+.no-media p {
   margin: 4px 0;
 }
 
@@ -410,6 +597,12 @@ onUnmounted(() => {
 .config-section h3 {
   margin: 0 0 12px 0;
   font-size: 14px;
+}
+
+.config-section h4 {
+  margin: 16px 0 8px 0;
+  font-size: 13px;
+  color: #666;
 }
 
 .config-item {
@@ -428,8 +621,16 @@ onUnmounted(() => {
   min-width: 80px;
 }
 
-.config-item input {
+.config-item input[type="text"] {
   flex: 1;
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.config-item input[type="number"] {
+  width: 80px;
   padding: 8px;
   border: 1px solid #ccc;
   border-radius: 4px;
@@ -439,6 +640,11 @@ onUnmounted(() => {
 .config-item input:focus {
   outline: none;
   border-color: #4caf50;
+}
+
+.config-item .unit {
+  color: #666;
+  font-size: 12px;
 }
 
 .config-item button {
@@ -458,5 +664,28 @@ onUnmounted(() => {
 .config-item button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.video-types {
+  flex-wrap: wrap;
+}
+
+.checkbox-group {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.checkbox-group label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: normal;
+  min-width: auto;
+  cursor: pointer;
+}
+
+.checkbox-group input[type="checkbox"] {
+  cursor: pointer;
 }
 </style>

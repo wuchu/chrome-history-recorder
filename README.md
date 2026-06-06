@@ -1,22 +1,24 @@
-# Chrome Image Recorder
+# Chrome Media Recorder
 
-一个专为Chrome浏览器设计的图片自动捕获系统，使用DevTools API拦截网页图片并通过本地代理服务保存到本地。
+一个专为Chrome浏览器设计的媒体自动捕获系统，使用DevTools API拦截网页图片和视频并通过本地代理服务保存到本地。
 
 ## 项目简介
 
-本项目能够自动捕获和保存用户浏览网页时看到的图片，无需手动保存每张图片。
+本项目能够自动捕获和保存用户浏览网页时看到的图片和视频，无需手动保存每个文件。
 
 ### 核心特性
 
 - **Chrome 专属**: 仅支持最新版本 Chrome（Chrome 88+），充分利用 Manifest V3 和 DevTools API
-- **DevTools 集成**: 使用 DevTools Network API 拦截所有图片请求，包括动态加载和 CSS 背景图片
+- **DevTools 集成**: 使用 DevTools Network API 拦截所有媒体请求，包括动态加载的内容
 - **专业控制面板**: 在 Chrome DevTools 中集成专用面板，提供实时监控和配置功能
   - 服务状态监控（绿色/红色圆点）
-  - 图片捕获列表显示
+  - 图片和视频捕获统计
+  - 分 Tab 显示图片和视频列表
   - 配置选项管理
 - **智能去重**: 基于 SHA-256 内容哈希的命名系统，自动防止重复保存
-- **多格式支持**: 支持主流图片格式（JPEG、PNG、WebP、GIF、BMP、TIFF）
-- **可配置存储**: 用户可自定义图片保存位置，默认为 `~/Downloads/chrome-history`
+- **图片支持**: 支持主流图片格式（JPEG、PNG、WebP、GIF、BMP、TIFF）
+- **视频支持**: 支持常见视频格式（MP4、WebM、MOV、AVI）
+- **可配置存储**: 用户可自定义保存位置，默认为 `~/Downloads/chrome-history`
 
 ### 技术架构
 
@@ -108,9 +110,9 @@ pnpm build
 ### 基本使用
 
 1. **启动代理服务**: 确保代理服务正在运行（状态指示器显示绿色圆点）
-2. **启用捕获**: 在DevTools面板中点击"Capturing/Paused"按钮启用图片捕获
-3. **浏览网页**: 访问任意网页，系统将自动捕获图片
-4. **查看结果**: 在面板中查看捕获的图片列表和统计信息
+2. **启用捕获**: 在DevTools面板中点击"开始捕获"按钮启用媒体捕获
+3. **浏览网页**: 访问任意网页，系统将自动捕获图片和视频
+4. **查看结果**: 在面板中切换 Tab 查看捕获的图片和视频列表及统计信息
 
 ### 配置选项
 
@@ -120,24 +122,15 @@ pnpm build
 - 默认路径: `~/Downloads/chrome-history`
 - 可以自定义路径，点击"保存"按钮应用
 
-#### 图片类型过滤器
+#### 图片过滤配置
 
-勾选或取消勾选支持的图片格式：
-- **主流格式**: JPEG、PNG、WebP（默认勾选）
-- **次要格式**: GIF、BMP、TIFF（可选）
+- **最小大小**: 设置最小文件大小（单位KB），默认10KB
+- **类型**: JPEG、PNG、WebP（默认启用）
 
-#### 文件大小过滤器
+#### 视频过滤配置
 
-设置最小文件大小（单位KB）：
-- 默认值: 10KB
-- 可配置范围: 1KB - 10000KB
-
-#### 域名白名单
-
-设置允许捕获的域名：
-- 留空表示捕获所有域名
-- 多个域名用逗号分隔
-- 精确匹配域名（不支持通配符）
+- **最小大小**: 设置最小文件大小（单位MB），默认1MB
+- **类型**: MP4、WebM（默认启用），MOV、AVI（可选）
 
 #### 代理端点配置
 
@@ -180,17 +173,20 @@ curl http://localhost:3777/health
   "uptime": 120,
   "storagePath": "~/Downloads/chrome-history",
   "totalImages": 50,
-  "totalSize": 5242880
+  "totalVideos": 10,
+  "totalImageSize": 5242880,
+  "totalVideoSize": 104857600,
+  "totalSize": 109900480
 }
 ```
 
 #### `POST /save-image`
-保存图片到本地存储。
+保存媒体文件（图片或视频）到本地存储。
 
 请求体：
 ```json
 {
-  "url": "https://example.com/image.jpg",
+  "url": "https://example.com/media.jpg",
   "mimeType": "image/jpeg",
   "data": "base64_encoded_data"
 }
@@ -201,8 +197,8 @@ curl http://localhost:3777/health
 {
   "success": true,
   "hash": "a1b2c3d4e5f6g7h8",
-  "filename": "1234567890_image.jpg",
-  "filePath": "/path/to/storage/2024-01-15/1234567890_image.jpg",
+  "filename": "a1b2c3d4e5f6g7h8.jpg",
+  "filePath": "/path/to/storage/2024-01-15/a1b2c3d4e5f6g7h8.jpg",
   "duplicate": false
 }
 ```
@@ -234,58 +230,87 @@ curl http://localhost:3777/health
 #### `GET /config/storage-path`
 获取当前存储路径配置。
 
-## 支持的图片格式
+## 支持的媒体格式
 
-### 优先支持（主流格式）
+### 图片格式
+
+#### 优先支持（主流格式）
 - JPEG (`image/jpeg` → `.jpg`)
 - PNG (`image/png` → `.png`)
 - WebP (`image/webp` → `.webp`)
 
-###次要支持
+#### 次要支持
 - GIF (`image/gif` → `.gif`)
 - BMP (`image/bmp` → `.bmp`)
 - TIFF (`image/tiff` → `.tiff`)
 - ICO (`image/x-icon` → `.ico`)
 
-### 不支持
+#### 不支持
 - SVG (`image/svg+xml`) - 自动跳过
 - Canvas/WebGL生成的 data: URL - 第一版本不支持
 - Blob URL - 第一版本不支持
 
+### 视频格式
+
+#### 优先支持
+- MP4 (`video/mp4` → `.mp4`) - 最常见的视频格式
+- WebM (`video/webm` → `.webm`) - 网页友好格式
+
+#### 次要支持
+- MOV (`video/quicktime` → `.mov`) - QuickTime格式
+- AVI (`video/x-msvideo` → `.avi`) - Windows视频格式
+- OGG (`video/ogg` → `.ogv`) - 开源格式
+
+#### 不支持
+- 流媒体视频（HLS、DASH）- 实时录制不支持
+- 直播视频流
+
 ## 存储结构
 
-图片按日期组织存储：
+媒体文件按日期组织存储，文件名使用内容哈希：
 
 ```
 ~/Downloads/chrome-history/
 ├── 2024-01-15/
-│   ├── 1234567890_image.jpg
-│   ├── 1234567891_logo.png
-│   └── 1234567892_banner.webp
+│   ├── a1b2c3d4e5f6g7h8.jpg    # 图片（内容哈希命名）
+│   ├── b2c3d4e5f6g7h8i9.png
+│   └── c3d4e5f6g7h8i9j0.mp4    # 视频
 ├── 2024-01-16/
-│   ├── 1234567893_photo.jpg
-│   └── 1234567894_icon.png
+│   ├── d4e5f6g7h8i9j0k1.webp
+│   └── e5f6g7h8i9j0k1l2.mov
 ```
+
+**哈希命名优势**：
+- 自动去重：相同内容的文件不会重复保存
+- 内容标识：文件名即内容标识，便于追踪
+- 简洁命名：16字符哈希 + 扩展名
 
 ## 注意事项
 
 ### DevTools API限制
 
 - DevTools API只在DevTools打开时可用
-- 需要手动打开DevTools才能捕获图片
-- 关闭DevTools后图片捕获会暂停
+- 需要手动打开DevTools才能捕获媒体
+- 关闭DevTools后捕获会暂停
 
 ### 隐私和安全
 
-- 图片仅保存在本地，不上传到云端
+- 媒体文件仅保存在本地，不上传到云端
 - 所有数据通过本地HTTP服务传输
 - 建议仅在信任的网络环境使用
 
 ### 性能考虑
 
-- 大量图片捕获可能影响浏览器性能
+- 大量媒体捕获可能影响浏览器性能
 - 系统自动限制并发请求数（最多5个）
-- 大文件（>10MB）会被跳过并记录警告
+- 大图片（>10MB）会被跳过并记录警告
+- 视频文件最大支持100MB
+
+### 视频捕获限制
+
+- 仅捕获完整视频文件，不支持流媒体
+- 视频内容通过 DevTools API 获取，受浏览器缓存限制
+- 大视频可能需要更长处理时间
 
 ## 开发技术栈
 
@@ -305,5 +330,5 @@ Chrome Image Recorder Team
 
 ---
 
-**翻译日期**: 2026-06-06  
-**项目版本**: 0.1.0
+**翻译日期**: 2026-06-07  
+**项目版本**: 0.2.0
