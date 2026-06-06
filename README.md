@@ -33,8 +33,8 @@
 ## 项目结构
 
 ```
-chrome-histroy-recoder/
-├── extension/              # Chrome扩展代码
+chrome-history-recorder/
+├── extension/              # Chrome媒体捕获扩展
 │   ├── entrypoints/        # WXT入口点目录
 │   │   ├── background/     # Service Worker
 │   │   └── devtools-panel/ # DevTools面板
@@ -44,6 +44,10 @@ chrome-histroy-recoder/
 │   ├── src/
 │   │   └── server.js       # Express服务器
 │   └── package.json
+├── ai-classify/            # AI文件分类CLI工具
+│   ├── src/                # TypeScript源码
+│   ├── dist/               # 构建产物
+│   └── README.md           # 使用文档
 ├── openspec/               # 项目规划和规范文档
 ├── package.json            # Monorepo根配置
 └── pnpm-workspace.yaml     # pnpm工作区配置
