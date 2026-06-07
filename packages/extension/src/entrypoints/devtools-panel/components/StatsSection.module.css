@@ -1,0 +1,38 @@
+.container {
+  display: flex;
+  gap: 16px;
+  padding: 8px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.statsGroup {
+  flex: 1;
+}
+
+.statsTitle {
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-light);
+  padding-bottom: 2px;
+}
+
+.statItem {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.label {
+  color: var(--text-secondary);
+}
+
+.value {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.failed {
+  color: var(--error-color);
+}

@@ -1,0 +1,47 @@
+{
+  "status": {
+    "serviceOnline": "Service Online",
+    "serviceOffline": "Service Offline",
+    "startCapture": "Start Capture",
+    "stopCapture": "Stop Capture"
+  },
+  "stats": {
+    "images": "Images",
+    "videos": "Videos",
+    "captured": "Captured",
+    "skipped": "Skipped",
+    "failed": "Failed",
+    "size": "Size"
+  },
+  "mediaList": {
+    "capturedImages": "Captured Images",
+    "capturedVideos": "Captured Videos",
+    "clear": "Clear",
+    "noImages": "No captured images",
+    "noVideos": "No captured videos"
+  },
+  "config": {
+    "title": "Configuration",
+    "storagePath": "Storage Path",
+    "proxyEndpoint": "Proxy Endpoint",
+    "save": "Save",
+    "apply": "Apply",
+    "imageFilter": "Image Filter",
+    "minSize": "Min Size",
+    "videoFilter": "Video Filter",
+    "videoTypes": "Video Types"
+  },
+  "alerts": {
+    "pathSaved": "Path configuration saved",
+    "connectionFailed": "Unable to connect to proxy service"
+  },
+  "theme": {
+    "label": "Theme",
+    "auto": "Auto",
+    "light": "Light",
+    "dark": "Dark"
+  },
+  "language": {
+    "label": "Language"
+  }
+}

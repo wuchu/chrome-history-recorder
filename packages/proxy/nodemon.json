@@ -1,0 +1,11 @@
+{
+  "watch": ["src"],
+  "ext": "js,json",
+  "ignore": ["node_modules"],
+  "delay": 1000,
+  "verbose": true,
+  "env": {
+    "DEBUG_MODE": "true",
+    "LOG_LEVEL": "INFO"
+  }
+}

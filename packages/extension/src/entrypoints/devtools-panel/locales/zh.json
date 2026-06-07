@@ -1,0 +1,47 @@
+{
+  "status": {
+    "serviceOnline": "服务已连接",
+    "serviceOffline": "服务离线",
+    "startCapture": "开始捕获",
+    "stopCapture": "停止捕获"
+  },
+  "stats": {
+    "images": "图片",
+    "videos": "视频",
+    "captured": "已捕获",
+    "skipped": "跳过",
+    "failed": "失败",
+    "size": "大小"
+  },
+  "mediaList": {
+    "capturedImages": "捕获的图片",
+    "capturedVideos": "捕获的视频",
+    "clear": "清空",
+    "noImages": "暂无捕获的图片",
+    "noVideos": "暂无捕获的视频"
+  },
+  "config": {
+    "title": "配置选项",
+    "storagePath": "存储路径",
+    "proxyEndpoint": "代理端点",
+    "save": "保存",
+    "apply": "应用",
+    "imageFilter": "图片过滤",
+    "minSize": "最小大小",
+    "videoFilter": "视频过滤",
+    "videoTypes": "视频类型"
+  },
+  "alerts": {
+    "pathSaved": "路径配置已保存",
+    "connectionFailed": "无法连接到代理服务"
+  },
+  "theme": {
+    "label": "主题",
+    "auto": "自动",
+    "light": "亮色",
+    "dark": "暗色"
+  },
+  "language": {
+    "label": "语言"
+  }
+}
