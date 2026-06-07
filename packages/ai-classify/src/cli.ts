@@ -8,41 +8,59 @@ import fs from 'fs-extra';
 import path from 'path';
 import { AIClassify } from './index.js';
 import { Config, DEFAULT_CONFIG } from './types.js';
-import { loadConfig, saveConfig, mergeWithCliArgs } from './config.js';
+import { loadConfig, saveConfig, mergeWithCliArgs, validateConfig, formatConfigErrors, resolveConfigPath } from './config.js';
 
 const program = new Command();
 
 program
   .name('ai-classify')
   .description('AI-powered file classification tool using Ollama')
-  .version('0.1.0');
+  .version('0.1.0')
+  // Global options
+  .option('-c, --config <file>', 'Config file path')
+  .option('-i, --input <dir>', 'Input directory')
+  .option('-o, --output <dir>', 'Output directory')
+  // Ollama-related options (unified --ollama-xxx prefix)
+  .option('--ollama-endpoint <url>', 'Ollama API endpoint')
+  .option('--ollama-vision-model <model>', 'Ollama vision model for images')
+  .option('--ollama-text-model <model>', 'Ollama text model for documents')
+  .option('--ollama-prompt <text>', 'Custom classification prompt')
+  .option('--ollama-max-concurrency <number>', 'Max concurrent requests to Ollama', parseInt);
 
 // Start command
 program
   .command('start')
   .description('Start watching and classifying files')
-  .option('-i, --input <dir>', 'Input directory to watch')
-  .option('-o, --output <dir>', 'Output directory for classified files')
-  .option('--ollama <url>', 'Ollama API endpoint')
-  .option('--vision-model <model>', 'Vision model for images')
-  .option('--text-model <model>', 'Text model for documents')
   .action(async (options) => {
+    const globalOptions = program.opts();
     const projectDir = process.cwd();
-    const baseConfig = await loadConfig(projectDir);
+    const configPath = resolveConfigPath(projectDir, globalOptions.config);
+    const configDir = path.dirname(configPath);
+    const baseConfig = await loadConfig(projectDir, globalOptions.config);
     const config = mergeWithCliArgs(baseConfig, {
-      input: options.input,
-      output: options.output,
-      ollamaEndpoint: options.ollama,
-      visionModel: options.visionModel,
-      textModel: options.textModel
+      input: globalOptions.input,
+      output: globalOptions.output,
+      ollamaEndpoint: globalOptions.ollamaEndpoint,
+      visionModel: globalOptions.ollamaVisionModel,
+      textModel: globalOptions.ollamaTextModel,
+      customPrompt: globalOptions.ollamaPrompt,
+      concurrency: globalOptions.ollamaMaxConcurrency
     });
+
+    // Validate configuration
+    const errors = validateConfig(config);
+    if (errors.length > 0) {
+      console.error(formatConfigErrors(errors));
+      process.exit(1);
+    }
 
     console.log('Configuration:');
     console.log(`  Input: ${config.input}`);
     console.log(`  Output: ${config.output}`);
     console.log(`  Ollama: ${config.ollamaEndpoint}`);
+    console.log(`  Concurrency: ${config.concurrency}`);
 
-    const aiClassify = new AIClassify(config);
+    const aiClassify = new AIClassify(config, configDir);
     await aiClassify.initialize();
     await aiClassify.start();
 
@@ -63,15 +81,17 @@ program
 program
   .command('status')
   .description('Show queue and index status')
-  .option('-o, --output <dir>', 'Output directory')
   .action(async (options) => {
+    const globalOptions = program.opts();
     const projectDir = process.cwd();
-    const baseConfig = await loadConfig(projectDir);
+    const configPath = resolveConfigPath(projectDir, globalOptions.config);
+    const configDir = path.dirname(configPath);
+    const baseConfig = await loadConfig(projectDir, globalOptions.config);
     const config = mergeWithCliArgs(baseConfig, {
-      output: options.output
+      output: globalOptions.output
     });
 
-    const aiClassify = new AIClassify(config);
+    const aiClassify = new AIClassify(config, configDir);
     await aiClassify.initialize();
 
     const status = aiClassify.getStatus();
@@ -88,15 +108,17 @@ program
 program
   .command('clear')
   .description('Clear queue and index')
-  .option('-o, --output <dir>', 'Output directory')
   .action(async (options) => {
+    const globalOptions = program.opts();
     const projectDir = process.cwd();
-    const baseConfig = await loadConfig(projectDir);
+    const configPath = resolveConfigPath(projectDir, globalOptions.config);
+    const configDir = path.dirname(configPath);
+    const baseConfig = await loadConfig(projectDir, globalOptions.config);
     const config = mergeWithCliArgs(baseConfig, {
-      output: options.output
+      output: globalOptions.output
     });
 
-    const aiClassify = new AIClassify(config);
+    const aiClassify = new AIClassify(config, configDir);
     await aiClassify.initialize();
     await aiClassify.clear();
 
@@ -107,17 +129,18 @@ program
 program
   .command('reprocess')
   .description('Scan input directory and reprocess all files')
-  .option('-i, --input <dir>', 'Input directory')
-  .option('-o, --output <dir>', 'Output directory')
   .action(async (options) => {
+    const globalOptions = program.opts();
     const projectDir = process.cwd();
-    const baseConfig = await loadConfig(projectDir);
+    const configPath = resolveConfigPath(projectDir, globalOptions.config);
+    const configDir = path.dirname(configPath);
+    const baseConfig = await loadConfig(projectDir, globalOptions.config);
     const config = mergeWithCliArgs(baseConfig, {
-      input: options.input,
-      output: options.output
+      input: globalOptions.input,
+      output: globalOptions.output
     });
 
-    const aiClassify = new AIClassify(config);
+    const aiClassify = new AIClassify(config, configDir);
     await aiClassify.initialize();
     await aiClassify.clear();
     await aiClassify.scanAndEnqueue();
@@ -130,17 +153,15 @@ program
 program
   .command('config')
   .description('Create or update configuration file')
-  .option('-i, --input <dir>', 'Input directory')
-  .option('-o, --output <dir>', 'Output directory')
-  .option('--ollama <url>', 'Ollama API endpoint')
   .action(async (options) => {
+    const globalOptions = program.opts();
     const projectDir = process.cwd();
 
     const config: Config = {
       ...DEFAULT_CONFIG,
-      input: options.input || DEFAULT_CONFIG.input,
-      output: options.output || DEFAULT_CONFIG.output,
-      ollamaEndpoint: options.ollama || DEFAULT_CONFIG.ollamaEndpoint
+      input: globalOptions.input || DEFAULT_CONFIG.input,
+      output: globalOptions.output || DEFAULT_CONFIG.output,
+      ollamaEndpoint: globalOptions.ollamaEndpoint || DEFAULT_CONFIG.ollamaEndpoint
     };
 
     await saveConfig(projectDir, config);

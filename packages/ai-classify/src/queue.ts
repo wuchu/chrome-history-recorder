@@ -6,28 +6,34 @@ import fs from 'fs-extra';
 import path from 'path';
 import { Queue, Task } from './types.js';
 
-const QUEUE_FILE = 'queue.json';
+const QUEUE_FILE = '.ai-classify-queue-tasks.json';
 
-export async function loadQueue(outputDir: string): Promise<Queue> {
-  const queuePath = path.join(outputDir, QUEUE_FILE);
+export async function loadQueue(configDir: string): Promise<Queue> {
+  const queuePath = path.join(configDir, QUEUE_FILE);
 
   if (await fs.pathExists(queuePath)) {
-    const loaded = await fs.readJson(queuePath);
-    // Restore processing items to pending on startup
-    const processing = loaded.processing || [];
-    const pending = loaded.pending || [];
-    return {
-      pending: [...processing, ...pending],
-      processing: [],
-      failed: loaded.failed || []
-    };
+    try {
+      const loaded = await fs.readJson(queuePath);
+      // Restore processing items to pending on startup
+      const processing = loaded.processing || [];
+      const pending = loaded.pending || [];
+      return {
+        pending: [...processing, ...pending],
+        processing: [],
+        failed: loaded.failed || []
+      };
+    } catch (error) {
+      // Handle corrupted queue file - return empty queue
+      console.warn(`Warning: Corrupted queue file, creating new empty queue`);
+      return { pending: [], processing: [], failed: [] };
+    }
   }
 
   return { pending: [], processing: [], failed: [] };
 }
 
-export async function saveQueue(outputDir: string, queue: Queue): Promise<void> {
-  const queuePath = path.join(outputDir, QUEUE_FILE);
+export async function saveQueue(configDir: string, queue: Queue): Promise<void> {
+  const queuePath = path.join(configDir, QUEUE_FILE);
   await fs.writeJson(queuePath, queue, { spaces: 2 });
 }
 
@@ -79,8 +85,8 @@ export function getQueueStats(queue: Queue) {
   };
 }
 
-export async function clearQueue(outputDir: string): Promise<void> {
-  const queuePath = path.join(outputDir, QUEUE_FILE);
+export async function clearQueue(configDir: string): Promise<void> {
+  const queuePath = path.join(configDir, QUEUE_FILE);
   if (await fs.pathExists(queuePath)) {
     await fs.unlink(queuePath);
   }

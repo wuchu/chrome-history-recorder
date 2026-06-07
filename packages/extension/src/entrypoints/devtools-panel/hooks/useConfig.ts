@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { initLocale } from '../i18n';
 import {
   DEFAULT_VIDEO_TYPES,
   DEFAULT_STORAGE_PATH,
@@ -48,7 +47,7 @@ interface UseConfigOptions {
 
 /**
  * 配置管理 Hook
- * 语言跟随 Chrome DevTools，无需用户配置
+ * 语言自动跟随 Chrome DevTools，无需配置
  */
 export function useConfig(options: UseConfigOptions = {}): UseConfigReturn {
   const { t } = useTranslation();
@@ -82,9 +81,6 @@ export function useConfig(options: UseConfigOptions = {}): UseConfigReturn {
           avi: saved.enabledVideoTypes.includes('video/x-msvideo')
         });
       }
-
-      // Initialize locale - 跟随 Chrome DevTools 语言
-      initLocale();
     };
 
     loadConfig();

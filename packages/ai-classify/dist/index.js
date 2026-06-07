@@ -2,6 +2,7 @@
  * AI Classify - Main Module
  */
 import fs from 'fs-extra';
+import path from 'path';
 import { loadQueue, saveQueue, enqueue, dequeue, markComplete, markFailed, getQueueStats } from './queue.js';
 import { loadIndex, saveIndex, hasBeenProcessed, addProcessedRecord } from './hashIndex.js';
 import { classifyFile, checkOllamaHealth } from './classifier.js';
@@ -9,28 +10,53 @@ import { organizeFile, createIndexRecord } from './organizer.js';
 import { Watcher, scanExistingFiles } from './watcher.js';
 export class AIClassify {
     config;
+    configDir;
     queue;
     index;
     watcher = null;
     processing = false;
     activeCount = 0;
-    constructor(config) {
+    constructor(config, configDir) {
         this.config = config;
+        this.configDir = configDir;
     }
     async initialize() {
         // Ensure output directory exists
         await fs.ensureDir(this.config.output);
-        // Load queue and index
-        this.queue = await loadQueue(this.config.output);
-        this.index = await loadIndex(this.config.output);
+        // Migrate old files if they exist
+        await this.migrateOldFiles();
+        // Load queue and index from configDir
+        this.queue = await loadQueue(this.configDir);
+        this.index = await loadIndex(this.configDir);
         // Check Ollama health
         const healthy = await checkOllamaHealth(this.config);
         if (!healthy) {
             console.warn('Warning: Ollama service not available');
         }
     }
+    /**
+     * Migrate old index.json and queue.json from output directory to config directory
+     */
+    async migrateOldFiles() {
+        const oldIndexFile = path.join(this.config.output, 'index.json');
+        const oldQueueFile = path.join(this.config.output, 'queue.json');
+        const newIndexFile = path.join(this.configDir, '.ai-classify-index.json');
+        const newQueueFile = path.join(this.configDir, '.ai-classify-queue-tasks.json');
+        // Migrate index file
+        if (await fs.pathExists(oldIndexFile) && !(await fs.pathExists(newIndexFile))) {
+            console.log(`Migrating index file: ${oldIndexFile} -> ${newIndexFile}`);
+            await fs.move(oldIndexFile, newIndexFile);
+        }
+        // Migrate queue file
+        if (await fs.pathExists(oldQueueFile) && !(await fs.pathExists(newQueueFile))) {
+            console.log(`Migrating queue file: ${oldQueueFile} -> ${newQueueFile}`);
+            await fs.move(oldQueueFile, newQueueFile);
+        }
+    }
     async start() {
-        // Process existing queue first
+        // Scan input directory for existing files first
+        await this.scanAndEnqueue();
+        // Process existing queue (including recovered from last session)
         await this.processQueue();
         // Start watching for new files
         this.watcher = new Watcher(this.config, async (task) => {
@@ -43,9 +69,14 @@ export class AIClassify {
         if (this.watcher) {
             await this.watcher.stop();
         }
-        // Wait for current processing to complete
-        while (this.activeCount > 0) {
+        // Wait for current processing to complete (with timeout)
+        const maxWaitTime = 5000; // 最多等待5秒
+        const startTime = Date.now();
+        while (this.activeCount > 0 && Date.now() - startTime < maxWaitTime) {
             await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        if (this.activeCount > 0) {
+            console.warn(`Warning: ${this.activeCount} tasks still processing, forcing exit`);
         }
         // Save state
         await this.saveState();
@@ -74,11 +105,19 @@ export class AIClassify {
                     .then(() => {
                     this.activeCount--;
                     this.saveState();
+                    // Continue processing remaining tasks after one completes
+                    if (this.queue.pending.length > 0) {
+                        this.processQueue();
+                    }
                 })
                     .catch((error) => {
                     this.activeCount--;
                     this.queue = markFailed(this.queue, task, error.message);
                     this.saveState();
+                    // Continue processing remaining tasks after one fails
+                    if (this.queue.pending.length > 0) {
+                        this.processQueue();
+                    }
                 });
             }
         }
@@ -103,8 +142,8 @@ export class AIClassify {
         }
     }
     async saveState() {
-        await saveQueue(this.config.output, this.queue);
-        await saveIndex(this.config.output, this.index);
+        await saveQueue(this.configDir, this.queue);
+        await saveIndex(this.configDir, this.index);
     }
     async scanAndEnqueue() {
         const tasks = await scanExistingFiles(this.config);

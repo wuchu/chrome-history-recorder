@@ -7,7 +7,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { HashIndex, IndexRecord } from './types.js';
 
-const INDEX_FILE = 'index.json';
+const INDEX_FILE = '.ai-classify-index.json';
 
 export async function computeFileHash(filePath: string): Promise<string> {
   const content = await fs.readFile(filePath);
@@ -15,18 +15,24 @@ export async function computeFileHash(filePath: string): Promise<string> {
   return hash;
 }
 
-export async function loadIndex(outputDir: string): Promise<HashIndex> {
-  const indexPath = path.join(outputDir, INDEX_FILE);
+export async function loadIndex(configDir: string): Promise<HashIndex> {
+  const indexPath = path.join(configDir, INDEX_FILE);
 
   if (await fs.pathExists(indexPath)) {
-    return await fs.readJson(indexPath);
+    try {
+      return await fs.readJson(indexPath);
+    } catch (error) {
+      // Handle corrupted index file - return empty index
+      console.warn(`Warning: Corrupted index file, creating new empty index`);
+      return { processed: {} };
+    }
   }
 
   return { processed: {} };
 }
 
-export async function saveIndex(outputDir: string, index: HashIndex): Promise<void> {
-  const indexPath = path.join(outputDir, INDEX_FILE);
+export async function saveIndex(configDir: string, index: HashIndex): Promise<void> {
+  const indexPath = path.join(configDir, INDEX_FILE);
   await fs.writeJson(indexPath, index, { spaces: 2 });
 }
 
@@ -47,8 +53,8 @@ export function addProcessedRecord(
   return index;
 }
 
-export async function clearIndex(outputDir: string): Promise<void> {
-  const indexPath = path.join(outputDir, INDEX_FILE);
+export async function clearIndex(configDir: string): Promise<void> {
+  const indexPath = path.join(configDir, INDEX_FILE);
   if (await fs.pathExists(indexPath)) {
     await fs.unlink(indexPath);
   }

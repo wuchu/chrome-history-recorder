@@ -13,7 +13,12 @@ The system SHALL maintain a hash index of processed files.
 
 #### Scenario: Index file location
 - **WHEN** the system initializes
-- **THEN** the hash index SHALL be stored in the output directory
+- **THEN** the hash index SHALL be stored in the config file directory
+- **AND** the index file SHALL be named `.ai-classify-index.json`
+
+#### Scenario: Old file migration
+- **WHEN** old `output/index.json` exists and new `.ai-classify-index.json` does not exist
+- **THEN** the system SHALL migrate the old file to the new location
 
 ### Requirement: Duplicate detection
 The system SHALL use the hash index to prevent duplicate processing.

@@ -13,6 +13,10 @@ export interface Config {
   organizeBy: 'category' | 'date';
   maxFileSize: number;
   concurrency: number;
+  language?: string;
+  imgCategories?: string[];
+  txtCategories?: string[];
+  customPrompt?: string;  // Custom classification prompt for Ollama
 }
 
 export interface Task {
@@ -55,7 +59,7 @@ export const DEFAULT_CONFIG: Config = {
   ollamaEndpoint: 'http://localhost:11434',
   visionModel: 'llava',
   textModel: 'llama3',
-  patterns: ['**/*.{jpg,jpeg,png,gif,webp,bmp,pdf,txt,md}'],
+  patterns: ['**/*.{jpg,jpeg,png,gif,webp,bmp,pdf,txt,md,mp4}'],
   ignorePatterns: ['**/node_modules/**', '**/.git/**'],
   organizeBy: 'category',
   maxFileSize: 50 * 1024 * 1024, // 50MB

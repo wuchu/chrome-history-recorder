@@ -7,6 +7,15 @@ The system SHALL persist the task queue to enable resumption after restart.
 - **WHEN** the queue is modified
 - **THEN** the system SHALL save the queue state to a JSON file
 
+#### Scenario: Queue file location
+- **WHEN** the system initializes
+- **THEN** the queue file SHALL be stored in the config file directory
+- **AND** the queue file SHALL be named `.ai-classify-queue-tasks.json`
+
+#### Scenario: Old file migration
+- **WHEN** old `output/queue.json` exists and new `.ai-classify-queue-tasks.json` does not exist
+- **THEN** the system SHALL migrate the old file to the new location
+
 #### Scenario: Load queue on startup
 - **WHEN** the system starts
 - **THEN** the system SHALL load the existing queue from the JSON file
@@ -66,3 +75,17 @@ The system SHALL recover from queue corruption.
 #### Scenario: Handle corrupted queue
 - **WHEN** queue file is corrupted
 - **THEN** the system SHALL attempt to recover or create a new empty queue
+
+### Requirement: 任务队列启动处理
+系统 必须 (SHALL) 在启动时自动扫描并处理 input 目录下的现有文件。
+
+#### Scenario: 启动时扫描现有文件
+- **WHEN** 用户运行 `ai-classify start`
+- **THEN** 系统 必须 (SHALL) 扫描 input 目录下的所有文件
+- **AND** 系统 必须 (SHALL) 将未处理的文件加入任务队列
+- **AND** 系统 必须 (SHALL) 跳过已处理过的文件（基于 hash index）
+
+#### Scenario: 启动后开始监控
+- **WHEN** 现有文件扫描并入队完成
+- **THEN** 系统 必须 (SHALL) 开始监控 input 目录的变更
+- **AND** 新增或修改的文件 必须 (SHALL) 自动加入队列

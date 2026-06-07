@@ -8,7 +8,7 @@ export default defineConfig({
   manifest: {
     name: 'Media Recorder',
     description: 'Capture images and videos from web pages using DevTools API',
-    version: '0.3.0',
+    version: '0.4.0',
     permissions: [
       'activeTab',
       'storage',
@@ -19,10 +19,11 @@ export default defineConfig({
     ],
     devtools_page: 'devtools.html'
   },
-  // 浏览器启动配置 (替代已弃用的 runner)
-  // https://wxt.dev/runner.html
-  webExt: {
-    // 开发时默认打开的 URL (直接作为 chromium 参数)
+  // 浏览器启动配置 - 根据环境变量控制
+  // NO_BROWSER=1 时禁用自动启动
+  webExt: process.env.NO_BROWSER ? {
+    disabled: true
+  } : {
     chromiumArgs: [
       'https://www.baidu.com',
       '--auto-open-devtools-for-tabs'

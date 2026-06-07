@@ -12,6 +12,10 @@ export interface Config {
     organizeBy: 'category' | 'date';
     maxFileSize: number;
     concurrency: number;
+    language?: string;
+    imgCategories?: string[];
+    txtCategories?: string[];
+    customPrompt?: string;
 }
 export interface Task {
     path: string;
