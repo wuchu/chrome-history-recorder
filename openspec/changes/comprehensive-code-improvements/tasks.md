@@ -80,4 +80,4 @@
 - [x] 10.2 Run pnpm test and verify tests pass
 - [x] 10.3 Run pnpm build and verify all packages build
 - [x] 10.4 Verify proxy TypeScript migration complete
-- [ ] 10.5 Commit changes and verify CI workflows run
+- [x] 10.5 Commit changes and verify CI workflows run
