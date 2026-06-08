@@ -20,18 +20,16 @@ function getDevToolsLocale(): string {
 }
 
 // 初始化 i18n - 语言跟随 Chrome DevTools
-i18n
-  .use(initReactI18next)
-  .init({
-    resources: {
-      zh: { translation: zh },
-      en: { translation: en }
-    },
-    lng: getDevToolsLocale(),
-    fallbackLng: 'en',
-    interpolation: {
-      escapeValue: false // React 已经处理了 XSS
-    }
-  });
+i18n.use(initReactI18next).init({
+  resources: {
+    zh: { translation: zh },
+    en: { translation: en },
+  },
+  lng: getDevToolsLocale(),
+  fallbackLng: 'en',
+  interpolation: {
+    escapeValue: false, // React 已经处理了 XSS
+  },
+});
 
 export default i18n;

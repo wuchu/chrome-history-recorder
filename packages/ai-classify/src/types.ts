@@ -2,21 +2,32 @@
  * AI Classify - Type Definitions
  */
 
+/**
+ * Filename naming style options
+ */
+export type FilenameStyle =
+  | 'auto'
+  | 'fun'
+  | 'sexy'
+  | 'artistic'
+  | 'poetic'
+  | 'minimal'
+  | 'professional'
+  | 'narrative';
+
 export interface Config {
   input: string;
   output: string;
   ollamaEndpoint: string;
   visionModel: string;
-  textModel: string;
   patterns: string[];
   ignorePatterns: string[];
   organizeBy: 'category' | 'date';
   maxFileSize: number;
   concurrency: number;
   language?: string;
-  imgCategories?: string[];
-  txtCategories?: string[];
-  customPrompt?: string;  // Custom classification prompt for Ollama
+  filenameStyle?: FilenameStyle; // Preset filename naming style
+  filenameStylePrompt?: string; // Custom filename style prompt (higher priority)
 }
 
 export interface Task {
@@ -58,10 +69,9 @@ export const DEFAULT_CONFIG: Config = {
   output: './output',
   ollamaEndpoint: 'http://localhost:11434',
   visionModel: 'llava',
-  textModel: 'llama3',
-  patterns: ['**/*.{jpg,jpeg,png,gif,webp,bmp,pdf,txt,md,mp4}'],
+  patterns: ['**/*.{jpg,jpeg,png,gif,webp,bmp,mp4}'],
   ignorePatterns: ['**/node_modules/**', '**/.git/**'],
   organizeBy: 'category',
   maxFileSize: 50 * 1024 * 1024, // 50MB
-  concurrency: 3
+  concurrency: 3,
 };

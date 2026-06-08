@@ -17,11 +17,14 @@
     "chokidar": "^4.0.0",
     "commander": "^12.0.0",
     "fs-extra": "^11.2.0",
+    "inquirer": "^14.0.2",
+    "js-yaml": "^4.2.0",
     "sharp": "^0.34.5",
     "uuid": "^14.0.0"
   },
   "devDependencies": {
     "@types/fs-extra": "^11.0.0",
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^20.0.0",
     "@types/uuid": "^11.0.0",
     "typescript": "^5.6.0"

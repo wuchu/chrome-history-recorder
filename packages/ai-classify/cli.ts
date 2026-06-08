@@ -4,11 +4,15 @@
  */
 
 import { Command } from 'commander';
-import fs from 'fs-extra';
-import path from 'path';
 import { AIClassify } from './index.js';
 import { Config, DEFAULT_CONFIG } from './types.js';
-import { loadConfig, saveConfig, mergeWithCliArgs, validateConfig, formatConfigErrors } from './config.js';
+import {
+  loadConfig,
+  saveConfig,
+  mergeWithCliArgs,
+  validateConfig,
+  formatConfigErrors,
+} from './config.js';
 
 const program = new Command();
 
@@ -31,7 +35,7 @@ program
 program
   .command('start')
   .description('Start watching and classifying files')
-  .action(async (options) => {
+  .action(async (_options) => {
     const globalOptions = program.opts();
     const projectDir = process.cwd();
     const baseConfig = await loadConfig(projectDir, globalOptions.config);
@@ -42,7 +46,7 @@ program
       visionModel: globalOptions.ollamaVisionModel,
       textModel: globalOptions.ollamaTextModel,
       customPrompt: globalOptions.ollamaPrompt,
-      concurrency: globalOptions.ollamaMaxConcurrency
+      concurrency: globalOptions.ollamaMaxConcurrency,
     });
 
     // Validate configuration
@@ -80,12 +84,12 @@ program
 program
   .command('status')
   .description('Show queue and index status')
-  .action(async (options) => {
+  .action(async (_options) => {
     const globalOptions = program.opts();
     const projectDir = process.cwd();
     const baseConfig = await loadConfig(projectDir, globalOptions.config);
     const config = mergeWithCliArgs(baseConfig, {
-      output: globalOptions.output
+      output: globalOptions.output,
     });
 
     const aiClassify = new AIClassify(config);
@@ -105,12 +109,12 @@ program
 program
   .command('clear')
   .description('Clear queue and index')
-  .action(async (options) => {
+  .action(async (_options) => {
     const globalOptions = program.opts();
     const projectDir = process.cwd();
     const baseConfig = await loadConfig(projectDir, globalOptions.config);
     const config = mergeWithCliArgs(baseConfig, {
-      output: globalOptions.output
+      output: globalOptions.output,
     });
 
     const aiClassify = new AIClassify(config);
@@ -124,13 +128,13 @@ program
 program
   .command('reprocess')
   .description('Scan input directory and reprocess all files')
-  .action(async (options) => {
+  .action(async (_options) => {
     const globalOptions = program.opts();
     const projectDir = process.cwd();
     const baseConfig = await loadConfig(projectDir, globalOptions.config);
     const config = mergeWithCliArgs(baseConfig, {
       input: globalOptions.input,
-      output: globalOptions.output
+      output: globalOptions.output,
     });
 
     const aiClassify = new AIClassify(config);
@@ -146,7 +150,7 @@ program
 program
   .command('config')
   .description('Create or update configuration file')
-  .action(async (options) => {
+  .action(async (_options) => {
     const globalOptions = program.opts();
     const projectDir = process.cwd();
 
@@ -154,7 +158,7 @@ program
       ...DEFAULT_CONFIG,
       input: globalOptions.input || DEFAULT_CONFIG.input,
       output: globalOptions.output || DEFAULT_CONFIG.output,
-      ollamaEndpoint: globalOptions.ollamaEndpoint || DEFAULT_CONFIG.ollamaEndpoint
+      ollamaEndpoint: globalOptions.ollamaEndpoint || DEFAULT_CONFIG.ollamaEndpoint,
     };
 
     await saveConfig(projectDir, config);

@@ -1,21 +1,23 @@
 /**
  * AI Classify - Type Definitions
  */
+/**
+ * Filename naming style options
+ */
+export type FilenameStyle = 'auto' | 'fun' | 'sexy' | 'artistic' | 'poetic' | 'minimal' | 'professional' | 'narrative';
 export interface Config {
     input: string;
     output: string;
     ollamaEndpoint: string;
     visionModel: string;
-    textModel: string;
     patterns: string[];
     ignorePatterns: string[];
     organizeBy: 'category' | 'date';
     maxFileSize: number;
     concurrency: number;
     language?: string;
-    imgCategories?: string[];
-    txtCategories?: string[];
-    customPrompt?: string;
+    filenameStyle?: FilenameStyle;
+    filenameStylePrompt?: string;
 }
 export interface Task {
     path: string;

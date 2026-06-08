@@ -8,6 +8,14 @@ import path from 'path';
 import { Config, Task } from './types.js';
 import { computeFileHash } from './hashIndex.js';
 
+// Supported media file extensions
+const MEDIA_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.mp4'];
+
+function isMediaFile(filePath: string): boolean {
+  const ext = path.extname(filePath).toLowerCase();
+  return MEDIA_EXTENSIONS.includes(ext);
+}
+
 export class Watcher {
   private watcher: FSWatcher | null = null;
   private config: Config;
@@ -27,8 +35,8 @@ export class Watcher {
       ignoreInitial: false,
       awaitWriteFinish: {
         stabilityThreshold: 2000,
-        pollInterval: 100
-      }
+        pollInterval: 100,
+      },
     });
 
     this.watcher.on('add', async (filePath: string) => {
@@ -63,6 +71,11 @@ export class Watcher {
         return;
       }
 
+      // Skip non-media files
+      if (!isMediaFile(filePath)) {
+        return;
+      }
+
       // Check file size
       if (stat.size > this.config.maxFileSize) {
         console.log(`File too large, skipping: ${filePath}`);
@@ -84,7 +97,7 @@ export class Watcher {
         hash,
         addedAt: new Date().toISOString(),
         priority: 0,
-        status: 'pending'
+        status: 'pending',
       };
 
       this.onFileDetected(task);
@@ -110,6 +123,11 @@ export async function scanExistingFiles(config: Config): Promise<Task[]> {
       if (stat.isDirectory()) {
         await scan(filePath);
       } else if (stat.isFile()) {
+        // Skip non-media files
+        if (!isMediaFile(filePath)) {
+          continue;
+        }
+
         // Check size and patterns
         if (stat.size > config.maxFileSize || stat.size === 0) {
           continue;
@@ -121,7 +139,7 @@ export async function scanExistingFiles(config: Config): Promise<Task[]> {
           hash,
           addedAt: new Date().toISOString(),
           priority: 0,
-          status: 'pending'
+          status: 'pending',
         });
       }
     }

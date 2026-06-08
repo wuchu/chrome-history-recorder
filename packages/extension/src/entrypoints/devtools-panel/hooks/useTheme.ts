@@ -64,6 +64,6 @@ export function useTheme(): UseThemeReturn {
     themeMode,
     systemDark,
     themeClass,
-    changeTheme
+    changeTheme,
   };
 }

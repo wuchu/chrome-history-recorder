@@ -1,0 +1,7 @@
+{
+  "input": "./fixtures/images",
+  "output": "./test-output",
+  "ollamaEndpoint": "http://localhost:11434",
+  "visionModel": "gemma4:e4b",
+  "language": "zh-CN"
+}

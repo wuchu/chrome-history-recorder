@@ -6,7 +6,7 @@ export const DEFAULT_VIDEO_TYPES = {
   mp4: true,
   webm: true,
   mov: false,
-  avi: false
+  avi: false,
 } as const;
 
 export const DEFAULT_STORAGE_PATH = '~/Downloads/chrome-history';

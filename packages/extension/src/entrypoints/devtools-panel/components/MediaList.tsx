@@ -26,7 +26,12 @@ interface MediaItemProps {
   isVideo?: boolean;
 }
 
-const MediaItem = memo(function MediaItem({ item, formatSize, truncateUrl, isVideo }: MediaItemProps) {
+const MediaItem = memo(function MediaItem({
+  item,
+  formatSize,
+  truncateUrl,
+  isVideo,
+}: MediaItemProps) {
   return (
     <div className={`${styles.mediaItem} ${isVideo ? styles.videoItem : ''}`}>
       <div className={styles.mediaInfo}>
@@ -62,7 +67,7 @@ const MediaList = memo(function MediaList({
   formatSize,
   truncateUrl,
   onClearImages,
-  onClearVideos
+  onClearVideos,
 }: MediaListProps) {
   const { t } = useTranslation();
 

@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Request, Response, Application } from 'express';
 import cors from 'cors';
 import crypto from 'crypto';
 import fs from 'fs';
@@ -7,25 +7,27 @@ import os from 'os';
 import { logger, requestLoggerMiddleware, isDebugEnabled } from './logger.js';
 import debugRouter, { updateRestartStatus, getDebugStatus } from './routes/debug.js';
 
-const app = express();
+const app: Application = express();
 
 // Configuration
-const PORT = process.env.PORT || 3777;
-const DEFAULT_STORAGE_PATH = path.join(os.homedir(), 'Downloads', 'chrome-history');
+const PORT: number = parseInt(process.env.PORT || '3777', 10);
+const DEFAULT_STORAGE_PATH: string = path.join(os.homedir(), 'Downloads', 'chrome-history');
 const MAX_BODY_SIZE = '100mb';
 const GRACEFUL_SHUTDOWN_TIMEOUT = 5000; // 5 seconds
 
 // Current storage path (can be configured)
-let currentStoragePath = DEFAULT_STORAGE_PATH;
+let currentStoragePath: string = DEFAULT_STORAGE_PATH;
 
 // Server reference for graceful shutdown
-let server = null;
+let server: ReturnType<Application['listen']> | null = null;
 let isShuttingDown = false;
 
 // Middleware
-app.use(cors({
-  origin: ['chrome-extension://*', 'http://localhost:*', 'http://127.0.0.1:*']
-}));
+app.use(
+  cors({
+    origin: ['chrome-extension://*', 'http://localhost:*', 'http://127.0.0.1:*'],
+  })
+);
 app.use(express.json({ limit: MAX_BODY_SIZE }));
 
 // Request logging middleware (only in debug mode)
@@ -38,7 +40,7 @@ if (isDebugEnabled()) {
 /**
  * Generate SHA-256 hash and truncate to 16 characters
  */
-function generateHash(buffer) {
+function generateHash(buffer: Buffer): string {
   const hash = crypto.createHash('sha256').update(buffer).digest('hex');
   return hash.substring(0, 16);
 }
@@ -46,8 +48,8 @@ function generateHash(buffer) {
 /**
  * Get extension from MIME type
  */
-function getExtensionFromMimeType(mimeType) {
-  const mimeToExt = {
+function getExtensionFromMimeType(mimeType: string): string {
+  const mimeToExt: Record<string, string> = {
     'image/jpeg': '.jpg',
     'image/png': '.png',
     'image/gif': '.gif',
@@ -62,28 +64,15 @@ function getExtensionFromMimeType(mimeType) {
     'video/quicktime': '.mov',
     'video/x-msvideo': '.avi',
     'video/ogg': '.ogv',
-    'video/x-matroska': '.mkv'
+    'video/x-matroska': '.mkv',
   };
   return mimeToExt[mimeType] || '.bin';
 }
 
 /**
- * Get extension from URL
- */
-function getExtensionFromUrl(url) {
-  try {
-    const urlPath = new URL(url).pathname;
-    const ext = path.extname(urlPath);
-    return ext || '.bin';
-  } catch {
-    return '.bin';
-  }
-}
-
-/**
  * Generate filename using content hash
  */
-function generateFilename(hash, mimeType) {
+function generateFilename(hash: string, mimeType: string): string {
   const ext = getExtensionFromMimeType(mimeType);
   return `${hash}${ext}`;
 }
@@ -91,7 +80,7 @@ function generateFilename(hash, mimeType) {
 /**
  * Get date-based directory path (YYYY-MM-DD)
  */
-function getDateDirectory() {
+function getDateDirectory(): string {
   const today = new Date().toISOString().split('T')[0];
   return path.join(currentStoragePath, today);
 }
@@ -99,7 +88,7 @@ function getDateDirectory() {
 /**
  * Ensure directory exists
  */
-function ensureDirectory(dirPath) {
+function ensureDirectory(dirPath: string): void {
   if (!fs.existsSync(dirPath)) {
     fs.mkdirSync(dirPath, { recursive: true, mode: 0o755 });
     logger.debug(`Created directory: ${dirPath}`);
@@ -109,7 +98,7 @@ function ensureDirectory(dirPath) {
 /**
  * Expand ~ to home directory
  */
-function expandPath(filePath) {
+function expandPath(filePath: string): string {
   if (filePath.startsWith('~')) {
     return path.join(os.homedir(), filePath.slice(1));
   }
@@ -119,10 +108,11 @@ function expandPath(filePath) {
 /**
  * Validate path
  */
-function validatePath(filePath) {
+function validatePath(filePath: string): boolean {
   if (!filePath || filePath.trim() === '') {
     return false;
   }
+  // eslint-disable-next-line no-control-regex
   const illegalChars = /[<>:"|?*\x00-\x1f]/;
   if (illegalChars.test(filePath)) {
     return false;
@@ -139,7 +129,7 @@ function validatePath(filePath) {
 /**
  * Parse base64 data
  */
-function parseBase64Data(data) {
+function parseBase64Data(data: string): string {
   if (data.includes(',')) {
     const parts = data.split(',');
     return parts[1];
@@ -148,7 +138,7 @@ function parseBase64Data(data) {
 }
 
 // Graceful shutdown handler
-async function gracefulShutdown(signal) {
+async function gracefulShutdown(signal: string): Promise<void> {
   if (isShuttingDown) {
     logger.warn('Already shutting down, ignoring signal');
     return;
@@ -178,8 +168,9 @@ async function gracefulShutdown(signal) {
     logger.info('Cleanup completed');
     clearTimeout(timeout);
     process.exit(0);
-  } catch (error) {
-    logger.error('Cleanup failed', { error: error.message });
+  } catch (error: unknown) {
+    const err = error as Error;
+    logger.error('Cleanup failed', { error: err.message });
     process.exit(1);
   }
 }
@@ -196,7 +187,7 @@ ensureDirectory(currentStoragePath);
 /**
  * POST /save-image - Save an image
  */
-app.post('/save-image', (req, res) => {
+app.post('/save-image', (req: Request, res: Response) => {
   try {
     const { url, mimeType, data } = req.body;
 
@@ -220,7 +211,7 @@ app.post('/save-image', (req, res) => {
         hash: hash,
         filePath: filePath,
         filename: filename,
-        duplicate: true
+        duplicate: true,
       });
     }
 
@@ -232,20 +223,21 @@ app.post('/save-image', (req, res) => {
       hash: hash,
       filePath: filePath,
       filename: filename,
-      duplicate: false
+      duplicate: false,
     });
-  } catch (error) {
-    logger.error('Error saving image', { error: error.message });
-    res.status(500).json({ error: error.message });
+  } catch (error: unknown) {
+    const err = error as Error;
+    logger.error('Error saving image', { error: err.message });
+    res.status(500).json({ error: err.message });
   }
 });
 
 /**
  * GET /images - List all images
  */
-app.get('/images', (req, res) => {
+app.get('/images', (req: Request, res: Response) => {
   try {
-    const date = req.query.date;
+    const date = req.query.date as string | undefined;
     let searchPath = currentStoragePath;
 
     if (date) {
@@ -255,8 +247,16 @@ app.get('/images', (req, res) => {
       }
     }
 
-    const images = [];
-    const walkDir = (dir) => {
+    const images: Array<{
+      hash: string;
+      filename: string;
+      filePath: string;
+      size: number;
+      date: string;
+      timestamp: Date;
+    }> = [];
+
+    const walkDir = (dir: string) => {
       const files = fs.readdirSync(dir);
       for (const file of files) {
         const filePath = path.join(dir, file);
@@ -272,7 +272,7 @@ app.get('/images', (req, res) => {
             filePath: filePath,
             size: stat.size,
             date: fileDate,
-            timestamp: stat.birthtime
+            timestamp: stat.birthtime,
           });
         }
       }
@@ -281,19 +281,20 @@ app.get('/images', (req, res) => {
     walkDir(searchPath);
     logger.debug(`Listed ${images.length} images`);
     res.json(images);
-  } catch (error) {
-    logger.error('Error listing images', { error: error.message });
-    res.status(500).json({ error: error.message });
+  } catch (error: unknown) {
+    const err = error as Error;
+    logger.error('Error listing images', { error: err.message });
+    res.status(500).json({ error: err.message });
   }
 });
 
 /**
  * GET /images/:hash - Retrieve specific image
  */
-app.get('/images/:hash', (req, res) => {
+app.get('/images/:hash', (req: Request, res: Response) => {
   try {
     const hash = req.params.hash;
-    const walkDir = (dir) => {
+    const walkDir = (dir: string): string | null => {
       const files = fs.readdirSync(dir);
       for (const file of files) {
         const filePath = path.join(dir, file);
@@ -315,19 +316,20 @@ app.get('/images/:hash', (req, res) => {
     }
 
     res.sendFile(filePath);
-  } catch (error) {
-    logger.error('Error retrieving image', { error: error.message });
-    res.status(500).json({ error: error.message });
+  } catch (error: unknown) {
+    const err = error as Error;
+    logger.error('Error retrieving image', { error: err.message });
+    res.status(500).json({ error: err.message });
   }
 });
 
 /**
  * DELETE /images/:hash - Delete specific image
  */
-app.delete('/images/:hash', (req, res) => {
+app.delete('/images/:hash', (req: Request, res: Response) => {
   try {
     const hash = req.params.hash;
-    const walkDir = (dir) => {
+    const walkDir = (dir: string): string | null => {
       const files = fs.readdirSync(dir);
       for (const file of files) {
         const filePath = path.join(dir, file);
@@ -351,26 +353,27 @@ app.delete('/images/:hash', (req, res) => {
     fs.unlinkSync(filePath);
     logger.info(`Image deleted: ${hash}`);
     res.json({ success: true, message: 'Image deleted' });
-  } catch (error) {
-    logger.error('Error deleting image', { error: error.message });
-    res.status(500).json({ error: error.message });
+  } catch (error: unknown) {
+    const err = error as Error;
+    logger.error('Error deleting image', { error: err.message });
+    res.status(500).json({ error: err.message });
   }
 });
 
 /**
  * GET /health - Health check (with debug info in debug mode)
  */
-app.get('/health', (req, res) => {
+app.get('/health', (req: Request, res: Response) => {
   try {
     const getMediaStats = () => {
       const stats = {
         totalImages: 0,
         totalVideos: 0,
         totalImageSize: 0,
-        totalVideoSize: 0
+        totalVideoSize: 0,
       };
       const videoExtensions = ['.mp4', '.webm', '.mov', '.avi', '.ogv', '.mkv'];
-      const walkDir = (dir) => {
+      const walkDir = (dir: string) => {
         if (!fs.existsSync(dir)) return;
         const files = fs.readdirSync(dir);
         for (const file of files) {
@@ -396,7 +399,7 @@ app.get('/health', (req, res) => {
 
     const mediaStats = getMediaStats();
 
-    const response = {
+    const response: Record<string, unknown> = {
       status: 'ok',
       uptime: Math.floor(process.uptime()),
       storagePath: currentStoragePath,
@@ -404,7 +407,7 @@ app.get('/health', (req, res) => {
       totalVideos: mediaStats.totalVideos,
       totalImageSize: mediaStats.totalImageSize,
       totalVideoSize: mediaStats.totalVideoSize,
-      totalSize: mediaStats.totalImageSize + mediaStats.totalVideoSize
+      totalSize: mediaStats.totalImageSize + mediaStats.totalVideoSize,
     };
 
     // Add debug info in debug mode
@@ -415,16 +418,17 @@ app.get('/health', (req, res) => {
     }
 
     res.json(response);
-  } catch (error) {
-    logger.error('Health check failed', { error: error.message });
-    res.status(500).json({ status: 'error', error: error.message });
+  } catch (error: unknown) {
+    const err = error as Error;
+    logger.error('Health check failed', { error: err.message });
+    res.status(500).json({ status: 'error', error: err.message });
   }
 });
 
 /**
  * POST /config/storage-path - Update storage path
  */
-app.post('/config/storage-path', (req, res) => {
+app.post('/config/storage-path', (req: Request, res: Response) => {
   try {
     const { path: newPath } = req.body;
 
@@ -447,20 +451,21 @@ app.post('/config/storage-path', (req, res) => {
     res.json({
       success: true,
       storagePath: currentStoragePath,
-      message: 'Storage path updated'
+      message: 'Storage path updated',
     });
-  } catch (error) {
-    logger.error('Error updating storage path', { error: error.message });
-    res.status(500).json({ error: error.message });
+  } catch (error: unknown) {
+    const err = error as Error;
+    logger.error('Error updating storage path', { error: err.message });
+    res.status(500).json({ error: err.message });
   }
 });
 
 /**
  * GET /config/storage-path - Get current storage path
  */
-app.get('/config/storage-path', (req, res) => {
+app.get('/config/storage-path', (req: Request, res: Response) => {
   res.json({
-    storagePath: currentStoragePath
+    storagePath: currentStoragePath,
   });
 });
 

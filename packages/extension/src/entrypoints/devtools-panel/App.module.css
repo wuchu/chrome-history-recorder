@@ -28,14 +28,8 @@
 
   /* Chrome DevTools native font stack */
   font-family:
-    '.SFNSDisplay-Regular',
-    'Helvetica Neue',
-    'Lucida Grande',
-    'Segoe UI',
-    'Roboto',
-    'Ubuntu',
-    'Cantarell',
-    sans-serif;
+    '.SFNSDisplay-Regular', 'Helvetica Neue', 'Lucida Grande', 'Segoe UI', 'Roboto', 'Ubuntu',
+    'Cantarell', sans-serif;
   font-size: 11px;
   line-height: 1.4;
 

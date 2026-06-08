@@ -41,7 +41,7 @@ export default defineBackground(() => {
         captureCount: 0,
         lastCaptureTime: new Date(),
         skippedCount: 0,
-        failedCount: 0
+        failedCount: 0,
       });
       captureStates.delete(removedTabId);
     }
@@ -57,19 +57,19 @@ export default defineBackground(() => {
         captureCount: 0,
         lastCaptureTime: new Date(),
         skippedCount: 0,
-        failedCount: 0
+        failedCount: 0,
       };
       sendResponse(state);
     } else if (message.type === 'setCaptureEnabled') {
       const tabId = message.tabId;
       const enabled = message.enabled;
-      let state = captureStates.get(tabId) || {
+      const state = captureStates.get(tabId) || {
         isEnabled: false,
         capturedImages: [],
         captureCount: 0,
         lastCaptureTime: new Date(),
         skippedCount: 0,
-        failedCount: 0
+        failedCount: 0,
       };
       state.isEnabled = enabled;
       captureStates.set(tabId, state);
@@ -110,7 +110,7 @@ export default defineBackground(() => {
         totalFailed,
         totalSize,
         activeTabs: captureStates.size,
-        activeDevTools: Array.from(devToolsConnections.values()).filter(v => v).length
+        activeDevTools: Array.from(devToolsConnections.values()).filter((v) => v).length,
       });
     }
     return true; // Keep message channel open for async response

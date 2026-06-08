@@ -15,7 +15,12 @@ interface MediaTabsProps {
  * 媒体标签切换组件
  * 规则: rerender-memo - 使用 memo 避免不必要的重渲染
  */
-const MediaTabs = memo(function MediaTabs({ activeTab, onTabChange, imageCount, videoCount }: MediaTabsProps) {
+const MediaTabs = memo(function MediaTabs({
+  activeTab,
+  onTabChange,
+  imageCount,
+  videoCount,
+}: MediaTabsProps) {
   const { t } = useTranslation();
 
   const handleImagesClick = useCallback(() => onTabChange('images'), [onTabChange]);

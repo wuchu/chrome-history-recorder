@@ -12,15 +12,17 @@ interface StatusBarProps {
  * 状态栏组件
  * 规则: rerender-memo - 使用 memo 避免不必要的重渲染
  */
-const StatusBar = memo(function StatusBar({ serviceOnline, isCapturing, onToggleCapture }: StatusBarProps) {
+const StatusBar = memo(function StatusBar({
+  serviceOnline,
+  isCapturing,
+  onToggleCapture,
+}: StatusBarProps) {
   const { t } = useTranslation();
 
   return (
     <div className={styles.container}>
       <div className={styles.serviceStatus}>
-        <div
-          className={`${styles.statusDot} ${serviceOnline ? styles.online : styles.offline}`}
-        />
+        <div className={`${styles.statusDot} ${serviceOnline ? styles.online : styles.offline}`} />
         <span>{serviceOnline ? t('status.serviceOnline') : t('status.serviceOffline')}</span>
       </div>
       <div className={styles.captureStatus}>

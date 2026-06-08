@@ -5,7 +5,7 @@ import {
   DEFAULT_STORAGE_PATH,
   DEFAULT_PROXY_ENDPOINT,
   DEFAULT_MIN_IMAGE_SIZE_KB,
-  DEFAULT_MIN_VIDEO_SIZE_MB
+  DEFAULT_MIN_VIDEO_SIZE_MB,
 } from '../constants';
 
 type ThemeMode = 'auto' | 'light' | 'dark';
@@ -63,8 +63,12 @@ export function useConfig(options: UseConfigOptions = {}): UseConfigReturn {
   useEffect(() => {
     const loadConfig = async () => {
       const saved = await chrome.storage.local.get([
-        'storagePath', 'proxyEndpoint', 'minImageSizeKB',
-        'minVideoSizeMB', 'enabledVideoTypes', 'themeMode'
+        'storagePath',
+        'proxyEndpoint',
+        'minImageSizeKB',
+        'minVideoSizeMB',
+        'enabledVideoTypes',
+        'themeMode',
       ]);
 
       if (saved.storagePath) setStoragePath(saved.storagePath);
@@ -78,7 +82,7 @@ export function useConfig(options: UseConfigOptions = {}): UseConfigReturn {
           mp4: saved.enabledVideoTypes.includes('video/mp4'),
           webm: saved.enabledVideoTypes.includes('video/webm'),
           mov: saved.enabledVideoTypes.includes('video/quicktime'),
-          avi: saved.enabledVideoTypes.includes('video/x-msvideo')
+          avi: saved.enabledVideoTypes.includes('video/x-msvideo'),
         });
       }
     };
@@ -99,7 +103,7 @@ export function useConfig(options: UseConfigOptions = {}): UseConfigReturn {
       await fetch(`${proxyEndpoint}/config/storage-path`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: storagePath })
+        body: JSON.stringify({ path: storagePath }),
       });
       alert(t('alerts.pathSaved'));
     } catch {
@@ -131,7 +135,7 @@ export function useConfig(options: UseConfigOptions = {}): UseConfigReturn {
     options.onVideoTypesChange?.(enabledTypes);
     chrome.storage.local.set({
       minVideoSizeMB,
-      enabledVideoTypes: enabledTypes
+      enabledVideoTypes: enabledTypes,
     });
   }, [videoTypes, minVideoSizeMB, options]);
 
@@ -151,6 +155,6 @@ export function useConfig(options: UseConfigOptions = {}): UseConfigReturn {
     saveStoragePath,
     saveProxyEndpoint,
     saveImageFilters,
-    saveVideoFilters
+    saveVideoFilters,
   };
 }

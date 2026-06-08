@@ -26,7 +26,11 @@ interface StatsSectionProps {
  * 统计面板组件
  * 规则: rerender-memo - 使用 memo 避免不必要的重渲染
  */
-const StatsSection = memo(function StatsSection({ imageStats, videoStats, formatSize }: StatsSectionProps) {
+const StatsSection = memo(function StatsSection({
+  imageStats,
+  videoStats,
+  formatSize,
+}: StatsSectionProps) {
   const { t } = useTranslation();
 
   return (

@@ -5,23 +5,23 @@ import { Config, Task } from './types.js';
 export declare class AIClassify {
     private config;
     private configDir;
-    private queue;
+    private pending;
+    private processing;
+    private failed;
     private index;
     private watcher;
-    private processing;
+    private processingFlag;
     private activeCount;
+    private eventCount;
     constructor(config: Config, configDir: string);
     initialize(): Promise<void>;
-    /**
-     * Migrate old index.json and queue.json from output directory to config directory
-     */
-    private migrateOldFiles;
     start(): Promise<void>;
     stop(): Promise<void>;
     addTask(task: Task): Promise<void>;
     private processQueue;
     private processTask;
-    private saveState;
+    private shouldCompact;
+    private doCompact;
     scanAndEnqueue(): Promise<void>;
     getStatus(): {
         queue: {

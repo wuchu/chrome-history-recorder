@@ -2,20 +2,22 @@
  * AI Classify - Main Module
  */
 import fs from 'fs-extra';
-import path from 'path';
-import { loadQueue, saveQueue, enqueue, dequeue, markComplete, markFailed, getQueueStats } from './queue.js';
-import { loadIndex, saveIndex, hasBeenProcessed, addProcessedRecord } from './hashIndex.js';
+import { initEventLog, loadState, appendEvent, compact as compactEventLog, clearEventLog, createEnqueueEvent, createStartEvent, createCompleteEvent, createFailEvent, COMPACT_THRESHOLD_LINES } from './eventLog.js';
+import { hasBeenProcessed, addProcessedRecord } from './hashIndex.js';
 import { classifyFile, checkOllamaHealth } from './classifier.js';
 import { organizeFile, createIndexRecord } from './organizer.js';
 import { Watcher, scanExistingFiles } from './watcher.js';
 export class AIClassify {
     config;
     configDir;
-    queue;
-    index;
+    pending = [];
+    processing = [];
+    failed = [];
+    index = { processed: {} };
     watcher = null;
-    processing = false;
+    processingFlag = false;
     activeCount = 0;
+    eventCount = 0;
     constructor(config, configDir) {
         this.config = config;
         this.configDir = configDir;
@@ -23,34 +25,22 @@ export class AIClassify {
     async initialize() {
         // Ensure output directory exists
         await fs.ensureDir(this.config.output);
-        // Migrate old files if they exist
-        await this.migrateOldFiles();
-        // Load queue and index from configDir
-        this.queue = await loadQueue(this.configDir);
-        this.index = await loadIndex(this.configDir);
+        // Initialize event log
+        await initEventLog(this.configDir);
+        // Load state from event log
+        const state = await loadState(this.configDir, this.config.output);
+        this.pending = state.pending;
+        this.processing = state.processing;
+        this.failed = state.failed;
+        this.index = state.index;
+        // Compact if needed
+        if (state.needsCompact) {
+            await this.doCompact();
+        }
         // Check Ollama health
         const healthy = await checkOllamaHealth(this.config);
         if (!healthy) {
             console.warn('Warning: Ollama service not available');
-        }
-    }
-    /**
-     * Migrate old index.json and queue.json from output directory to config directory
-     */
-    async migrateOldFiles() {
-        const oldIndexFile = path.join(this.config.output, 'index.json');
-        const oldQueueFile = path.join(this.config.output, 'queue.json');
-        const newIndexFile = path.join(this.configDir, '.ai-classify-index.json');
-        const newQueueFile = path.join(this.configDir, '.ai-classify-queue-tasks.json');
-        // Migrate index file
-        if (await fs.pathExists(oldIndexFile) && !(await fs.pathExists(newIndexFile))) {
-            console.log(`Migrating index file: ${oldIndexFile} -> ${newIndexFile}`);
-            await fs.move(oldIndexFile, newIndexFile);
-        }
-        // Migrate queue file
-        if (await fs.pathExists(oldQueueFile) && !(await fs.pathExists(newQueueFile))) {
-            console.log(`Migrating queue file: ${oldQueueFile} -> ${newQueueFile}`);
-            await fs.move(oldQueueFile, newQueueFile);
         }
     }
     async start() {
@@ -78,8 +68,8 @@ export class AIClassify {
         if (this.activeCount > 0) {
             console.warn(`Warning: ${this.activeCount} tasks still processing, forcing exit`);
         }
-        // Save state
-        await this.saveState();
+        // Compact on normal exit
+        await this.doCompact();
         console.log('AI Classify stopped');
     }
     async addTask(task) {
@@ -88,83 +78,148 @@ export class AIClassify {
             console.log(`File already processed: ${task.path}`);
             return;
         }
-        this.queue = enqueue(this.queue, task);
-        await this.saveState();
+        // Check if already in queue
+        const inPending = this.pending.some(t => t.path === task.path);
+        const inProcessing = this.processing.some(t => t.path === task.path);
+        if (inPending || inProcessing) {
+            console.log(`File already in queue: ${task.path}`);
+            return;
+        }
+        // Add to pending
+        this.pending.push(task);
+        this.pending.sort((a, b) => b.priority - a.priority);
+        // Append ENQUEUE event
+        await appendEvent(this.configDir, createEnqueueEvent(task));
+        this.eventCount++;
         // Trigger processing
-        if (!this.processing) {
+        if (!this.processingFlag) {
             this.processQueue();
         }
     }
     async processQueue() {
-        this.processing = true;
-        while (this.queue.pending.length > 0 && this.activeCount < this.config.concurrency) {
-            const task = dequeue(this.queue);
+        this.processingFlag = true;
+        while (this.pending.length > 0 && this.activeCount < this.config.concurrency) {
+            const task = this.pending.shift();
             if (task) {
                 this.activeCount++;
                 this.processTask(task)
                     .then(() => {
                     this.activeCount--;
-                    this.saveState();
                     // Continue processing remaining tasks after one completes
-                    if (this.queue.pending.length > 0) {
+                    if (this.pending.length > 0) {
                         this.processQueue();
                     }
                 })
                     .catch((error) => {
                     this.activeCount--;
-                    this.queue = markFailed(this.queue, task, error.message);
-                    this.saveState();
                     // Continue processing remaining tasks after one fails
-                    if (this.queue.pending.length > 0) {
+                    if (this.pending.length > 0) {
                         this.processQueue();
                     }
                 });
             }
         }
-        this.processing = false;
+        this.processingFlag = false;
     }
     async processTask(task) {
+        // Check if input file exists
+        if (!await fs.pathExists(task.path)) {
+            console.warn(`Input file not found: ${task.path}`);
+            await appendEvent(this.configDir, createFailEvent(task.path, 'Input file not found'));
+            this.eventCount++;
+            this.failed.push({ ...task, status: 'failed', error: 'Input file not found' });
+            return;
+        }
         try {
+            // Append START event
+            const startEvent = createStartEvent(task);
+            await appendEvent(this.configDir, startEvent);
+            this.eventCount++;
+            // Update memory state
+            task.status = 'processing';
+            this.processing.push(task);
             console.log(`Processing: ${task.path}`);
             // Classify file
             const classification = await classifyFile(task.path, this.config);
             // Organize file
             const { outputPath, hash } = await organizeFile(task.path, classification, this.config, task.hash);
-            // Update index
+            // Append COMPLETE event
+            await appendEvent(this.configDir, createCompleteEvent(task.path, hash, outputPath, classification.category));
+            this.eventCount++;
+            // Update memory state
+            this.processing = this.processing.filter(t => t.path !== task.path);
             const record = createIndexRecord(outputPath, classification.category, task.path);
             this.index = addProcessedRecord(this.index, hash, record);
-            // Mark complete
-            this.queue = markComplete(this.queue, task);
             console.log(`Completed: ${task.path} -> ${outputPath}`);
+            // Check if should compact
+            if (this.shouldCompact()) {
+                await this.doCompact();
+            }
         }
         catch (error) {
-            throw new Error(`Failed to process ${task.path}: ${error.message}`);
+            // Append FAIL event
+            await appendEvent(this.configDir, createFailEvent(task.path, error.message));
+            this.eventCount++;
+            // Update memory state
+            this.processing = this.processing.filter(t => t.path !== task.path);
+            this.failed.push({ ...task, status: 'failed', error: error.message });
+            console.error(`Failed: ${task.path} - ${error.message}`);
+            // Check if should compact
+            if (this.shouldCompact()) {
+                await this.doCompact();
+            }
         }
     }
-    async saveState() {
-        await saveQueue(this.configDir, this.queue);
-        await saveIndex(this.configDir, this.index);
+    shouldCompact() {
+        return this.eventCount > COMPACT_THRESHOLD_LINES;
+    }
+    async doCompact() {
+        await compactEventLog(this.configDir, {
+            pending: this.pending,
+            processing: this.processing,
+            failed: this.failed,
+            index: this.index
+        });
+        this.eventCount = 0;
     }
     async scanAndEnqueue() {
         const tasks = await scanExistingFiles(this.config);
+        let queuedCount = 0;
         for (const task of tasks) {
             if (!hasBeenProcessed(this.index, task.hash)) {
-                this.queue = enqueue(this.queue, task);
+                // Check if already in queue
+                const inPending = this.pending.some(t => t.path === task.path);
+                const inProcessing = this.processing.some(t => t.path === task.path);
+                if (!inPending && !inProcessing) {
+                    this.pending.push(task);
+                    await appendEvent(this.configDir, createEnqueueEvent(task));
+                    this.eventCount++;
+                    queuedCount++;
+                }
             }
         }
-        await this.saveState();
-        console.log(`Scanned ${tasks.length} files, queued ${getQueueStats(this.queue).pending}`);
+        // Sort by priority
+        this.pending.sort((a, b) => b.priority - a.priority);
+        console.log(`Scanned ${tasks.length} files, queued ${queuedCount}`);
     }
     getStatus() {
         return {
-            queue: getQueueStats(this.queue),
+            queue: {
+                pending: this.pending.length,
+                processing: this.processing.length,
+                failed: this.failed.length,
+                total: this.pending.length + this.processing.length + this.failed.length
+            },
             indexSize: Object.keys(this.index.processed).length
         };
     }
     async clear() {
-        this.queue = { pending: [], processing: [], failed: [] };
+        this.pending = [];
+        this.processing = [];
+        this.failed = [];
         this.index = { processed: {} };
-        await this.saveState();
+        this.eventCount = 0;
+        await clearEventLog(this.configDir);
     }
 }
 //# sourceMappingURL=index.js.map

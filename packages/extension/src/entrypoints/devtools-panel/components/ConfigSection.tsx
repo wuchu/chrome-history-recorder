@@ -52,33 +52,51 @@ const ConfigSection = memo(function ConfigSection({
   onSaveStoragePath,
   onSaveProxyEndpoint,
   onSaveImageFilters,
-  onSaveVideoFilters
+  onSaveVideoFilters,
 }: ConfigSectionProps) {
   const { t } = useTranslation();
 
-  const handleVideoTypeChange = useCallback((type: keyof VideoTypes, checked: boolean) => {
-    onVideoTypesChange({ ...videoTypes, [type]: checked });
-  }, [videoTypes, onVideoTypesChange]);
+  const handleVideoTypeChange = useCallback(
+    (type: keyof VideoTypes, checked: boolean) => {
+      onVideoTypesChange({ ...videoTypes, [type]: checked });
+    },
+    [videoTypes, onVideoTypesChange]
+  );
 
-  const handleThemeChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
-    onThemeChange(e.target.value as ThemeMode);
-  }, [onThemeChange]);
+  const handleThemeChange = useCallback(
+    (e: React.ChangeEvent<HTMLSelectElement>) => {
+      onThemeChange(e.target.value as ThemeMode);
+    },
+    [onThemeChange]
+  );
 
-  const handleStoragePathChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    onStoragePathChange(e.target.value);
-  }, [onStoragePathChange]);
+  const handleStoragePathChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      onStoragePathChange(e.target.value);
+    },
+    [onStoragePathChange]
+  );
 
-  const handleProxyEndpointChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    onProxyEndpointChange(e.target.value);
-  }, [onProxyEndpointChange]);
+  const handleProxyEndpointChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      onProxyEndpointChange(e.target.value);
+    },
+    [onProxyEndpointChange]
+  );
 
-  const handleMinImageSizeChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    onMinImageSizeChange(Number(e.target.value));
-  }, [onMinImageSizeChange]);
+  const handleMinImageSizeChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      onMinImageSizeChange(Number(e.target.value));
+    },
+    [onMinImageSizeChange]
+  );
 
-  const handleMinVideoSizeChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    onMinVideoSizeChange(Number(e.target.value));
-  }, [onMinVideoSizeChange]);
+  const handleMinVideoSizeChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      onMinVideoSizeChange(Number(e.target.value));
+    },
+    [onMinVideoSizeChange]
+  );
 
   return (
     <div className={styles.container}>
@@ -87,11 +105,7 @@ const ConfigSection = memo(function ConfigSection({
       {/* Theme setting */}
       <div className={styles.configItem}>
         <label className={styles.label}>{t('theme.label')}:</label>
-        <select
-          value={themeMode}
-          onChange={handleThemeChange}
-          className={styles.select}
-        >
+        <select value={themeMode} onChange={handleThemeChange} className={styles.select}>
           <option value="auto">{t('theme.auto')}</option>
           <option value="light">{t('theme.light')}</option>
           <option value="dark">{t('theme.dark')}</option>

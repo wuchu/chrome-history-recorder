@@ -1,31 +1,99 @@
 /**
- * AI Classify - Configuration Management
+ * AI Classify - Configuration Management (YAML Format)
  */
 import fs from 'fs-extra';
 import path from 'path';
+import yaml from 'js-yaml';
 import { DEFAULT_CONFIG } from './types.js';
-const CONFIG_FILE = '.ai-classify.json';
+const CONFIG_FILE = '.ai-classify.yaml';
 /**
  * Resolve the config file path and return the absolute path
  */
-export function resolveConfigPath(projectDir, configFile) {
-    return configFile
-        ? path.resolve(configFile) // Absolute or relative path
-        : path.join(projectDir, CONFIG_FILE); // Default path
+export function resolveConfigPath(projectDir) {
+    return path.join(projectDir, CONFIG_FILE);
 }
-export async function loadConfig(projectDir, configFile) {
-    // Resolve config file path
-    const configPath = resolveConfigPath(projectDir, configFile);
+/**
+ * Check if config file exists in the given directory
+ */
+export async function checkConfigExists(projectDir) {
+    const configPath = resolveConfigPath(projectDir);
+    return fs.pathExists(configPath);
+}
+/**
+ * Load configuration from YAML file
+ */
+export async function loadConfig(projectDir) {
+    const configPath = resolveConfigPath(projectDir);
     if (await fs.pathExists(configPath)) {
-        const loaded = await fs.readJson(configPath);
-        return { ...DEFAULT_CONFIG, ...loaded };
+        try {
+            const content = await fs.readFile(configPath, 'utf-8');
+            const loaded = yaml.load(content);
+            return { ...DEFAULT_CONFIG, ...loaded };
+        }
+        catch (error) {
+            if (error.mark) {
+                throw new Error(`Config file syntax error at line ${error.mark.line}: ${error.message}`);
+            }
+            throw new Error(`Failed to load config: ${error.message}`);
+        }
     }
     // Return default config if no file exists
     return DEFAULT_CONFIG;
 }
+/**
+ * Save configuration to YAML file
+ */
 export async function saveConfig(projectDir, config) {
-    const configPath = path.join(projectDir, CONFIG_FILE);
-    await fs.writeJson(configPath, config, { spaces: 2 });
+    const configPath = resolveConfigPath(projectDir);
+    const content = yaml.dump(config, {
+        indent: 2,
+        lineWidth: -1,
+        noRefs: true,
+        quotingType: '"',
+        forceQuotes: false
+    });
+    await fs.writeFile(configPath, content, 'utf-8');
+}
+/**
+ * Get a config value by key (supports nested keys like 'patterns[0]')
+ */
+export async function getConfigValue(projectDir, key) {
+    const config = await loadConfig(projectDir);
+    // Support nested keys and array indices
+    const parts = key.split(/\.|\[|\]/).filter(p => p !== '');
+    let value = config;
+    for (const part of parts) {
+        if (value === undefined || value === null) {
+            return undefined;
+        }
+        value = value[part];
+    }
+    return value;
+}
+/**
+ * Set a config value by key (supports nested keys like 'patterns[0]')
+ */
+export async function setConfigValue(projectDir, key, value) {
+    const config = await loadConfig(projectDir);
+    // Support nested keys and array indices
+    const parts = key.split(/\.|\[|\]/).filter(p => p !== '');
+    let obj = config;
+    for (let i = 0; i < parts.length - 1; i++) {
+        const part = parts[i];
+        if (obj[part] === undefined) {
+            obj[part] = {};
+        }
+        obj = obj[part];
+    }
+    const lastPart = parts[parts.length - 1];
+    obj[lastPart] = value;
+    await saveConfig(projectDir, config);
+}
+/**
+ * List all config values
+ */
+export async function listConfig(projectDir) {
+    return await loadConfig(projectDir);
 }
 export function mergeWithCliArgs(config, args) {
     return {
@@ -35,9 +103,9 @@ export function mergeWithCliArgs(config, args) {
         output: args.output !== undefined ? args.output : config.output,
         ollamaEndpoint: args.ollamaEndpoint !== undefined ? args.ollamaEndpoint : config.ollamaEndpoint,
         visionModel: args.visionModel !== undefined ? args.visionModel : config.visionModel,
-        textModel: args.textModel !== undefined ? args.textModel : config.textModel,
-        customPrompt: args.customPrompt !== undefined ? args.customPrompt : config.customPrompt,
-        concurrency: args.concurrency !== undefined ? args.concurrency : config.concurrency
+        concurrency: args.concurrency !== undefined ? args.concurrency : config.concurrency,
+        filenameStyle: args.filenameStyle !== undefined ? args.filenameStyle : config.filenameStyle,
+        filenameStylePrompt: args.filenameStylePrompt !== undefined ? args.filenameStylePrompt : config.filenameStylePrompt
     };
 }
 export function validateConfig(config) {
@@ -50,6 +118,9 @@ export function validateConfig(config) {
     }
     if (!config.ollamaEndpoint) {
         errors.push('Ollama endpoint is required');
+    }
+    if (!config.visionModel) {
+        errors.push('Vision model is required');
     }
     // Validate concurrency range (recommended 1-20)
     if (config.concurrency < 1) {
@@ -66,6 +137,6 @@ export function validateConfig(config) {
 export function formatConfigErrors(errors) {
     if (errors.length === 0)
         return '';
-    return `Configuration errors:\n  - ${errors.join('\n  - ')}\n\nPlease provide required options via CLI or config file.\nExample: ai-classify start -i ./input -o ./output --ollama-endpoint http://localhost:11434`;
+    return `Configuration errors:\n  - ${errors.join('\n  - ')}\n\nPlease provide required options via config file.\nRun 'ai-classify init' to create a configuration file interactively.`;
 }
 //# sourceMappingURL=config.js.map

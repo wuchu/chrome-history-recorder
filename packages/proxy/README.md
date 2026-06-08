@@ -24,21 +24,21 @@ pnpm dev
 
 ## API
 
-| 端点 | 方法 | 说明 |
-|------|------|------|
-| `/health` | GET | 健康检查 |
-| `/save-image` | POST | 保存媒体 |
-| `/images` | GET | 列出图片 |
-| `/images/:hash` | GET | 获取图片 |
-| `/images/:hash` | DELETE | 删除图片 |
+| 端点                   | 方法     | 说明         |
+| ---------------------- | -------- | ------------ |
+| `/health`              | GET      | 健康检查     |
+| `/save-image`          | POST     | 保存媒体     |
+| `/images`              | GET      | 列出图片     |
+| `/images/:hash`        | GET      | 获取图片     |
+| `/images/:hash`        | DELETE   | 删除图片     |
 | `/config/storage-path` | GET/POST | 存储路径配置 |
 
 ### 调试端点（仅 DEBUG_MODE=true）
 
-| 端点 | 方法 | 说明 |
-|------|------|------|
-| `/debug/status` | GET | 服务状态 |
-| `/debug/logs` | GET | 内存日志 |
+| 端点             | 方法 | 说明     |
+| ---------------- | ---- | -------- |
+| `/debug/status`  | GET  | 服务状态 |
+| `/debug/logs`    | GET  | 内存日志 |
 | `/debug/restart` | POST | 手动重启 |
 
 ## 存储

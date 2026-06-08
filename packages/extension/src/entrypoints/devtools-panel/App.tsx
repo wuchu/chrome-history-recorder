@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import StatusBar from './components/StatusBar';
 import StatsSection from './components/StatsSection';
@@ -9,14 +9,12 @@ import { useNetworkListener } from './hooks/useNetworkListener';
 import { useConfig } from './hooks/useConfig';
 import {
   DEFAULT_VIDEO_TYPES,
-  DEFAULT_STORAGE_PATH,
   DEFAULT_PROXY_ENDPOINT,
   DEFAULT_MIN_IMAGE_SIZE_KB,
-  DEFAULT_MIN_VIDEO_SIZE_MB
+  DEFAULT_MIN_VIDEO_SIZE_MB,
 } from './constants';
 import styles from './App.module.css';
 
-type ThemeMode = 'auto' | 'light' | 'dark';
 type ActiveTab = 'images' | 'videos';
 
 /**
@@ -35,7 +33,7 @@ function truncateUrl(url: string): string {
 }
 
 function App() {
-  const { t } = useTranslation();
+  const { t: _t } = useTranslation();
 
   // 规则: rerender-split-combined-hooks - 简单状态保持在组件内
   const [activeTab, setActiveTab] = useState<ActiveTab>('images');
@@ -48,7 +46,7 @@ function App() {
   const [proxyEndpoint, setProxyEndpoint] = useState(DEFAULT_PROXY_ENDPOINT);
   const [minImageSizeKB, setMinImageSizeKB] = useState(DEFAULT_MIN_IMAGE_SIZE_KB);
   const [minVideoSizeMB, setMinVideoSizeMB] = useState(DEFAULT_MIN_VIDEO_SIZE_MB);
-  const [videoTypes, setVideoTypes] = useState(DEFAULT_VIDEO_TYPES);
+  const [videoTypes, _setVideoTypes] = useState(DEFAULT_VIDEO_TYPES);
 
   // 网络监听器 hook
   const {
@@ -61,12 +59,12 @@ function App() {
     toggleCapture,
     clearImages,
     clearVideos,
-    checkServiceHealth
+    checkServiceHealth,
   } = useNetworkListener({
     proxyEndpoint,
     minImageSizeKB,
     minVideoSizeMB,
-    videoTypes
+    videoTypes,
   });
 
   // 配置管理 hook
@@ -74,9 +72,9 @@ function App() {
     onProxyEndpointChange: (endpoint) => setProxyEndpoint(endpoint),
     onMinImageSizeChange: (size) => setMinImageSizeKB(size),
     onMinVideoSizeChange: (size) => setMinVideoSizeMB(size),
-    onVideoTypesChange: (types) => {
+    onVideoTypesChange: (_types) => {
       // Network listener 内部会处理这个
-    }
+    },
   });
 
   // Theme class - 使用 useMemo 缓存计算结果

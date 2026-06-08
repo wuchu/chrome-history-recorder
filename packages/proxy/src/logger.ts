@@ -1,17 +1,29 @@
-import pino from 'pino';
+import pino, { Logger } from 'pino';
+import { Request, Response, NextFunction } from 'express';
 
 // 日志级别优先级
 const LOG_LEVELS = ['DEBUG', 'INFO', 'WARN', 'ERROR'];
 
+interface LogEntry {
+  level: string;
+  timestamp: string;
+  message: string;
+  context: Record<string, unknown>;
+}
+
 // 内存日志缓存（环形队列）
 class LogBuffer {
+  private maxSize: number;
+  private buffer: LogEntry[];
+  private index: number;
+
   constructor(maxSize = 100) {
     this.maxSize = maxSize;
     this.buffer = [];
     this.index = 0;
   }
 
-  push(log) {
+  push(log: LogEntry) {
     if (this.buffer.length < this.maxSize) {
       this.buffer.push(log);
     } else {
@@ -20,7 +32,7 @@ class LogBuffer {
     }
   }
 
-  getAll(limit = null) {
+  getAll(limit: number | null = null): LogEntry[] {
     if (limit) {
       return this.buffer.slice(-limit);
     }
@@ -34,24 +46,30 @@ class LogBuffer {
 }
 
 // 创建 pino logger
-const createLogger = (level = 'INFO') => {
+const createLogger = (level = 'INFO'): Logger => {
   const isDebugMode = process.env.DEBUG_MODE === 'true';
 
   return pino({
     level: level.toLowerCase(),
-    transport: isDebugMode ? {
-      target: 'pino-pretty',
-      options: {
-        colorize: true,
-        translateTime: 'SYS:standard',
-        ignore: 'pid,hostname'
-      }
-    } : undefined
+    transport: isDebugMode
+      ? {
+          target: 'pino-pretty',
+          options: {
+            colorize: true,
+            translateTime: 'SYS:standard',
+            ignore: 'pid,hostname',
+          },
+        }
+      : undefined,
   });
 };
 
 // 日志管理器
 class LogManager {
+  public logger: Logger;
+  private buffer: LogBuffer;
+  private isDebugMode: boolean;
+
   constructor() {
     const level = process.env.LOG_LEVEL || 'INFO';
     this.logger = createLogger(level);
@@ -67,25 +85,32 @@ class LogManager {
       debug: this.logger.debug.bind(this.logger),
       info: this.logger.info.bind(this.logger),
       warn: this.logger.warn.bind(this.logger),
-      error: this.logger.error.bind(this.logger)
+      error: this.logger.error.bind(this.logger),
     };
 
     for (const level of LOG_LEVELS) {
-      this.logger[level.toLowerCase()] = (msg, context = {}) => {
-        const logEntry = {
+      const levelKey = level.toLowerCase();
+      // Cast to unknown first to avoid type error
+      (
+        this.logger as unknown as Record<
+          string,
+          (msg: string, context?: Record<string, unknown>) => void
+        >
+      )[levelKey] = (msg: string, context: Record<string, unknown> = {}) => {
+        const logEntry: LogEntry = {
           level,
           timestamp: new Date().toISOString(),
           message: msg,
-          context
+          context,
         };
 
         this.buffer.push(logEntry);
-        original[level.toLowerCase()](context, msg);
+        original[levelKey](context, msg);
       };
     }
   }
 
-  getLogs(limit = null) {
+  getLogs(limit: number | null = null): LogEntry[] {
     return this.buffer.getAll(limit);
   }
 
@@ -93,7 +118,7 @@ class LogManager {
     this.buffer.clear();
   }
 
-  isDebugEnabled() {
+  isDebugEnabled(): boolean {
     return this.isDebugMode;
   }
 }
@@ -107,7 +132,7 @@ export const clearLogs = logManager.clearLogs.bind(logManager);
 export const isDebugEnabled = logManager.isDebugEnabled.bind(logManager);
 
 // 请求日志中间件
-export function requestLoggerMiddleware(req, res, next) {
+export function requestLoggerMiddleware(req: Request, res: Response, next: NextFunction) {
   const startTime = Date.now();
   const requestId = Math.random().toString(36).substring(7);
 
@@ -116,7 +141,7 @@ export function requestLoggerMiddleware(req, res, next) {
     requestId,
     method: req.method,
     path: req.path,
-    query: req.query
+    query: req.query,
   });
 
   // 记录响应
@@ -127,11 +152,11 @@ export function requestLoggerMiddleware(req, res, next) {
       method: req.method,
       path: req.path,
       statusCode: res.statusCode,
-      durationMs: duration
+      durationMs: duration,
     });
   });
 
   next();
 }
 
-export default logManager;// test comment
+export default logManager;

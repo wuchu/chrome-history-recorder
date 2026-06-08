@@ -44,7 +44,7 @@ export function useNetworkListener({
   proxyEndpoint,
   minImageSizeKB,
   minVideoSizeMB,
-  videoTypes
+  videoTypes,
 }: UseNetworkListenerOptions): UseNetworkListenerReturn {
   const [serviceOnline, setIsOnline] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
@@ -54,13 +54,13 @@ export function useNetworkListener({
     captured: 0,
     skipped: 0,
     failed: 0,
-    size: 0
+    size: 0,
   });
   const [videoStats, setVideoStats] = useState<VideoStats>({
     captured: 0,
     skipped: 0,
     failed: 0,
-    size: 0
+    size: 0,
   });
 
   const networkListenerRef = useRef<NetworkListener | null>(null);
@@ -85,7 +85,7 @@ export function useNetworkListener({
       captured: stats.capturedImageCount,
       skipped: stats.skippedSvgCount,
       failed: stats.failedImageCount,
-      size: stats.totalImageSize
+      size: stats.totalImageSize,
     });
     setImages(networkListenerRef.current.getCapturedImages());
 
@@ -93,7 +93,7 @@ export function useNetworkListener({
       captured: stats.capturedVideoCount,
       skipped: stats.skippedVideoCount,
       failed: stats.failedVideoCount,
-      size: stats.totalVideoSize
+      size: stats.totalVideoSize,
     });
     setVideos(networkListenerRef.current.getCapturedVideos());
   }, []);
@@ -102,7 +102,7 @@ export function useNetworkListener({
   const toggleCapture = useCallback(async () => {
     if (!networkListenerRef.current) return;
 
-    setIsCapturing(prev => !prev);
+    setIsCapturing((prev) => !prev);
 
     if (!isCapturing) {
       networkListenerRef.current.startListening();
@@ -116,7 +116,7 @@ export function useNetworkListener({
       await chrome.runtime.sendMessage({
         type: 'setCaptureEnabled',
         tabId: currentTabIdRef.current,
-        enabled: !isCapturing
+        enabled: !isCapturing,
       });
     }
   }, [isCapturing]);
@@ -158,7 +158,7 @@ export function useNetworkListener({
       if (currentTabIdRef.current) {
         await chrome.runtime.sendMessage({
           type: 'devToolsOpened',
-          tabId: currentTabIdRef.current
+          tabId: currentTabIdRef.current,
         });
       }
 
@@ -183,7 +183,7 @@ export function useNetworkListener({
       if (currentTabIdRef.current) {
         chrome.runtime.sendMessage({
           type: 'devToolsClosed',
-          tabId: currentTabIdRef.current
+          tabId: currentTabIdRef.current,
         });
       }
     };
@@ -229,6 +229,6 @@ export function useNetworkListener({
     toggleCapture,
     clearImages,
     clearVideos,
-    checkServiceHealth
+    checkServiceHealth,
   };
 }

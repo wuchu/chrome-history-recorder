@@ -27,7 +27,7 @@ export async function organizeFile(
   await fs.ensureDir(targetDir);
 
   // Generate target filename
-  let targetName = sanitizeFilename(classification.suggestedName) + ext;
+  const targetName = sanitizeFilename(classification.suggestedName) + ext;
   let outputPath = path.join(targetDir, targetName);
 
   // Handle filename conflicts
@@ -41,13 +41,13 @@ export async function organizeFile(
   await fs.utimes(outputPath, stat.atime, stat.mtime);
 
   // Compute hash for index
-  const hash = existingHash || await computeHash(sourcePath);
+  const hash = existingHash || (await computeHash(sourcePath));
 
   return { outputPath, hash };
 }
 
 async function resolveConflict(outputPath: string): Promise<string> {
-  if (!await fs.pathExists(outputPath)) {
+  if (!(await fs.pathExists(outputPath))) {
     return outputPath;
   }
 
@@ -59,7 +59,7 @@ async function resolveConflict(outputPath: string): Promise<string> {
   for (let i = 1; i <= 100; i++) {
     const newName = `${base}_${i}${ext}`;
     const newPath = path.join(dir, newName);
-    if (!await fs.pathExists(newPath)) {
+    if (!(await fs.pathExists(newPath))) {
       return newPath;
     }
   }
@@ -70,11 +70,14 @@ async function resolveConflict(outputPath: string): Promise<string> {
 }
 
 function sanitizeFilename(name: string): string {
-  // Remove/replace invalid characters
-  return name
-    .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
-    .replace(/\s+/g, '_')
-    .slice(0, 100); // Limit length
+  // Remove/replace invalid characters (including control characters)
+  return (
+    name
+      // eslint-disable-next-line no-control-regex
+      .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
+      .replace(/\s+/g, '_')
+      .slice(0, 100)
+  ); // Limit length
 }
 
 async function computeHash(filePath: string): Promise<string> {
@@ -92,6 +95,6 @@ export function createIndexRecord(
     outputPath,
     processedAt: new Date().toISOString(),
     category,
-    originalPath
+    originalPath,
   };
 }

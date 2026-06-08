@@ -72,11 +72,11 @@ pnpm build
 
 ## 子模块文档
 
-| 模块 | 说明 | 文档 |
-|------|------|------|
-| extension | Chrome 扩展，DevTools 面板 | [README.md](packages/extension/README.md) |
-| proxy | 本地代理服务，文件存储 | [README.md](packages/proxy/README.md) |
-| ai-classify | AI 文件分类 CLI 工具 | [README.md](packages/ai-classify/README.md) |
+| 模块        | 说明                       | 文档                                        |
+| ----------- | -------------------------- | ------------------------------------------- |
+| extension   | Chrome 扩展，DevTools 面板 | [README.md](packages/extension/README.md)   |
+| proxy       | 本地代理服务，文件存储     | [README.md](packages/proxy/README.md)       |
+| ai-classify | AI 文件分类 CLI 工具       | [README.md](packages/ai-classify/README.md) |
 
 ## 技术栈
 

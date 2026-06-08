@@ -38,9 +38,7 @@ export async function convertToPng(filePath: string): Promise<string> {
 
   const outputPath = path.join(tmpDir, `${uuidv4()}.png`);
 
-  await sharp(filePath)
-    .png()
-    .toFile(outputPath);
+  await sharp(filePath).png().toFile(outputPath);
 
   return outputPath;
 }

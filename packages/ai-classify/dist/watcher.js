@@ -5,6 +5,12 @@ import chokidar from 'chokidar';
 import fs from 'fs-extra';
 import path from 'path';
 import { computeFileHash } from './hashIndex.js';
+// Supported media file extensions
+const MEDIA_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.mp4'];
+function isMediaFile(filePath) {
+    const ext = path.extname(filePath).toLowerCase();
+    return MEDIA_EXTENSIONS.includes(ext);
+}
 export class Watcher {
     watcher = null;
     config;
@@ -49,6 +55,10 @@ export class Watcher {
             if (!stat.isFile()) {
                 return;
             }
+            // Skip non-media files
+            if (!isMediaFile(filePath)) {
+                return;
+            }
             // Check file size
             if (stat.size > this.config.maxFileSize) {
                 console.log(`File too large, skipping: ${filePath}`);
@@ -89,6 +99,10 @@ export async function scanExistingFiles(config) {
                 await scan(filePath);
             }
             else if (stat.isFile()) {
+                // Skip non-media files
+                if (!isMediaFile(filePath)) {
+                    continue;
+                }
                 // Check size and patterns
                 if (stat.size > config.maxFileSize || stat.size === 0) {
                     continue;

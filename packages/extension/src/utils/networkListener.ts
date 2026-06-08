@@ -3,11 +3,13 @@
  * This module runs in the DevTools panel context and monitors all network requests
  */
 
+import type { ChromeNetworkRequest } from './networkTypes';
+
 export interface MediaRequest {
   url: string;
   mimeType: string;
   size: number;
-  request: any;
+  request: ChromeNetworkRequest | { hash: string; filename: string; captureTime: Date };
   type: 'image' | 'video';
 }
 
@@ -22,15 +24,8 @@ export class NetworkListener {
   private proxyEndpoint: string = 'http://localhost:3777';
 
   // Filter settings
-  private enabledImageTypes: Set<string> = new Set([
-    'image/jpeg',
-    'image/png',
-    'image/webp'
-  ]);
-  private enabledVideoTypes: Set<string> = new Set([
-    'video/mp4',
-    'video/webm'
-  ]);
+  private enabledImageTypes: Set<string> = new Set(['image/jpeg', 'image/png', 'image/webp']);
+  private enabledVideoTypes: Set<string> = new Set(['video/mp4', 'video/webm']);
   private minFileSize: number = 10 * 1024; // 10KB default for images
   private minVideoSize: number = 1 * 1024 * 1024; // 1MB default for videos
   private domainWhitelist: Set<string> = new Set(); // Empty = all domains allowed
@@ -46,7 +41,7 @@ export class NetworkListener {
     'image/bmp',
     'image/tiff',
     'image/x-icon',
-    'image/vnd.microsoft.icon'
+    'image/vnd.microsoft.icon',
   ];
 
   /**
@@ -55,9 +50,9 @@ export class NetworkListener {
   private readonly SUPPORTED_VIDEO_TYPES = [
     'video/mp4',
     'video/webm',
-    'video/quicktime',  // MOV
-    'video/x-msvideo',  // AVI
-    'video/ogg'         // OGV
+    'video/quicktime', // MOV
+    'video/x-msvideo', // AVI
+    'video/ogg', // OGV
   ];
 
   /**
@@ -107,7 +102,7 @@ export class NetworkListener {
   /**
    * Handle each network request
    */
-  private async handleRequest(request: any): Promise<void> {
+  private async handleRequest(request: ChromeNetworkRequest): Promise<void> {
     if (!this.isListening) return;
 
     // Check if request is an image or video
@@ -148,7 +143,7 @@ export class NetworkListener {
         mimeType,
         size,
         request,
-        type: 'image'
+        type: 'image',
       };
 
       // Add to queue and process
@@ -167,7 +162,7 @@ export class NetworkListener {
         mimeType,
         size,
         request,
-        type: 'video'
+        type: 'video',
       };
 
       // Add to queue and process
@@ -179,7 +174,12 @@ export class NetworkListener {
   /**
    * Apply filter rules
    */
-  private applyFilters(mimeType: string, size: number, url: string, mediaType: 'image' | 'video'): boolean {
+  private applyFilters(
+    mimeType: string,
+    size: number,
+    url: string,
+    mediaType: 'image' | 'video'
+  ): boolean {
     if (mediaType === 'image') {
       // 1. Check image type filter
       if (!this.enabledImageTypes.has(mimeType)) {
@@ -214,7 +214,7 @@ export class NetworkListener {
           console.log(`Filtered out by domain: ${hostname}`);
           return false;
         }
-      } catch (error) {
+      } catch {
         console.warn(`Failed to parse URL: ${url}`);
         return false;
       }
@@ -254,62 +254,58 @@ export class NetworkListener {
    * Capture media content and send to proxy
    */
   private async captureAndSendMedia(mediaRequest: MediaRequest): Promise<void> {
-    try {
-      // Get content using DevTools API
-      const content = await this.getMediaContent(mediaRequest.request);
+    // Get content using DevTools API
+    const content = await this.getMediaContent(mediaRequest.request);
 
-      if (!content) {
-        throw new Error('Failed to get media content');
-      }
+    if (!content) {
+      throw new Error('Failed to get media content');
+    }
 
-      // Send to proxy service (use same endpoint for both image and video)
-      const response = await fetch(`${this.proxyEndpoint}/save-image`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          url: mediaRequest.url,
-          mimeType: mediaRequest.mimeType,
-          data: content
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error(`Proxy returned ${response.status}`);
-      }
-
-      const result = await response.json();
-
-      // Add to appropriate captured list
-      const capturedItem: MediaRequest = {
+    // Send to proxy service (use same endpoint for both image and video)
+    const response = await fetch(`${this.proxyEndpoint}/save-image`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
         url: mediaRequest.url,
         mimeType: mediaRequest.mimeType,
-        size: mediaRequest.size,
-        request: {
-          hash: result.hash,
-          filename: result.filename,
-          captureTime: new Date()
-        },
-        type: mediaRequest.type
-      };
+        data: content,
+      }),
+    });
 
-      if (mediaRequest.type === 'image') {
-        this.capturedImages.push(capturedItem);
-      } else {
-        this.capturedVideos.push(capturedItem);
-      }
-
-      console.log(`Captured ${mediaRequest.type}: ${result.filename}`);
-    } catch (error) {
-      throw error;
+    if (!response.ok) {
+      throw new Error(`Proxy returned ${response.status}`);
     }
+
+    const result = await response.json();
+
+    // Add to appropriate captured list
+    const capturedItem: MediaRequest = {
+      url: mediaRequest.url,
+      mimeType: mediaRequest.mimeType,
+      size: mediaRequest.size,
+      request: {
+        hash: result.hash,
+        filename: result.filename,
+        captureTime: new Date(),
+      },
+      type: mediaRequest.type,
+    };
+
+    if (mediaRequest.type === 'image') {
+      this.capturedImages.push(capturedItem);
+    } else {
+      this.capturedVideos.push(capturedItem);
+    }
+
+    console.log(`Captured ${mediaRequest.type}: ${result.filename}`);
   }
 
   /**
    * Get media content from request
    */
-  private async getMediaContent(request: any): Promise<string | null> {
+  private async getMediaContent(request: ChromeNetworkRequest): Promise<string | null> {
     try {
       return new Promise((resolve, reject) => {
         request.getContent((content: string, encoding: string) => {
@@ -345,7 +341,7 @@ export class NetworkListener {
   /**
    * Get MIME type from response headers
    */
-  private getMimeType(request: any): string | null {
+  private getMimeType(request: ChromeNetworkRequest): string | null {
     const headers = request.response.headers;
     for (const header of headers) {
       if (header.name.toLowerCase() === 'content-type') {
@@ -358,7 +354,7 @@ export class NetworkListener {
   /**
    * Get content length from response headers
    */
-  private getContentLength(request: any): number {
+  private getContentLength(request: ChromeNetworkRequest): number {
     const headers = request.response.headers;
     for (const header of headers) {
       if (header.name.toLowerCase() === 'content-length') {
@@ -394,7 +390,7 @@ export class NetworkListener {
       failedImageCount: this.failedImageCount,
       failedVideoCount: this.failedVideoCount,
       totalImageSize: this.capturedImages.reduce((sum, img) => sum + img.size, 0),
-      totalVideoSize: this.capturedVideos.reduce((sum, vid) => sum + vid.size, 0)
+      totalVideoSize: this.capturedVideos.reduce((sum, vid) => sum + vid.size, 0),
     };
   }
 
@@ -469,7 +465,7 @@ export class NetworkListener {
       enabledVideoTypes: Array.from(this.enabledVideoTypes),
       minFileSize: this.minFileSize,
       minVideoSize: this.minVideoSize,
-      domainWhitelist: Array.from(this.domainWhitelist)
+      domainWhitelist: Array.from(this.domainWhitelist),
     };
   }
 
