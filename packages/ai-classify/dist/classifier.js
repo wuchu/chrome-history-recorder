@@ -5,7 +5,7 @@ import axios from 'axios';
 import fs from 'fs-extra';
 import path from 'path';
 import { preprocessImage, cleanupTempFile as cleanupImageTemp } from './imagePreprocessor.js';
-import { extractFrame, cleanupTempFile as cleanupVideoTemp, checkFfmpegAvailable } from './videoFrameExtractor.js';
+import { extractFrame, cleanupTempFile as cleanupVideoTemp, checkFfmpegAvailable, } from './videoFrameExtractor.js';
 const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'];
 const VIDEO_EXTENSIONS = ['.mp4'];
 /**
@@ -39,8 +39,7 @@ const buildPrompt = (preset) => {
     const isZh = preset.language?.startsWith('zh-');
     // Determine style prompt (custom > preset > default)
     const style = preset.filenameStyle || 'auto';
-    const stylePrompt = preset.filenameStylePrompt ||
-        (isZh ? STYLE_PROMPTS_ZH[style] : STYLE_PROMPTS_EN[style]);
+    const stylePrompt = preset.filenameStylePrompt || (isZh ? STYLE_PROMPTS_ZH[style] : STYLE_PROMPTS_EN[style]);
     if (isZh) {
         return `识别这张图片。
 输出格式: 分类 | 文件名
@@ -60,11 +59,11 @@ Example: cat | lazy_cat_sunbathing_on_window`.trim();
  * Sanitize filename - allow Chinese, remove only filesystem-forbidden characters
  */
 function sanitizeFilename(name) {
-    return name
-        .replace(/[\/\\:*?"<>|]/g, '') // Remove filesystem forbidden characters
+    return (name
+        .replace(/[/\\:*?"<>|]/g, '') // Remove filesystem forbidden characters
         .replace(/\s+/g, '_') // Spaces to underscores
         .trim()
-        .slice(0, 50) || 'unnamed'; // Length limit, fallback to 'unnamed'
+        .slice(0, 50) || 'unnamed'); // Length limit, fallback to 'unnamed'
 }
 /**
  * Sanitize category - lowercase, trim
@@ -88,25 +87,25 @@ function parseClassificationResult(content, originalPath) {
     const cleanContent = content.trim();
     // 1. Try pipe-separated format: "cat | kitty" or "猫咪 | 可爱的小猫"
     if (cleanContent.includes('|')) {
-        const parts = cleanContent.split('|').map(s => s.trim());
+        const parts = cleanContent.split('|').map((s) => s.trim());
         if (parts.length >= 2 && parts[0] && parts[1]) {
             return {
                 category: sanitizeCategory(parts[0]),
                 suggestedName: sanitizeFilename(parts[1]),
                 tags: [],
-                confidence: 0.8
+                confidence: 0.8,
             };
         }
     }
     // 2. Try space-separated (first line): "cat kitty"
     const firstLine = cleanContent.split('\n')[0].trim();
-    const words = firstLine.split(/\s+/).filter(w => w.length > 0);
+    const words = firstLine.split(/\s+/).filter((w) => w.length > 0);
     if (words.length >= 2) {
         return {
             category: sanitizeCategory(words[0]),
             suggestedName: sanitizeFilename(words.slice(1).join('_')),
             tags: [],
-            confidence: 0.6
+            confidence: 0.6,
         };
     }
     // 3. Try JSON format (backward compatibility)
@@ -118,7 +117,7 @@ function parseClassificationResult(content, originalPath) {
                 category: sanitizeCategory(parsed.category || 'unknown'),
                 suggestedName: sanitizeFilename(parsed.suggestedName || getBasename(originalPath)),
                 tags: parsed.tags || [],
-                confidence: parsed.confidence || 0.5
+                confidence: parsed.confidence || 0.5,
             };
         }
         catch {
@@ -130,7 +129,7 @@ function parseClassificationResult(content, originalPath) {
         category: 'unknown',
         suggestedName: getBasename(originalPath),
         tags: [],
-        confidence: 0.1
+        confidence: 0.1,
     };
 }
 export async function checkOllamaHealth(config) {
@@ -138,8 +137,8 @@ export async function checkOllamaHealth(config) {
         const response = await axios.get(`${config.ollamaEndpoint}/api/tags`, {
             timeout: 5000,
             headers: {
-                'Authorization': 'Bearer ollama'
-            }
+                Authorization: 'Bearer ollama',
+            },
         });
         return response.status === 200;
     }
@@ -167,15 +166,15 @@ async function classifyImage(filePath, config) {
                 {
                     role: 'user',
                     content: prompt,
-                    images: [base64Image]
-                }
+                    images: [base64Image],
+                },
             ],
-            stream: false
+            stream: false,
         }, {
             timeout: 60000,
             headers: {
-                'Authorization': 'Bearer ollama'
-            }
+                Authorization: 'Bearer ollama',
+            },
         });
         const content = response.data.message?.content || '';
         return parseClassificationResult(content, filePath);
@@ -194,7 +193,7 @@ async function classifyVideo(filePath, config) {
             category: 'video',
             suggestedName: getBasename(filePath),
             tags: ['video', 'unprocessed'],
-            confidence: 0.2
+            confidence: 0.2,
         };
     }
     const framePath = await extractFrame(filePath);
@@ -208,15 +207,15 @@ async function classifyVideo(filePath, config) {
                 {
                     role: 'user',
                     content: prompt,
-                    images: [base64Image]
-                }
+                    images: [base64Image],
+                },
             ],
-            stream: false
+            stream: false,
         }, {
             timeout: 60000,
             headers: {
-                'Authorization': 'Bearer ollama'
-            }
+                Authorization: 'Bearer ollama',
+            },
         });
         const content = response.data.message?.content || '';
         const result = parseClassificationResult(content, filePath);
@@ -238,7 +237,7 @@ export async function classifyFile(filePath, config) {
         category: 'other',
         suggestedName: getBasename(filePath),
         tags: ['non-media'],
-        confidence: 0.1
+        confidence: 0.1,
     };
 }
 //# sourceMappingURL=classifier.js.map

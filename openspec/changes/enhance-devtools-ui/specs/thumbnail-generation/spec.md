@@ -1,0 +1,1 @@
+../../specs/thumbnail-generation/spec.md

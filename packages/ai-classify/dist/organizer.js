@@ -17,7 +17,7 @@ export async function organizeFile(sourcePath, classification, config, existingH
     // Ensure directory exists
     await fs.ensureDir(targetDir);
     // Generate target filename
-    let targetName = sanitizeFilename(classification.suggestedName) + ext;
+    const targetName = sanitizeFilename(classification.suggestedName) + ext;
     let outputPath = path.join(targetDir, targetName);
     // Handle filename conflicts
     outputPath = await resolveConflict(outputPath);
@@ -27,11 +27,11 @@ export async function organizeFile(sourcePath, classification, config, existingH
     const stat = await fs.stat(sourcePath);
     await fs.utimes(outputPath, stat.atime, stat.mtime);
     // Compute hash for index
-    const hash = existingHash || await computeHash(sourcePath);
+    const hash = existingHash || (await computeHash(sourcePath));
     return { outputPath, hash };
 }
 async function resolveConflict(outputPath) {
-    if (!await fs.pathExists(outputPath)) {
+    if (!(await fs.pathExists(outputPath))) {
         return outputPath;
     }
     const dir = path.dirname(outputPath);
@@ -41,7 +41,7 @@ async function resolveConflict(outputPath) {
     for (let i = 1; i <= 100; i++) {
         const newName = `${base}_${i}${ext}`;
         const newPath = path.join(dir, newName);
-        if (!await fs.pathExists(newPath)) {
+        if (!(await fs.pathExists(newPath))) {
             return newPath;
         }
     }
@@ -50,11 +50,12 @@ async function resolveConflict(outputPath) {
     return path.join(dir, `${base}_${timestamp}${ext}`);
 }
 function sanitizeFilename(name) {
-    // Remove/replace invalid characters
-    return name
+    // Remove/replace invalid characters (including control characters)
+    return (name
+        // eslint-disable-next-line no-control-regex
         .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
         .replace(/\s+/g, '_')
-        .slice(0, 100); // Limit length
+        .slice(0, 100)); // Limit length
 }
 async function computeHash(filePath) {
     const crypto = await import('crypto');
@@ -66,7 +67,7 @@ export function createIndexRecord(outputPath, category, originalPath) {
         outputPath,
         processedAt: new Date().toISOString(),
         category,
-        originalPath
+        originalPath,
     };
 }
 //# sourceMappingURL=organizer.js.map

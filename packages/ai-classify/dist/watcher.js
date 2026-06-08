@@ -27,8 +27,8 @@ export class Watcher {
             ignoreInitial: false,
             awaitWriteFinish: {
                 stabilityThreshold: 2000,
-                pollInterval: 100
-            }
+                pollInterval: 100,
+            },
         });
         this.watcher.on('add', async (filePath) => {
             await this.handleFileAdded(filePath);
@@ -77,7 +77,7 @@ export class Watcher {
                 hash,
                 addedAt: new Date().toISOString(),
                 priority: 0,
-                status: 'pending'
+                status: 'pending',
             };
             this.onFileDetected(task);
             console.log(`File detected: ${filePath}`);
@@ -113,7 +113,7 @@ export async function scanExistingFiles(config) {
                     hash,
                     addedAt: new Date().toISOString(),
                     priority: 0,
-                    status: 'pending'
+                    status: 'pending',
                 });
             }
         }

@@ -27,9 +27,11 @@ export class AIClassify {
   private pending: Task[] = [];
   private processing: Task[] = [];
   private failed: Task[] = [];
+  private completed: Task[] = []; // Track completed tasks
   private index: HashIndex = { processed: {} };
   private watcher: Watcher | null = null;
   private processingFlag: boolean = false;
+  private pausedFlag: boolean = false; // Pause state
   private activeCount: number = 0;
   private eventCount: number = 0;
 
@@ -134,7 +136,11 @@ export class AIClassify {
   private async processQueue(): Promise<void> {
     this.processingFlag = true;
 
-    while (this.pending.length > 0 && this.activeCount < this.config.concurrency) {
+    while (
+      this.pending.length > 0 &&
+      this.activeCount < this.config.concurrency &&
+      !this.pausedFlag
+    ) {
       const task = this.pending.shift();
 
       if (task) {
@@ -204,6 +210,7 @@ export class AIClassify {
       this.processing = this.processing.filter((t) => t.path !== task.path);
       const record = createIndexRecord(outputPath, classification.category, task.path);
       this.index = addProcessedRecord(this.index, hash, record);
+      this.completed.push({ ...task, status: 'completed' });
 
       console.log(`Completed: ${task.path} -> ${outputPath}`);
 
@@ -273,17 +280,63 @@ export class AIClassify {
       queue: {
         pending: this.pending.length,
         processing: this.processing.length,
+        completed: this.completed.length,
         failed: this.failed.length,
-        total: this.pending.length + this.processing.length + this.failed.length,
+        total:
+          this.pending.length + this.processing.length + this.completed.length + this.failed.length,
       },
       indexSize: Object.keys(this.index.processed).length,
     };
+  }
+
+  /**
+   * Pause processing
+   */
+  pause(): void {
+    this.pausedFlag = true;
+    console.log('Processing paused');
+  }
+
+  /**
+   * Resume processing
+   */
+  resume(): void {
+    this.pausedFlag = false;
+    console.log('Processing resumed');
+    if (this.pending.length > 0 && !this.processingFlag) {
+      this.processQueue();
+    }
+  }
+
+  /**
+   * Retry all failed tasks
+   */
+  async retryFailed(): Promise<void> {
+    const failedTasks = [...this.failed];
+    this.failed = [];
+
+    for (const task of failedTasks) {
+      task.status = 'pending';
+      task.error = undefined;
+      this.pending.push(task);
+      await appendEvent(this.configDir, createEnqueueEvent(task));
+      this.eventCount++;
+    }
+
+    this.pending.sort((a, b) => b.priority - a.priority);
+
+    console.log(`Retrying ${failedTasks.length} failed tasks`);
+
+    if (!this.processingFlag && !this.pausedFlag) {
+      this.processQueue();
+    }
   }
 
   async clear(): Promise<void> {
     this.pending = [];
     this.processing = [];
     this.failed = [];
+    this.completed = [];
     this.index = { processed: {} };
     this.eventCount = 0;
     await clearEventLog(this.configDir);

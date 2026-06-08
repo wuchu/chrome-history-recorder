@@ -31,9 +31,7 @@ export async function convertToPng(filePath) {
     const tmpDir = '/tmp/ai-classify-preprocess';
     await fs.ensureDir(tmpDir);
     const outputPath = path.join(tmpDir, `${uuidv4()}.png`);
-    await sharp(filePath)
-        .png()
-        .toFile(outputPath);
+    await sharp(filePath).png().toFile(outputPath);
     return outputPath;
 }
 /**

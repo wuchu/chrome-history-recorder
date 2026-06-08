@@ -21,11 +21,11 @@ export declare function saveConfig(projectDir: string, config: Config): Promise<
 /**
  * Get a config value by key (supports nested keys like 'patterns[0]')
  */
-export declare function getConfigValue(projectDir: string, key: string): Promise<any>;
+export declare function getConfigValue(projectDir: string, key: string): Promise<unknown>;
 /**
  * Set a config value by key (supports nested keys like 'patterns[0]')
  */
-export declare function setConfigValue(projectDir: string, key: string, value: any): Promise<void>;
+export declare function setConfigValue(projectDir: string, key: string, value: unknown): Promise<void>;
 /**
  * List all config values
  */

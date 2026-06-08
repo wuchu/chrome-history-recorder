@@ -3,58 +3,35 @@
  * AI Classify - CLI Entry Point
  */
 import { Command } from 'commander';
-import fs from 'fs-extra';
-import inquirer from 'inquirer';
-import axios from 'axios';
+import boxen from 'boxen';
 import { AIClassify } from './index.js';
-import { DEFAULT_CONFIG } from './types.js';
-import { loadConfig, saveConfig, checkConfigExists, validateConfig, formatConfigErrors, getConfigValue, setConfigValue, listConfig } from './config.js';
-const CONFIG_FILE = '.ai-classify.yaml';
+import { loadConfig, checkConfigExists, validateConfig, formatConfigErrors, getConfigValue, setConfigValue, listConfig, } from './config.js';
+import { displayStartup, displayConnectingStatus, displayStartupError, runInitWizard, ProgressUI, KeyboardHandler, COLORS, ICONS, } from './ui/index.js';
+import { checkOllamaHealth } from './classifier.js';
 const program = new Command();
 program
     .name('ai-classify')
     .description('AI-powered file classification tool using Ollama')
-    .version('0.1.0');
+    .version('0.2.0');
 /**
  * Check for config file and prompt user if not found
  */
 async function ensureConfig(projectDir) {
-    if (!await checkConfigExists(projectDir)) {
+    if (!(await checkConfigExists(projectDir))) {
         console.log('');
-        console.log('✗ 未找到配置文件 .ai-classify.yaml');
-        console.log('');
-        console.log('请先运行初始化命令:');
-        console.log('  ai-classify init');
+        console.log(boxen(COLORS.error(`${ICONS.error} 未找到配置文件 .ai-classify.yaml`) + '\n\n' +
+            COLORS.muted('请先运行初始化命令:') + '\n' +
+            COLORS.info('  ai-classify init'), {
+            borderStyle: 'round',
+            padding: 1,
+            borderColor: 'red',
+        }));
         console.log('');
         process.exit(1);
     }
     return await loadConfig(projectDir);
 }
-/**
- * List directories in current directory (non-recursive)
- */
-async function listDirectories(dir) {
-    const entries = await fs.readdir(dir, { withFileTypes: true });
-    return entries
-        .filter(e => e.isDirectory() && !e.name.startsWith('.'))
-        .map(e => `./${e.name}`);
-}
-/**
- * Fetch available models from Ollama
- */
-async function fetchOllamaModels(endpoint) {
-    try {
-        const response = await axios.get(`${endpoint}/api/tags`, {
-            timeout: 5000,
-            headers: { 'Authorization': 'Bearer ollama' }
-        });
-        return response.data.models?.map((m) => m.name) || [];
-    }
-    catch {
-        return [];
-    }
-}
-// Init command - interactive configuration
+// Init command - interactive configuration with smart wizard
 program
     .command('init')
     .description('Initialize configuration file interactively')
@@ -62,186 +39,18 @@ program
     const projectDir = process.cwd();
     const existingConfig = await checkConfigExists(projectDir);
     if (existingConfig) {
-        const { overwrite } = await inquirer.prompt([
-            {
-                type: 'confirm',
-                name: 'overwrite',
-                message: '配置文件已存在，是否覆盖？',
-                default: false
-            }
-        ]);
-        if (!overwrite) {
-            console.log('已取消');
-            return;
-        }
-    }
-    console.log('');
-    console.log('开始初始化配置...');
-    console.log('');
-    // Step 1: Input directory
-    const dirs = await listDirectories(projectDir);
-    const inputChoices = [...dirs, new inquirer.Separator(), '手动输入'];
-    const { inputSelection } = await inquirer.prompt([
-        {
-            type: 'list',
-            name: 'inputSelection',
-            message: '选择输入目录:',
-            choices: inputChoices,
-            default: dirs.includes('./input') ? './input' : dirs[0] || '手动输入'
-        }
-    ]);
-    let input;
-    if (inputSelection === '手动输入') {
-        const { manualInput } = await inquirer.prompt([
-            {
-                type: 'input',
-                name: 'manualInput',
-                message: '输入目录路径:',
-                default: './input'
-            }
-        ]);
-        input = manualInput;
-    }
-    else {
-        input = inputSelection;
-    }
-    // Step 2: Output directory
-    const { output } = await inquirer.prompt([
-        {
-            type: 'input',
-            name: 'output',
-            message: '输出目录:',
-            default: './output'
-        }
-    ]);
-    // Step 3: Ollama endpoint
-    const { ollamaEndpoint } = await inquirer.prompt([
-        {
-            type: 'input',
-            name: 'ollamaEndpoint',
-            message: 'Ollama 服务地址:',
-            default: 'http://localhost:11434'
-        }
-    ]);
-    // Step 4: Vision model
-    const models = await fetchOllamaModels(ollamaEndpoint);
-    let visionModel;
-    if (models.length > 0) {
-        const { modelSelection } = await inquirer.prompt([
-            {
-                type: 'list',
-                name: 'modelSelection',
-                message: '选择视觉模型:',
-                choices: [...models, new inquirer.Separator(), '手动输入', '稍后设置']
-            }
-        ]);
-        if (modelSelection === '手动输入') {
-            const { manualModel } = await inquirer.prompt([
-                {
-                    type: 'input',
-                    name: 'manualModel',
-                    message: '输入模型名称:'
-                }
-            ]);
-            visionModel = manualModel;
-        }
-        else if (modelSelection === '稍后设置') {
-            visionModel = '';
-        }
-        else {
-            visionModel = modelSelection;
-        }
-    }
-    else {
-        const { modelChoice } = await inquirer.prompt([
-            {
-                type: 'list',
-                name: 'modelChoice',
-                message: '无法连接 Ollama 服务，请选择:',
-                choices: ['手动输入模型名称', '稍后在配置文件中设置']
-            }
-        ]);
-        if (modelChoice === '手动输入模型名称') {
-            const { manualModel } = await inquirer.prompt([
-                {
-                    type: 'input',
-                    name: 'manualModel',
-                    message: '输入模型名称:'
-                }
-            ]);
-            visionModel = manualModel;
-        }
-        else {
-            visionModel = '';
-        }
-    }
-    // Step 5: Language
-    const { language } = await inquirer.prompt([
-        {
-            type: 'list',
-            name: 'language',
-            message: '输出语言:',
-            choices: [
-                { name: '中文 (zh-CN)', value: 'zh-CN' },
-                { name: '英文 (en)', value: 'en' }
-            ],
-            default: 'zh-CN'
-        }
-    ]);
-    // Step 6: Filename style
-    const { filenameStyle } = await inquirer.prompt([
-        {
-            type: 'list',
-            name: 'filenameStyle',
-            message: '文件命名风格:',
-            choices: [
-                { name: '自动判断 (auto)', value: 'auto' },
-                { name: '活泼有趣 (fun)', value: 'fun' },
-                { name: '优雅迷人 (sexy)', value: 'sexy' },
-                { name: '艺术感 (artistic)', value: 'artistic' },
-                { name: '诗意 (poetic)', value: 'poetic' },
-                { name: '简洁 (minimal)', value: 'minimal' },
-                { name: '专业 (professional)', value: 'professional' },
-                { name: '故事叙述 (narrative)', value: 'narrative' }
-            ],
-            default: 'auto'
-        }
-    ]);
-    // Step 7: Organize by
-    const { organizeBy } = await inquirer.prompt([
-        {
-            type: 'list',
-            name: 'organizeBy',
-            message: '文件组织方式:',
-            choices: [
-                { name: '按分类 (category)', value: 'category' },
-                { name: '按日期 (date)', value: 'date' }
-            ],
-            default: 'category'
-        }
-    ]);
-    // Build config
-    const config = {
-        ...DEFAULT_CONFIG,
-        input,
-        output,
-        ollamaEndpoint,
-        visionModel,
-        language,
-        filenameStyle,
-        organizeBy
-    };
-    // Validate
-    if (!visionModel) {
+        // Show warning and ask for confirmation
         console.log('');
-        console.log('⚠ 警告: 未设置视觉模型，请稍后通过 config set 命令设置');
-        console.log('  ai-classify config set visionModel <model-name>');
+        console.log(boxen(COLORS.warning(`${ICONS.warning} 配置文件已存在`) + '\n\n' +
+            COLORS.muted('将覆盖现有的 .ai-classify.yaml'), {
+            borderStyle: 'round',
+            padding: 1,
+            borderColor: 'yellow',
+        }));
+        console.log('');
     }
-    // Save
-    await saveConfig(projectDir, config);
-    console.log('');
-    console.log('✓ 配置已保存到 .ai-classify.yaml');
-    console.log('');
+    // Run the smart wizard
+    await runInitWizard(projectDir);
 });
 // Config command with subcommands
 program
@@ -252,13 +61,13 @@ program
     .argument('[value]', 'config value (for set)')
     .action(async (action, key, value) => {
     const projectDir = process.cwd();
-    if (!await checkConfigExists(projectDir)) {
+    if (!(await checkConfigExists(projectDir))) {
         console.log('✗ 未找到配置文件 .ai-classify.yaml');
         console.log('请先运行: ai-classify init');
         process.exit(1);
     }
     switch (action) {
-        case 'list':
+        case 'list': {
             const config = await listConfig(projectDir);
             console.log('');
             console.log('当前配置:');
@@ -270,7 +79,8 @@ program
             }
             console.log('');
             break;
-        case 'get':
+        }
+        case 'get': {
             if (!key) {
                 console.log('✗ 请指定配置项名称');
                 console.log('用法: ai-classify config get <key>');
@@ -279,7 +89,8 @@ program
             const val = await getConfigValue(projectDir, key);
             console.log(`${key}: ${typeof val === 'object' ? JSON.stringify(val) : val}`);
             break;
-        case 'set':
+        }
+        case 'set': {
             if (!key || !value) {
                 console.log('✗ 请指定配置项名称和值');
                 console.log('用法: ai-classify config set <key> <value>');
@@ -291,7 +102,9 @@ program
                 try {
                     parsedValue = JSON.parse(value);
                 }
-                catch { }
+                catch {
+                    // Keep original value if parse fails
+                }
             }
             else if (/^\d+$/.test(value)) {
                 parsedValue = parseInt(value);
@@ -302,13 +115,14 @@ program
             await setConfigValue(projectDir, key, parsedValue);
             console.log(`✓ 已设置 ${key} = ${parsedValue}`);
             break;
+        }
         default:
             console.log('✗ 未知操作:', action);
             console.log('可用操作: list, get, set');
             process.exit(1);
     }
 });
-// Start command
+// Start command - with enhanced UI
 program
     .command('start')
     .description('Start watching and classifying files')
@@ -319,30 +133,75 @@ program
     // Validate configuration
     const errors = validateConfig(config);
     if (errors.length > 0) {
-        console.error(formatConfigErrors(errors));
+        displayStartupError(formatConfigErrors(errors));
         process.exit(1);
     }
-    console.log('Configuration:');
-    console.log(`  Input: ${config.input}`);
-    console.log(`  Output: ${config.output}`);
-    console.log(`  Ollama: ${config.ollamaEndpoint}`);
-    console.log(`  Model: ${config.visionModel}`);
-    console.log(`  Concurrency: ${config.concurrency}`);
+    // Check Ollama connection
+    displayConnectingStatus(config.ollamaEndpoint);
+    const ollamaConnected = await checkOllamaHealth(config);
+    // Count input files
+    let inputFiles = 0;
+    try {
+        const files = await import('./watcher.js');
+        const scanned = await files.scanExistingFiles(config);
+        inputFiles = scanned.length;
+    }
+    catch {
+        inputFiles = 0;
+    }
+    // Display startup screen
+    displayStartup(config, {
+        ollamaConnected,
+        ollamaEndpoint: config.ollamaEndpoint,
+        inputFiles,
+        outputReady: true,
+    });
+    if (!ollamaConnected) {
+        console.log(COLORS.warning(`${ICONS.warning} Ollama 服务未连接，分类功能可能受限`));
+        console.log('');
+    }
+    // Initialize AI Classify
     const aiClassify = new AIClassify(config, configDir);
     await aiClassify.initialize();
+    // Create progress UI
+    const status = aiClassify.getStatus();
+    const progressUI = new ProgressUI(status.queue.total, config.concurrency);
+    // Create keyboard handler
+    const keyboardHandler = new KeyboardHandler({
+        onPause: () => aiClassify.pause(),
+        onResume: () => aiClassify.resume(),
+        onStop: async () => {
+            progressUI.stop();
+            keyboardHandler.stop();
+            await aiClassify.stop();
+            process.exit(0);
+        },
+        onRetry: () => aiClassify.retryFailed(),
+        onVerboseChange: (enabled) => progressUI.setVerbose(enabled),
+        onQuietChange: (enabled) => progressUI.setQuiet(enabled),
+    });
+    // Show keyboard hints
+    keyboardHandler.displayKeyboardHint();
+    keyboardHandler.start();
+    // Start processing
     await aiClassify.start();
     // Handle shutdown signals
     process.on('SIGINT', async () => {
-        console.log('\nStopping...');
+        progressUI.stop();
+        keyboardHandler.stop();
+        console.log('');
+        console.log(COLORS.muted('Stopping...'));
         await aiClassify.stop();
         process.exit(0);
     });
     process.on('SIGTERM', async () => {
+        progressUI.stop();
+        keyboardHandler.stop();
         await aiClassify.stop();
         process.exit(0);
     });
 });
-// Status command
+// Status command - with enhanced panel display
 program
     .command('status')
     .description('Show queue and index status')
@@ -353,13 +212,22 @@ program
     const aiClassify = new AIClassify(config, configDir);
     await aiClassify.initialize();
     const status = aiClassify.getStatus();
-    console.log('Queue Status:');
-    console.log(`  Pending: ${status.queue.pending}`);
-    console.log(`  Processing: ${status.queue.processing}`);
-    console.log(`  Failed: ${status.queue.failed}`);
-    console.log(`  Total: ${status.queue.total}`);
-    console.log('\nIndex:');
-    console.log(`  Processed: ${status.indexSize} files`);
+    // Display beautiful status panel
+    const content = boxen(COLORS.info.bold('  Queue Status') + '\n\n' +
+        COLORS.warning(`  Pending     ${ICONS.pending} ${status.queue.pending}`) + '\n' +
+        COLORS.processing(`  Processing   ${ICONS.processing} ${status.queue.processing}`) + '\n' +
+        COLORS.success(`  Completed    ${ICONS.success} ${status.queue.completed || 0}`) + '\n' +
+        COLORS.error(`  Failed       ${ICONS.error} ${status.queue.failed}`) + '\n' +
+        COLORS.muted(`  Total        ${status.queue.total}`) + '\n\n' +
+        COLORS.info.bold('  Index') + '\n\n' +
+        COLORS.muted(`  Processed    ${status.indexSize} files`), {
+        borderStyle: 'round',
+        padding: 1,
+        borderColor: 'blue',
+    });
+    console.log('');
+    console.log(content);
+    console.log('');
 });
 // Clear command
 program

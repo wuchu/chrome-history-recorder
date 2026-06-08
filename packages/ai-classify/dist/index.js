@@ -2,7 +2,7 @@
  * AI Classify - Main Module
  */
 import fs from 'fs-extra';
-import { initEventLog, loadState, appendEvent, compact as compactEventLog, clearEventLog, createEnqueueEvent, createStartEvent, createCompleteEvent, createFailEvent, COMPACT_THRESHOLD_LINES } from './eventLog.js';
+import { initEventLog, loadState, appendEvent, compact as compactEventLog, clearEventLog, createEnqueueEvent, createStartEvent, createCompleteEvent, createFailEvent, COMPACT_THRESHOLD_LINES, } from './eventLog.js';
 import { hasBeenProcessed, addProcessedRecord } from './hashIndex.js';
 import { classifyFile, checkOllamaHealth } from './classifier.js';
 import { organizeFile, createIndexRecord } from './organizer.js';
@@ -13,9 +13,11 @@ export class AIClassify {
     pending = [];
     processing = [];
     failed = [];
+    completed = []; // Track completed tasks
     index = { processed: {} };
     watcher = null;
     processingFlag = false;
+    pausedFlag = false; // Pause state
     activeCount = 0;
     eventCount = 0;
     constructor(config, configDir) {
@@ -63,7 +65,7 @@ export class AIClassify {
         const maxWaitTime = 5000; // 最多等待5秒
         const startTime = Date.now();
         while (this.activeCount > 0 && Date.now() - startTime < maxWaitTime) {
-            await new Promise(resolve => setTimeout(resolve, 100));
+            await new Promise((resolve) => setTimeout(resolve, 100));
         }
         if (this.activeCount > 0) {
             console.warn(`Warning: ${this.activeCount} tasks still processing, forcing exit`);
@@ -79,8 +81,8 @@ export class AIClassify {
             return;
         }
         // Check if already in queue
-        const inPending = this.pending.some(t => t.path === task.path);
-        const inProcessing = this.processing.some(t => t.path === task.path);
+        const inPending = this.pending.some((t) => t.path === task.path);
+        const inProcessing = this.processing.some((t) => t.path === task.path);
         if (inPending || inProcessing) {
             console.log(`File already in queue: ${task.path}`);
             return;
@@ -98,7 +100,7 @@ export class AIClassify {
     }
     async processQueue() {
         this.processingFlag = true;
-        while (this.pending.length > 0 && this.activeCount < this.config.concurrency) {
+        while (this.pending.length > 0 && this.activeCount < this.config.concurrency && !this.pausedFlag) {
             const task = this.pending.shift();
             if (task) {
                 this.activeCount++;
@@ -110,7 +112,7 @@ export class AIClassify {
                         this.processQueue();
                     }
                 })
-                    .catch((error) => {
+                    .catch((_error) => {
                     this.activeCount--;
                     // Continue processing remaining tasks after one fails
                     if (this.pending.length > 0) {
@@ -123,7 +125,7 @@ export class AIClassify {
     }
     async processTask(task) {
         // Check if input file exists
-        if (!await fs.pathExists(task.path)) {
+        if (!(await fs.pathExists(task.path))) {
             console.warn(`Input file not found: ${task.path}`);
             await appendEvent(this.configDir, createFailEvent(task.path, 'Input file not found'));
             this.eventCount++;
@@ -147,9 +149,10 @@ export class AIClassify {
             await appendEvent(this.configDir, createCompleteEvent(task.path, hash, outputPath, classification.category));
             this.eventCount++;
             // Update memory state
-            this.processing = this.processing.filter(t => t.path !== task.path);
+            this.processing = this.processing.filter((t) => t.path !== task.path);
             const record = createIndexRecord(outputPath, classification.category, task.path);
             this.index = addProcessedRecord(this.index, hash, record);
+            this.completed.push({ ...task, status: 'completed' });
             console.log(`Completed: ${task.path} -> ${outputPath}`);
             // Check if should compact
             if (this.shouldCompact()) {
@@ -158,12 +161,13 @@ export class AIClassify {
         }
         catch (error) {
             // Append FAIL event
-            await appendEvent(this.configDir, createFailEvent(task.path, error.message));
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            await appendEvent(this.configDir, createFailEvent(task.path, errorMessage));
             this.eventCount++;
             // Update memory state
-            this.processing = this.processing.filter(t => t.path !== task.path);
-            this.failed.push({ ...task, status: 'failed', error: error.message });
-            console.error(`Failed: ${task.path} - ${error.message}`);
+            this.processing = this.processing.filter((t) => t.path !== task.path);
+            this.failed.push({ ...task, status: 'failed', error: errorMessage });
+            console.error(`Failed: ${task.path} - ${errorMessage}`);
             // Check if should compact
             if (this.shouldCompact()) {
                 await this.doCompact();
@@ -178,7 +182,7 @@ export class AIClassify {
             pending: this.pending,
             processing: this.processing,
             failed: this.failed,
-            index: this.index
+            index: this.index,
         });
         this.eventCount = 0;
     }
@@ -188,8 +192,8 @@ export class AIClassify {
         for (const task of tasks) {
             if (!hasBeenProcessed(this.index, task.hash)) {
                 // Check if already in queue
-                const inPending = this.pending.some(t => t.path === task.path);
-                const inProcessing = this.processing.some(t => t.path === task.path);
+                const inPending = this.pending.some((t) => t.path === task.path);
+                const inProcessing = this.processing.some((t) => t.path === task.path);
                 if (!inPending && !inProcessing) {
                     this.pending.push(task);
                     await appendEvent(this.configDir, createEnqueueEvent(task));
@@ -207,16 +211,54 @@ export class AIClassify {
             queue: {
                 pending: this.pending.length,
                 processing: this.processing.length,
+                completed: this.completed.length,
                 failed: this.failed.length,
-                total: this.pending.length + this.processing.length + this.failed.length
+                total: this.pending.length + this.processing.length + this.completed.length + this.failed.length,
             },
-            indexSize: Object.keys(this.index.processed).length
+            indexSize: Object.keys(this.index.processed).length,
         };
+    }
+    /**
+     * Pause processing
+     */
+    pause() {
+        this.pausedFlag = true;
+        console.log('Processing paused');
+    }
+    /**
+     * Resume processing
+     */
+    resume() {
+        this.pausedFlag = false;
+        console.log('Processing resumed');
+        if (this.pending.length > 0 && !this.processingFlag) {
+            this.processQueue();
+        }
+    }
+    /**
+     * Retry all failed tasks
+     */
+    async retryFailed() {
+        const failedTasks = [...this.failed];
+        this.failed = [];
+        for (const task of failedTasks) {
+            task.status = 'pending';
+            task.error = undefined;
+            this.pending.push(task);
+            await appendEvent(this.configDir, createEnqueueEvent(task));
+            this.eventCount++;
+        }
+        this.pending.sort((a, b) => b.priority - a.priority);
+        console.log(`Retrying ${failedTasks.length} failed tasks`);
+        if (!this.processingFlag && !this.pausedFlag) {
+            this.processQueue();
+        }
     }
     async clear() {
         this.pending = [];
         this.processing = [];
         this.failed = [];
+        this.completed = [];
         this.index = { processed: {} };
         this.eventCount = 0;
         await clearEventLog(this.configDir);

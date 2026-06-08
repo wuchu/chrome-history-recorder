@@ -31,10 +31,11 @@ export async function loadConfig(projectDir) {
             return { ...DEFAULT_CONFIG, ...loaded };
         }
         catch (error) {
-            if (error.mark) {
-                throw new Error(`Config file syntax error at line ${error.mark.line}: ${error.message}`);
+            const yamlError = error;
+            if (yamlError.mark) {
+                throw new Error(`Config file syntax error at line ${yamlError.mark.line}: ${yamlError.message}`);
             }
-            throw new Error(`Failed to load config: ${error.message}`);
+            throw new Error(`Failed to load config: ${error}`);
         }
     }
     // Return default config if no file exists
@@ -50,7 +51,7 @@ export async function saveConfig(projectDir, config) {
         lineWidth: -1,
         noRefs: true,
         quotingType: '"',
-        forceQuotes: false
+        forceQuotes: false,
     });
     await fs.writeFile(configPath, content, 'utf-8');
 }
@@ -60,7 +61,7 @@ export async function saveConfig(projectDir, config) {
 export async function getConfigValue(projectDir, key) {
     const config = await loadConfig(projectDir);
     // Support nested keys and array indices
-    const parts = key.split(/\.|\[|\]/).filter(p => p !== '');
+    const parts = key.split(/\.|\[|\]/).filter((p) => p !== '');
     let value = config;
     for (const part of parts) {
         if (value === undefined || value === null) {
@@ -76,7 +77,7 @@ export async function getConfigValue(projectDir, key) {
 export async function setConfigValue(projectDir, key, value) {
     const config = await loadConfig(projectDir);
     // Support nested keys and array indices
-    const parts = key.split(/\.|\[|\]/).filter(p => p !== '');
+    const parts = key.split(/\.|\[|\]/).filter((p) => p !== '');
     let obj = config;
     for (let i = 0; i < parts.length - 1; i++) {
         const part = parts[i];
@@ -105,7 +106,9 @@ export function mergeWithCliArgs(config, args) {
         visionModel: args.visionModel !== undefined ? args.visionModel : config.visionModel,
         concurrency: args.concurrency !== undefined ? args.concurrency : config.concurrency,
         filenameStyle: args.filenameStyle !== undefined ? args.filenameStyle : config.filenameStyle,
-        filenameStylePrompt: args.filenameStylePrompt !== undefined ? args.filenameStylePrompt : config.filenameStylePrompt
+        filenameStylePrompt: args.filenameStylePrompt !== undefined
+            ? args.filenameStylePrompt
+            : config.filenameStylePrompt,
     };
 }
 export function validateConfig(config) {

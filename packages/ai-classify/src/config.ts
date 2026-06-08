@@ -97,7 +97,7 @@ export async function setConfigValue(
 
   // Support nested keys and array indices
   const parts = key.split(/\.|\[|\]/).filter((p) => p !== '');
-  let obj: Record<string, unknown> = config as Record<string, unknown>;
+  let obj: Record<string, unknown> = config as unknown as Record<string, unknown>;
 
   for (let i = 0; i < parts.length - 1; i++) {
     const part = parts[i];

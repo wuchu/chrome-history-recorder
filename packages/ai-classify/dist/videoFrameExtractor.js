@@ -47,7 +47,7 @@ export async function extractFrame(filePath) {
         await execAsync(command, { timeout: 30000 });
         return outputPath;
     }
-    catch (error) {
+    catch {
         // If ffmpeg fails, try simpler extraction
         const fallbackCommand = `ffmpeg -i "${filePath}" -frames:v 1 -y "${outputPath}"`;
         await execAsync(fallbackCommand, { timeout: 30000 });

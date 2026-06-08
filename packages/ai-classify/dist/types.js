@@ -10,6 +10,6 @@ export const DEFAULT_CONFIG = {
     ignorePatterns: ['**/node_modules/**', '**/.git/**'],
     organizeBy: 'category',
     maxFileSize: 50 * 1024 * 1024, // 50MB
-    concurrency: 3
+    concurrency: 3,
 };
 //# sourceMappingURL=types.js.map
