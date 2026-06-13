@@ -1,0 +1,54 @@
+:root {
+  color-scheme: light;
+  background: #f5f7fb;
+}
+
+body {
+  margin: 0;
+  min-width: 720px;
+  background: #f5f7fb;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.options-shell {
+  min-height: 100vh;
+  background: linear-gradient(180deg, #f7f9ff 0%, #eef2f8 100%);
+}
+
+.options-content {
+  max-width: none;
+  margin: 0;
+  padding: 32px 48px 48px;
+}
+
+.options-header {
+  margin-bottom: 24px;
+}
+
+.options-subtitle {
+  color: #5f6b7a;
+  margin-top: 8px;
+}
+
+.options-card {
+  box-shadow: 0 8px 28px rgb(31 45 61 / 8%);
+}
+
+.full-width {
+  width: 100%;
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.model-option-meta {
+  color: #8c8c8c;
+  font-size: 12px;
+}

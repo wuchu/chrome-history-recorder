@@ -1,118 +1,379 @@
+/**
+ * Extension Background Service Worker
+ *
+ * Central coordinator for file operations and AI classification.
+ */
+
+import { initVFSWebSocketClient, getVFSWebSocketClient } from '../../background/vfs-ws-client';
+import { initFileManager, getFileManager } from '../../background/file-manager';
+import { initOllamaClient, getOllamaClient } from '../../background/classify/ollama-client';
+import { initClassifyScheduler, getClassifyScheduler } from '../../background/classify/scheduler';
+import { initConfigManager, getConfigManager } from '../../background/config-manager';
+import type { ExtensionConfig } from '../../shared/extension-runtime';
+
 export default defineBackground(() => {
-  console.log('Image Recorder background service worker loaded');
+  console.log('[VFS Extension] Background service worker starting...');
 
-  // Initialize state management for multiple tabs
-  const captureStates = new Map<number, CaptureState>();
+  // Initialize all modules
+  async function initialize(): Promise<void> {
+    console.log('[VFS Extension] ========== STARTING INITIALIZATION ==========');
+    try {
+      // Initialize Config Manager first
+      console.log('[VFS Extension] Step 1: Initializing Config Manager...');
+      const configManager = await initConfigManager();
+      const config = configManager.getConfig();
+      console.log('[VFS Extension] Config loaded:', { ollamaEndpoint: config.ollamaEndpoint, visionModel: config.visionModel });
 
-  // Track active DevTools connections
-  const devToolsConnections = new Map<number, boolean>();
+      // Initialize VFS WebSocket Client FIRST
+      console.log('[VFS Extension] Step 2: Initializing VFS WebSocket Client...');
+      const vfsWsClient = initVFSWebSocketClient();
+      console.log('[VFS Extension] VFS WebSocket Client instance created, singleton ID:', vfsWsClient.constructor.name);
 
-  interface CaptureState {
-    isEnabled: boolean;
-    capturedImages: ImageInfo[];
-    captureCount: number;
-    lastCaptureTime: Date;
-    skippedCount: number;
-    failedCount: number;
-  }
+      // Initialize File Manager (will use existing VFS WebSocket Client instance)
+      console.log('[VFS Extension] Step 3: Initializing File Manager...');
+      initFileManager();
+      console.log('[VFS Extension] File Manager initialized');
 
-  interface ImageInfo {
-    hash: string;
-    url: string;
-    size: number;
-    mimeType: string;
-    captureTime: Date;
-  }
+      // Check that File Manager uses the same VFS WebSocket Client instance
+      const fileManagerVfsClient = getVFSWebSocketClient();
+      console.log('[VFS Extension] File Manager VFS Client singleton ID:', fileManagerVfsClient.constructor.name);
+      console.log('[VFS Extension] Are they the same instance?', vfsWsClient === fileManagerVfsClient);
 
-  // Listen for tab removal to clean up state
-  chrome.tabs.onRemoved.addListener((tabId) => {
-    captureStates.delete(tabId);
-    console.log(`Cleaned up state for tab ${tabId}`);
-  });
+      // Wait for connection with timeout
+      console.log('[VFS Extension] Step 4: Waiting for VFS WebSocket connection...');
+      const connectionPromise = new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          console.log('[VFS Extension] VFS connection timeout after 10s');
+          reject(new Error('VFS WebSocket connection timeout'));
+        }, 10000);
 
-  // Listen for tab replacement (refresh)
-  chrome.tabs.onReplaced.addListener((addedTabId, removedTabId) => {
-    // Preserve capture count but reset other state
-    const oldState = captureStates.get(removedTabId);
-    if (oldState) {
-      captureStates.set(addedTabId, {
-        isEnabled: false, // Reset to disabled after refresh
-        capturedImages: [],
-        captureCount: 0,
-        lastCaptureTime: new Date(),
-        skippedCount: 0,
-        failedCount: 0,
+        vfsWsClient.onConnect(() => {
+          console.log('[VFS Extension] ✓ VFS onConnect callback triggered!');
+          clearTimeout(timeout);
+          resolve();
+        });
+
+        // If already connected, resolve immediately
+        if (vfsWsClient.isConnected()) {
+          console.log('[VFS Extension] ✓ VFS already connected!');
+          clearTimeout(timeout);
+          resolve();
+        }
       });
-      captureStates.delete(removedTabId);
-    }
-  });
 
-  // Handle messages from DevTools panel
+      try {
+        await connectionPromise;
+        console.log('[VFS Extension] ✓ VFS WebSocket connected successfully');
+        // File Manager already broadcasted vfs:connected via its onConnect callback
+      } catch (error) {
+        console.warn('[VFS Extension] ✗ VFS WebSocket not connected, will auto-reconnect');
+        getFileManager().broadcastEvent('vfs:disconnected', { error: 'Connection timeout' });
+      }
+
+      // Set up event handling for real-time updates
+      console.log('[VFS Extension] Step 5: Setting up VFS event handling...');
+      vfsWsClient.onEvent((event, data) => {
+        console.log(`[VFS Extension] VFS Event received: ${event}`, data);
+        getFileManager().broadcastEvent(event, data);
+      });
+
+      // Initialize Ollama Client
+      console.log('[VFS Extension] Step 6: Initializing Ollama Client...');
+      const ollamaClient = await initOllamaClient({
+        endpoint: config.ollamaEndpoint,
+        model: config.visionModel,
+        language: config.language,
+        filenameStyle: config.filenameStyle,
+        filenameStylePrompt: config.filenameStylePrompt,
+        userDefinedTags: config.userDefinedTags,
+      });
+      console.log('[VFS Extension] Ollama Client created, endpoint:', config.ollamaEndpoint);
+
+      // Set up Ollama status callback BEFORE checking health
+      console.log('[VFS Extension] Step 7: Setting up Ollama status callback...');
+      ollamaClient.onStatus((available) => {
+        console.log(`[VFS Extension] ✓ Ollama onStatus callback triggered! available=${available}`);
+        getFileManager().broadcastEvent('ollama:status', { available });
+      });
+
+      // Check health immediately (will trigger onStatus callback)
+      console.log('[VFS Extension] Step 8: Checking Ollama health...');
+      const healthResult = await ollamaClient.checkHealth();
+      console.log('[VFS Extension] Ollama health check result:', healthResult);
+
+      if (healthResult) {
+        try {
+          // 如果没有配置模型，选择服务端返回的第一个视觉模型
+          if (!config.visionModel) {
+            const { models, selectedModel, changed } = await ollamaClient.selectAvailableModel();
+            if (selectedModel && changed) {
+              await configManager.updateConfig({ visionModel: selectedModel });
+              console.log('[VFS Extension] Auto-selected vision model:', selectedModel);
+            }
+            getFileManager().broadcastEvent('ollama:models', {
+              models,
+              selectedModel: selectedModel || config.visionModel,
+              changed,
+            });
+          } else {
+            // Non-mutating model discovery: fetch models without overwriting the configured model.
+            const models = await ollamaClient.listModels();
+            getFileManager().broadcastEvent('ollama:models', {
+              models,
+              selectedModel: config.visionModel,
+              changed: false,
+            });
+          }
+        } catch (error) {
+          console.warn('[VFS Extension] Ollama model discovery failed:', error);
+        }
+      }
+
+      // Start periodic health check (30 seconds)
+      console.log('[VFS Extension] Step 9: Starting Ollama periodic health check (30s interval)');
+      ollamaClient.startPeriodicHealthCheck(30000);
+
+      // Initialize Classification Scheduler
+      console.log('[VFS Extension] Step 10: Initializing Classification Scheduler...');
+      initClassifyScheduler({
+        concurrency: config.classificationConcurrency,
+        autoStart: !config.classificationPaused,
+      });
+
+      console.log('[VFS Extension] ========== INITIALIZATION COMPLETE ==========');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      console.error(`[VFS Extension] ========== INITIALIZATION FAILED ==========`);
+      console.error(`[VFS Extension] Error: ${message}`);
+    }
+  }
+
+  // Start initialization
+  initialize();
+
+  // Handle messages from Content Scripts and DevTools Panel
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.type === 'getCaptureState') {
-      const tabId = message.tabId;
-      const state = captureStates.get(tabId) || {
-        isEnabled: false,
-        capturedImages: [],
-        captureCount: 0,
-        lastCaptureTime: new Date(),
-        skippedCount: 0,
-        failedCount: 0,
-      };
-      sendResponse(state);
-    } else if (message.type === 'setCaptureEnabled') {
-      const tabId = message.tabId;
-      const enabled = message.enabled;
-      const state = captureStates.get(tabId) || {
-        isEnabled: false,
-        capturedImages: [],
-        captureCount: 0,
-        lastCaptureTime: new Date(),
-        skippedCount: 0,
-        failedCount: 0,
-      };
-      state.isEnabled = enabled;
-      captureStates.set(tabId, state);
-      sendResponse({ success: true });
-    } else if (message.type === 'devToolsOpened') {
-      // Track DevTools connection
-      const tabId = message.tabId;
-      devToolsConnections.set(tabId, true);
-      console.log(`DevTools opened for tab ${tabId}`);
-      sendResponse({ success: true });
-    } else if (message.type === 'devToolsClosed') {
-      // Mark DevTools as closed (but keep state)
-      const tabId = message.tabId;
-      devToolsConnections.set(tabId, false);
-      console.log(`DevTools closed for tab ${tabId}`);
-      sendResponse({ success: true });
-    } else if (message.type === 'isDevToolsOpen') {
-      const tabId = message.tabId;
-      const isOpen = devToolsConnections.get(tabId) || false;
-      sendResponse({ isOpen });
-    } else if (message.type === 'getGlobalStats') {
-      // Aggregate stats from all tabs
-      let totalCaptured = 0;
-      let totalSkipped = 0;
-      let totalFailed = 0;
-      let totalSize = 0;
+    const fileManager = getFileManager();
+    const scheduler = getClassifyScheduler();
+    const configManager = getConfigManager();
 
-      captureStates.forEach((state) => {
-        totalCaptured += state.captureCount;
-        totalSkipped += state.skippedCount;
-        totalFailed += state.failedCount;
-        totalSize += state.capturedImages.reduce((sum, img) => sum + img.size, 0);
-      });
+    // Handle async responses
+    (async () => {
+      try {
+        switch (message.type) {
+          // File operations
+          case 'capture:media':
+            const captureResult = await fileManager.handleCaptureMedia(message.data);
+            // Auto-enqueue for classification
+            if (!captureResult.duplicate) {
+              await scheduler.enqueue(captureResult.hash);
+            }
+            sendResponse({ success: true, data: captureResult });
+            break;
 
-      sendResponse({
-        totalCaptured,
-        totalSkipped,
-        totalFailed,
-        totalSize,
-        activeTabs: captureStates.size,
-        activeDevTools: Array.from(devToolsConnections.values()).filter((v) => v).length,
-      });
-    }
+          case 'listFiles':
+          case 'list-files':
+            const listQuery = message.query ?? {
+              limit: message.limit,
+              offset: message.offset,
+              category: message.category,
+            };
+            console.log('[VFS Extension] Received listFiles/list-files message, query:', listQuery);
+            const listResult = await fileManager.handleListFiles(listQuery);
+            console.log('[VFS Extension] listFiles result:', listResult);
+            sendResponse({ success: true, data: listResult, ...listResult });
+            break;
+
+          case 'deleteFile':
+            const deleteResult = await fileManager.handleDeleteFile(message.hash, message.hard);
+            sendResponse({ success: true, data: deleteResult });
+            break;
+
+          case 'getStats':
+            const stats = await fileManager.getStats();
+            sendResponse({ success: true, data: stats });
+            break;
+
+          case 'getThumbnailUrl':
+            const thumbnailUrl = fileManager.getThumbnailUrl(message.hash, message.size);
+            sendResponse({ success: true, data: { url: thumbnailUrl } });
+            break;
+
+          // Classification operations
+          case 'getQueueStatus':
+          case 'get-queue-status':
+            const queueStatus = await scheduler.getQueueStatus();
+            const schedulerStatus = scheduler.getSchedulerStatus();
+            sendResponse({
+              success: true,
+              data: { ...queueStatus, scheduler: schedulerStatus },
+              ...queueStatus,
+              scheduler: schedulerStatus,
+            });
+            break;
+
+          case 'enqueueClassification':
+            const enqueueResult = await scheduler.enqueue(message.hash, message.priority);
+            sendResponse({ success: true, data: { success: enqueueResult } });
+            break;
+
+          case 'requeueClassification':
+          case 'requeue-classification':
+            const requeueResult = await scheduler.enqueue(message.hash, message.priority ?? 10);
+            sendResponse({ success: requeueResult, data: { success: requeueResult } });
+            break;
+
+          case 'retryFailedTasks':
+          case 'retry-failed-tasks':
+            const retryCount = await scheduler.retryFailed();
+            sendResponse({ success: true, data: { count: retryCount }, count: retryCount });
+            break;
+
+          case 'clearQueue':
+          case 'clear-queue':
+            await scheduler.clearQueue();
+            sendResponse({ success: true });
+            break;
+
+          case 'startClassification':
+          case 'start-classification':
+            scheduler.start();
+            await configManager.updateConfig({ classificationPaused: false });
+            sendResponse({ success: true, data: scheduler.getSchedulerStatus(), ...scheduler.getSchedulerStatus() });
+            break;
+
+          case 'pauseClassification':
+          case 'pause-classification':
+            scheduler.pause();
+            await configManager.updateConfig({ classificationPaused: true });
+            sendResponse({ success: true, data: scheduler.getSchedulerStatus(), ...scheduler.getSchedulerStatus() });
+            break;
+
+          case 'getClassificationControlStatus':
+          case 'get-classification-control-status':
+            sendResponse({ success: true, data: scheduler.getSchedulerStatus(), ...scheduler.getSchedulerStatus() });
+            break;
+
+          // Config operations
+          case 'getConfig':
+          case 'get-config':
+            const config = configManager.getConfig();
+            sendResponse({ success: true, data: config, ...config });
+            break;
+
+          case 'getTagCounts':
+            const tagCounts = await getVFSWebSocketClient().getTagCounts();
+            sendResponse({ success: true, data: tagCounts, ...tagCounts });
+            break;
+
+          case 'updateConfig':
+            await configManager.updateConfig(message.updates);
+            sendResponse({ success: true });
+            break;
+
+          case 'resetConfig':
+            await configManager.reset();
+            sendResponse({ success: true });
+            break;
+
+          // Status checks
+          case 'isVFSConnected':
+            console.log('[VFS Extension] Received isVFSConnected message');
+            const vfsConnected = fileManager.isConnected();
+            console.log('[VFS Extension] VFS connected:', vfsConnected);
+            sendResponse({ connected: vfsConnected });
+            break;
+
+          case 'isOllamaAvailable':
+            console.log('[VFS Extension] Received isOllamaAvailable message');
+            const ollamaClient = getOllamaClient();
+            const ollamaAvailable = ollamaClient.isAvailable();
+            console.log('[VFS Extension] Ollama available:', ollamaAvailable);
+            sendResponse({ available: ollamaAvailable });
+            break;
+
+          case 'checkOllamaHealth':
+            console.log('[VFS Extension] Received checkOllamaHealth message');
+            const ollama = getOllamaClient();
+            const healthResult = await ollama.checkHealth();
+            console.log('[VFS Extension] Ollama health check result:', healthResult);
+            sendResponse({ available: healthResult });
+            break;
+
+          case 'listOllamaModels':
+          case 'list-ollama-models':
+            console.log('[VFS Extension] Received listOllamaModels message');
+            try {
+              // Non-mutating: just fetch models, don't overwrite user selection
+              const models = await getOllamaClient().listModels();
+              const configData = configManager.getConfig();
+              sendResponse({ success: true, data: { models, selectedModel: configData.visionModel, changed: false }, models, selectedModel: configData.visionModel });
+            } catch (error) {
+              const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+              console.warn('[VFS Extension] Ollama model discovery failed:', errorMessage);
+              sendResponse({ success: false, error: errorMessage });
+            }
+            break;
+
+          case 'reconnectVFS':
+            console.log('[VFS Extension] Received reconnectVFS message');
+            const vfsWsClient = getVFSWebSocketClient();
+            console.log('[VFS Extension] Disconnecting VFS...');
+            vfsWsClient.disconnect();
+            console.log('[VFS Extension] Connecting VFS...');
+            vfsWsClient.connect();
+            sendResponse({ success: true });
+            break;
+
+          case 'get-status':
+            console.log('[VFS Extension] Received get-status message');
+            const vfsStatus = fileManager.isConnected();
+            const ollamaStatus = getOllamaClient().isAvailable();
+            console.log('[VFS Extension] Current status: VFS=', vfsStatus, 'Ollama=', ollamaStatus);
+            sendResponse({
+              vfsConnected: vfsStatus,
+              ollamaAvailable: ollamaStatus,
+            });
+            break;
+
+          case 'devToolsOpened':
+            console.log('[VFS Extension] Received devToolsOpened message');
+            sendResponse({ success: true });
+            break;
+
+          case 'setCaptureEnabled':
+            console.log('[VFS Extension] Received setCaptureEnabled message:', message.enabled);
+            sendResponse({ success: true });
+            break;
+
+          case 'translate-tags':
+            console.log('[VFS Extension] Received translate-tags message');
+            try {
+              const ollamaClient = getOllamaClient();
+              if (!ollamaClient.isAvailable()) {
+                sendResponse({ success: false, error: 'Ollama not available' });
+                break;
+              }
+
+              const translated = await ollamaClient.translateTags(message.text);
+              sendResponse({ success: true, translated });
+            } catch (e) {
+              console.error('[VFS Extension] Translation failed:', e);
+              sendResponse({ success: false, error: 'Translation failed' });
+            }
+            break;
+
+          default:
+            console.log('[VFS Extension] Unknown message type:', message.type);
+            sendResponse({ success: false, error: `Unknown message type: ${message.type}` });
+        }
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        console.error('[VFS Extension] Message handling error:', errorMessage);
+        sendResponse({ success: false, error: errorMessage });
+      }
+    })();
+
     return true; // Keep message channel open for async response
   });
 });

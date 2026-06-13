@@ -1,0 +1,123 @@
+.container {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 8px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.queueStats {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.queueStat {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.queueStat strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.runningState,
+.pausedState {
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.runningState {
+  color: #4CAF50;
+}
+
+.pausedState {
+  color: #FFC107;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.controlButton,
+.dangerButton {
+  padding: 2px 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+  cursor: pointer;
+  font-size: 11px;
+  background: var(--button-bg);
+  color: var(--text-primary);
+}
+
+.controlButton:hover:not(:disabled) {
+  background: var(--button-hover);
+}
+
+.dangerButton {
+  border-color: #F44336;
+  color: #F44336;
+}
+
+.dangerButton:hover:not(:disabled) {
+  background: rgba(244, 67, 54, 0.08);
+}
+
+.controlButton:disabled,
+.dangerButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.loading {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.pending strong {
+  color: #FFC107;
+}
+
+.processing strong {
+  color: #2196F3;
+}
+
+.completed strong {
+  color: #4CAF50;
+}
+
+.failed strong {
+  color: #F44336;
+}
+
+/* Dark theme adjustments */
+:global(.darkTheme) .container {
+  background: rgba(255, 255, 255, 0.05);
+}

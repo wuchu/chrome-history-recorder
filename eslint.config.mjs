@@ -11,7 +11,6 @@ export default tseslint.config(
       '.wxt/**',
       '*.d.ts',
       'packages/extension/.wxt/**',
-      'packages/ai-classify/dist/**',
       'openspec/**',
     ],
   },

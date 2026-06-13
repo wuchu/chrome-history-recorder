@@ -3,7 +3,10 @@
     "serviceOnline": "Service Online",
     "serviceOffline": "Service Offline",
     "startCapture": "Start Capture",
-    "stopCapture": "Stop Capture"
+    "stopCapture": "Stop Capture",
+    "wsConnected": "WS Connected",
+    "wsDisconnected": "WS Disconnected",
+    "classifying": "Classifying {{count}}, pending {{pending}}"
   },
   "stats": {
     "images": "Images",
@@ -12,6 +15,33 @@
     "skipped": "Skipped",
     "failed": "Failed",
     "size": "Size"
+  },
+  "captureStream": {
+    "title": "Live Capture"
+  },
+  "mediaGrid": {
+    "count": "{{count}} media",
+    "clear": "Clear",
+    "empty": "No media"
+  },
+  "mediaDetail": {
+    "fileInfo": "File Info",
+    "classification": "Classification",
+    "source": "Source",
+    "hash": "Hash",
+    "size": "Size",
+    "type": "Type",
+    "capturedAt": "Captured At",
+    "category": "Category",
+    "aiFilename": "AI Filename",
+    "modelUsed": "Model",
+    "classifiedAt": "Classified At",
+    "confidence": "Confidence",
+    "tags": "Tags",
+    "download": "Download",
+    "copyFilename": "Copy Filename",
+    "requeue": "Reclassify/Rename",
+    "requeueing": "Queuing..."
   },
   "mediaList": {
     "capturedImages": "Captured Images",
@@ -22,18 +52,11 @@
   },
   "config": {
     "title": "Configuration",
-    "storagePath": "Storage Path",
-    "proxyEndpoint": "Proxy Endpoint",
     "save": "Save",
     "apply": "Apply",
-    "imageFilter": "Image Filter",
-    "minSize": "Min Size",
-    "videoFilter": "Video Filter",
-    "videoTypes": "Video Types"
-  },
-  "alerts": {
-    "pathSaved": "Path configuration saved",
-    "connectionFailed": "Unable to connect to proxy service"
+    "aiSettings": "AI Classification",
+    "loadingModels": "Loading...",
+    "saving": "Saving..."
   },
   "theme": {
     "label": "Theme",

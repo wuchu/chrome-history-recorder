@@ -181,41 +181,59 @@ DevTools 面板必须 (SHALL) 显示统计信息。
 - **AND** 统计必须 (SHALL) 包含：已分类数量、等待数量、失败数量
 
 ### Requirement: 配置面板折叠
-DevTools 面板必须 (SHALL) 支持配置面板折叠。
+DevTools 面板必须 (SHALL) 提供简化的配置区域，且配置区域必须聚焦当前 Extension/VFS 工作流的状态与操作。
 
-#### Scenario: 默认折叠配置
+#### Scenario: 默认显示简化配置
 - **WHEN** DevTools 面板打开
-- **THEN** 系统必须 (SHALL) 默认折叠配置面板
-- **AND** 系统必须 (SHALL) 显示"配置"展开按钮
+- **THEN** 系统必须 (SHALL) 显示可操作的服务状态和 AI 分类配置摘要
+- **AND** 系统必须 (SHALL) 避免默认展示低频捕获过滤表单
 
-#### Scenario: 展开配置面板
-- **WHEN** 用户点击配置按钮
-- **THEN** 系统必须 (SHALL) 展开显示完整配置面板
-
-#### Scenario: 折叠配置面板
-- **WHEN** 用户再次点击配置按钮
-- **THEN** 系统必须 (SHALL) 折叠隐藏配置面板
+#### Scenario: 展示当前运行时控制
+- **WHEN** 配置区域显示
+- **THEN** 系统必须 (SHALL) 展示当前 VFS、Ollama、模型选择或分类控制相关内容
+- **AND** 系统必须 (SHALL) 不展示已经退役的 Proxy 或 standalone CLI 配置项
 
 #### Scenario: 快捷过滤条
-- **WHEN** 配置面板折叠
-- **THEN** 系统必须 (SHALL) 显示快捷过滤条
-- **AND** 过滤条必须 (SHALL) 包含：类型下拉、大小下拉、搜索框
+- **WHEN** 用户浏览媒体网格
+- **THEN** 系统可以 (MAY) 显示与媒体浏览直接相关的搜索或过滤控件
+- **AND** 这些控件必须 (SHALL) 不依赖 standalone CLI 配置
 
 ### Requirement: 服务状态聚合
-DevTools 面板必须 (SHALL) 显示多个服务的状态。
+DevTools 面板必须 (SHALL) 显示当前 Extension/VFS 架构下的服务状态。
 
-#### Scenario: 显示 Proxy 状态
+#### Scenario: 显示 VFS 状态
 - **WHEN** DevTools 面板显示
-- **THEN** 系统必须 (SHALL) 显示 Proxy 服务在线状态
+- **THEN** 系统必须 (SHALL) 显示 VFS Service 或 VFS WebSocket 连接状态
 - **AND** 状态必须 (SHALL) 使用图标和文字
 
-#### Scenario: 显示 AI Classify 状态
-- **WHEN** AI Classify 插件已加载
-- **THEN** 系统必须 (SHALL) 显示 AI Classify 服务状态
-- **AND** 状态必须 (SHALL) 包含：运行中 / 暂停 / 离线
-- **AND** 状态必须 (SHALL) 包含当前处理数量
+#### Scenario: 显示 Ollama 状态
+- **WHEN** DevTools 面板显示
+- **THEN** 系统必须 (SHALL) 显示 Ollama 服务可用状态
+- **AND** 不可用时必须 (SHALL) 提供可操作的检查或重试提示
+
+#### Scenario: 显示 AI 分类状态
+- **WHEN** 分类队列状态可用
+- **THEN** 系统必须 (SHALL) 显示 AI 分类运行中或暂停状态
+- **AND** 状态必须 (SHALL) 包含当前队列处理数量
 
 #### Scenario: 状态图标聚合
 - **WHEN** 多个服务状态显示
-- **THEN** 系统必须 (SHALL) 在状态栏聚合显示
-- **AND** 格式应该 (SHOULD) 为：`● Proxy:在线  ● AI:运行中`
+- **THEN** 系统必须 (SHALL) 在状态栏聚合显示当前可用性
+
+### Requirement: NetworkListener 监听器管理
+NetworkListener 必须 (SHALL) 正确管理 Chrome DevTools 网络请求监听器的注册和移除。
+
+#### Scenario: 监听器正确注册
+- **WHEN** `startListening()` 被调用
+- **THEN** 系统必须 (SHALL) 使用相同的函数引用注册监听器
+- **AND** 系统必须 (SHALL) 缓存绑定后的函数引用
+
+#### Scenario: 监听器正确移除
+- **WHEN** `stopListening()` 被调用
+- **THEN** 系统必须 (SHALL) 使用相同的函数引用移除监听器
+- **AND** 监听器 必须 (SHALL) 被完全移除
+
+#### Scenario: React StrictMode 兼容
+- **WHEN** 组件经历多次挂载/卸载（React StrictMode）
+- **THEN** 系统必须 (SHALL) 每次正确移除监听器
+- **AND** 系统必须 (SHALL) 不残留监听器

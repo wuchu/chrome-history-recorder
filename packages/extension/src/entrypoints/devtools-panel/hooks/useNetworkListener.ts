@@ -16,7 +16,6 @@ interface VideoStats {
 }
 
 interface UseNetworkListenerOptions {
-  proxyEndpoint: string;
   minImageSizeKB: number;
   minVideoSizeMB: number;
   videoTypes: {
@@ -41,7 +40,6 @@ interface UseNetworkListenerReturn {
 }
 
 export function useNetworkListener({
-  proxyEndpoint,
   minImageSizeKB,
   minVideoSizeMB,
   videoTypes,
@@ -66,28 +64,37 @@ export function useNetworkListener({
   const networkListenerRef = useRef<NetworkListener | null>(null);
   const currentTabIdRef = useRef<number | null>(null);
 
-  // Check service health
+  // Check Background connection status
   const checkServiceHealth = useCallback(async () => {
     try {
-      const response = await fetch(`${proxyEndpoint}/health`);
-      setIsOnline(response.ok);
+      const response = await chrome.runtime.sendMessage({ type: 'get-status' });
+      setIsOnline(response?.vfsConnected && response?.ollamaAvailable);
     } catch {
       setIsOnline(false);
     }
-  }, [proxyEndpoint]);
+  }, []);
 
   // Update stats from listener
   const updateStats = useCallback(() => {
     if (!networkListenerRef.current) return;
 
     const stats = networkListenerRef.current.getStats();
+    const imagesList = networkListenerRef.current.getCapturedImages();
+    const videosList = networkListenerRef.current.getCapturedVideos();
+
+    console.log('[NL] updateStats:', {
+      capturedImages: imagesList.length,
+      capturedVideos: videosList.length,
+      stats,
+    });
+
     setImageStats({
       captured: stats.capturedImageCount,
       skipped: stats.skippedSvgCount,
       failed: stats.failedImageCount,
       size: stats.totalImageSize,
     });
-    setImages(networkListenerRef.current.getCapturedImages());
+    setImages(imagesList);
 
     setVideoStats({
       captured: stats.capturedVideoCount,
@@ -95,7 +102,7 @@ export function useNetworkListener({
       failed: stats.failedVideoCount,
       size: stats.totalVideoSize,
     });
-    setVideos(networkListenerRef.current.getCapturedVideos());
+    setVideos(videosList);
   }, []);
 
   // Toggle capture
@@ -143,7 +150,6 @@ export function useNetworkListener({
 
       // Initialize network listener
       networkListenerRef.current = new NetworkListener();
-      networkListenerRef.current.setProxyEndpoint(proxyEndpoint);
       networkListenerRef.current.setMinFileSize(minImageSizeKB * 1024);
       networkListenerRef.current.setMinVideoSize(minVideoSizeMB * 1024 * 1024);
 
@@ -190,12 +196,6 @@ export function useNetworkListener({
   }, []); // 只在挂载时运行一次
 
   // Update listener config when props change
-  useEffect(() => {
-    if (networkListenerRef.current) {
-      networkListenerRef.current.setProxyEndpoint(proxyEndpoint);
-    }
-  }, [proxyEndpoint]);
-
   useEffect(() => {
     if (networkListenerRef.current) {
       networkListenerRef.current.setMinFileSize(minImageSizeKB * 1024);

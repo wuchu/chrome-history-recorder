@@ -52,16 +52,16 @@ Proxy 服务必须 (SHALL) 在文件捕获时推送实时事件。
   ```
 
 ### Requirement: 分类状态事件
-Proxy 服务必须 (SHALL) 推送 AI 分类相关事件。
+Extension Background / VFS 事件通道必须 (SHALL) 推送 AI 分类相关事件。
 
 #### Scenario: 推送分类开始事件
-- **WHEN** AI Classify 插件开始处理文件
+- **WHEN** Extension Background 分类器开始处理文件
 - **THEN** 系统必须 (SHALL) 推送 `classify:started` 事件
 - **AND** 事件数据必须 (SHALL) 包含：
   - `hash`: 正在分类的文件哈希
 
 #### Scenario: 推送分类完成事件
-- **WHEN** AI Classify 插件完成分类
+- **WHEN** Extension Background 分类器完成分类
 - **THEN** 系统必须 (SHALL) 推送 `classify:complete` 事件
 - **AND** 事件数据必须 (SHALL) 包含：
   - `hash`: 文件哈希
@@ -72,7 +72,7 @@ Proxy 服务必须 (SHALL) 推送 AI 分类相关事件。
   - `outputPath`: 输出路径
 
 #### Scenario: 推送分类失败事件
-- **WHEN** AI Classify 插件分类失败
+- **WHEN** Extension Background 分类器分类失败
 - **THEN** 系统必须 (SHALL) 推送 `classify:failed` 事件
 - **AND** 事件数据必须 (SHALL) 包含：
   - `hash`: 文件哈希
@@ -162,12 +162,12 @@ Proxy 服务必须 (SHALL) 正确处理 WebSocket 错误。
   ```
 
 ### Requirement: Extension WebSocket 客户端
-Extension 必须 (SHALL) 实现 WebSocket 客户端连接 Proxy。
+Extension 必须 (SHALL) 实现 WebSocket 客户端连接 VFS Service。
 
 #### Scenario: 自动连接
 - **WHEN** Extension DevTools 面板打开
-- **THEN** 系统必须 (SHALL) 自动连接到 Proxy WebSocket 端点
-- **AND** 连接端点必须 (SHALL) 使用配置的 proxyEndpoint
+- **THEN** 系统必须 (SHALL) 自动连接到 VFS WebSocket 端点
+- **AND** 连接端点必须 (SHALL) 使用当前 VFS Service 地址
 
 #### Scenario: 连接状态显示
 - **WHEN** WebSocket 连接状态变化

@@ -1,16 +1,19 @@
 /**
  * Network listener for intercepting image and video requests in DevTools
  * This module runs in the DevTools panel context and monitors all network requests
+ *
+ * Updated: Now sends media to Background Service Worker instead of HTTP proxy
  */
 
 import type { ChromeNetworkRequest } from './networkTypes';
 
 export interface MediaRequest {
+  hash: string;
   url: string;
   mimeType: string;
   size: number;
-  request: ChromeNetworkRequest | { hash: string; filename: string; captureTime: Date };
   type: 'image' | 'video';
+  captureTime: Date;
 }
 
 export class NetworkListener {
@@ -21,18 +24,16 @@ export class NetworkListener {
   private skippedVideoCount: number = 0;
   private failedImageCount: number = 0;
   private failedVideoCount: number = 0;
-  private proxyEndpoint: string = 'http://localhost:3777';
+  private boundHandleRequest: (request: ChromeNetworkRequest) => Promise<void>;
 
   // Filter settings
   private enabledImageTypes: Set<string> = new Set(['image/jpeg', 'image/png', 'image/webp']);
   private enabledVideoTypes: Set<string> = new Set(['video/mp4', 'video/webm']);
   private minFileSize: number = 10 * 1024; // 10KB default for images
   private minVideoSize: number = 1 * 1024 * 1024; // 1MB default for videos
-  private domainWhitelist: Set<string> = new Set(); // Empty = all domains allowed
+  private maxFileSize: number = 50 * 1024 * 1024; // 50MB max file size
+  private domainWhitelist: Set<string> = new Set();
 
-  /**
-   * Supported MIME types for image capture
-   */
   private readonly SUPPORTED_IMAGE_TYPES = [
     'image/jpeg',
     'image/png',
@@ -44,178 +45,109 @@ export class NetworkListener {
     'image/vnd.microsoft.icon',
   ];
 
-  /**
-   * Supported MIME types for video capture
-   */
   private readonly SUPPORTED_VIDEO_TYPES = [
     'video/mp4',
     'video/webm',
-    'video/quicktime', // MOV
-    'video/x-msvideo', // AVI
-    'video/ogg', // OGV
+    'video/quicktime',
+    'video/x-msvideo',
+    'video/ogg',
   ];
 
-  /**
-   * SVG MIME type (special handling - skipped)
-   */
   private readonly SVG_MIME_TYPE = 'image/svg+xml';
-
-  /**
-   * Maximum concurrent requests to proxy
-   */
   private readonly MAX_CONCURRENT = 5;
-
-  /**
-   * Request queue for managing concurrent uploads
-   */
   private requestQueue: MediaRequest[] = [];
   private activeRequests: number = 0;
 
-  /**
-   * Start listening for network requests
-   */
+  constructor() {
+    this.boundHandleRequest = this.handleRequest.bind(this);
+  }
+
   startListening(): void {
     if (this.isListening) return;
-
     this.isListening = true;
-
-    // Register network request listener
-    chrome.devtools.network.onRequestFinished.addListener(this.handleRequest.bind(this));
-
-    console.log('Network listener started');
+    chrome.devtools.network.onRequestFinished.addListener(this.boundHandleRequest);
+    console.log('[NetworkListener] Started');
   }
 
-  /**
-   * Stop listening for network requests
-   */
   stopListening(): void {
     if (!this.isListening) return;
-
     this.isListening = false;
-
-    // Remove network request listener
-    chrome.devtools.network.onRequestFinished.removeListener(this.handleRequest.bind(this));
-
-    console.log('Network listener stopped');
+    chrome.devtools.network.onRequestFinished.removeListener(this.boundHandleRequest);
+    console.log('[NetworkListener] Stopped');
   }
 
-  /**
-   * Handle each network request
-   */
   private async handleRequest(request: ChromeNetworkRequest): Promise<void> {
     if (!this.isListening) return;
 
-    // Check if request is an image or video
     const mimeType = this.getMimeType(request);
-    if (!mimeType) {
-      return; // No MIME type
-    }
+    if (!mimeType) return;
 
-    // Get URL
     const url = request.request.url;
+    if (url.startsWith('data:') || url.startsWith('blob:')) return;
 
-    // Skip data: URLs and blob: URLs (not supported in first version)
-    if (url.startsWith('data:') || url.startsWith('blob:')) {
-      console.warn(`Skipping unsupported URL type: ${url.substring(0, 50)}...`);
-      return;
-    }
-
-    // Get file size from Content-Length header
     const size = this.getContentLength(request);
 
     // Handle based on MIME type
     if (mimeType.startsWith('image/')) {
-      // Handle SVG (special case - skip)
       if (mimeType === this.SVG_MIME_TYPE) {
         this.skippedSvgCount++;
-        console.log(`Skipped SVG: ${url}`);
         return;
       }
 
-      // Apply image filters
-      if (!this.applyFilters(mimeType, size, url, 'image')) {
-        return; // Filtered out
-      }
+      if (!this.applyFilters(mimeType, size, url, 'image')) return;
 
-      // Create media request object
       const mediaRequest: MediaRequest = {
+        hash: '', // Will be set after capture
         url,
         mimeType,
         size,
-        request,
         type: 'image',
+        captureTime: new Date(),
       };
 
-      // Add to queue and process
       this.requestQueue.push(mediaRequest);
-      this.processQueue();
+      this.processQueue(request);
     } else if (mimeType.startsWith('video/')) {
-      // Apply video filters
       if (!this.applyFilters(mimeType, size, url, 'video')) {
         this.skippedVideoCount++;
-        return; // Filtered out
+        return;
       }
 
-      // Create media request object
       const mediaRequest: MediaRequest = {
+        hash: '',
         url,
         mimeType,
         size,
-        request,
         type: 'video',
+        captureTime: new Date(),
       };
 
-      // Add to queue and process
       this.requestQueue.push(mediaRequest);
-      this.processQueue();
+      this.processQueue(request);
     }
   }
 
-  /**
-   * Apply filter rules
-   */
-  private applyFilters(
-    mimeType: string,
-    size: number,
-    url: string,
-    mediaType: 'image' | 'video'
-  ): boolean {
+  private applyFilters(mimeType: string, size: number, url: string, mediaType: 'image' | 'video'): boolean {
     if (mediaType === 'image') {
-      // 1. Check image type filter
-      if (!this.enabledImageTypes.has(mimeType)) {
-        console.log(`Filtered out by image type: ${mimeType}`);
-        return false;
-      }
-
-      // 2. Check file size filter for images
-      if (size < this.minFileSize) {
-        console.log(`Filtered out by image size: ${size} < ${this.minFileSize}`);
-        return false;
-      }
-    } else if (mediaType === 'video') {
-      // 1. Check video type filter
-      if (!this.enabledVideoTypes.has(mimeType)) {
-        console.log(`Filtered out by video type: ${mimeType}`);
-        return false;
-      }
-
-      // 2. Check file size filter for videos
-      if (size < this.minVideoSize) {
-        console.log(`Filtered out by video size: ${size} < ${this.minVideoSize}`);
-        return false;
-      }
+      if (!this.enabledImageTypes.has(mimeType)) return false;
+      if (size < this.minFileSize) return false;
+    } else {
+      if (!this.enabledVideoTypes.has(mimeType)) return false;
+      if (size < this.minVideoSize) return false;
     }
 
-    // 3. Check domain whitelist (applies to both)
+    // Check max file size
+    if (size > this.maxFileSize) {
+      console.log(`[NetworkListener] Skipping large file: ${size} > ${this.maxFileSize}`);
+      return false;
+    }
+
+    // Check domain whitelist
     if (this.domainWhitelist.size > 0) {
       try {
         const hostname = new URL(url).hostname;
-        if (!this.domainWhitelist.has(hostname)) {
-          console.log(`Filtered out by domain: ${hostname}`);
-          return false;
-        }
+        if (!this.domainWhitelist.has(hostname)) return false;
       } catch {
-        console.warn(`Failed to parse URL: ${url}`);
         return false;
       }
     }
@@ -223,88 +155,74 @@ export class NetworkListener {
     return true;
   }
 
-  /**
-   * Process request queue with concurrency control
-   */
-  private async processQueue(): Promise<void> {
+  private async processQueue(originalRequest: ChromeNetworkRequest): Promise<void> {
     while (this.requestQueue.length > 0 && this.activeRequests < this.MAX_CONCURRENT) {
       const mediaRequest = this.requestQueue.shift();
       if (mediaRequest) {
         this.activeRequests++;
-        this.captureAndSendMedia(mediaRequest)
+        this.captureAndSendMedia(mediaRequest, originalRequest)
           .then(() => {
             this.activeRequests--;
-            this.processQueue(); // Continue processing
+            this.processQueue(originalRequest);
           })
           .catch((error) => {
-            console.error(`Failed to capture ${mediaRequest.type}:`, error);
+            console.error(`[NetworkListener] Capture failed:`, error);
             if (mediaRequest.type === 'image') {
               this.failedImageCount++;
             } else {
               this.failedVideoCount++;
             }
             this.activeRequests--;
-            this.processQueue(); // Continue processing
+            this.processQueue(originalRequest);
           });
       }
     }
   }
 
-  /**
-   * Capture media content and send to proxy
-   */
-  private async captureAndSendMedia(mediaRequest: MediaRequest): Promise<void> {
+  private async captureAndSendMedia(mediaRequest: MediaRequest, request: ChromeNetworkRequest): Promise<void> {
     // Get content using DevTools API
-    const content = await this.getMediaContent(mediaRequest.request);
-
+    const content = await this.getMediaContent(request);
     if (!content) {
       throw new Error('Failed to get media content');
     }
 
-    // Send to proxy service (use same endpoint for both image and video)
-    const response = await fetch(`${this.proxyEndpoint}/save-image`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        url: mediaRequest.url,
+    // Convert base64 to ArrayBuffer
+    const buffer = Uint8Array.from(atob(content), (c) => c.charCodeAt(0));
+
+    // Send to Background via chrome.runtime.sendMessage.
+    // Chrome runtime messages are JSON-serialized, so send bytes as number[].
+    const response = await chrome.runtime.sendMessage({
+      type: 'capture:media',
+      data: {
+        buffer: Array.from(buffer),
         mimeType: mediaRequest.mimeType,
-        data: content,
-      }),
+        url: mediaRequest.url,
+        capturedAt: mediaRequest.captureTime.toISOString(),
+      },
     });
 
-    if (!response.ok) {
-      throw new Error(`Proxy returned ${response.status}`);
+    if (!response?.success) {
+      throw new Error(response?.error ?? 'Background capture failed');
     }
 
-    const result = await response.json();
+    // Update hash from response
+    mediaRequest.hash = response.data.hash;
 
-    // Add to appropriate captured list
-    const capturedItem: MediaRequest = {
-      url: mediaRequest.url,
-      mimeType: mediaRequest.mimeType,
-      size: mediaRequest.size,
-      request: {
-        hash: result.hash,
-        filename: result.filename,
-        captureTime: new Date(),
-      },
-      type: mediaRequest.type,
-    };
+    if (response.data.duplicate) {
+      console.log(`[NetworkListener] Duplicate skipped: ${mediaRequest.hash}`);
+      return;
+    }
 
+    // Add only new captures to local list
     if (mediaRequest.type === 'image') {
-      this.capturedImages.push(capturedItem);
+      this.capturedImages.push(mediaRequest);
     } else {
-      this.capturedVideos.push(capturedItem);
+      this.capturedVideos.push(mediaRequest);
     }
 
-    console.log(`Captured ${mediaRequest.type}: ${result.filename}`);
+    console.log(`[NetworkListener] Captured: ${mediaRequest.hash}`);
   }
 
-  /**
-   * Get media content from request
-   */
   private async getMediaContent(request: ChromeNetworkRequest): Promise<string | null> {
     try {
       return new Promise((resolve, reject) => {
@@ -314,14 +232,10 @@ export class NetworkListener {
             return;
           }
 
-          // Handle different encodings
           if (encoding === 'base64') {
-            // Already base64 encoded
             resolve(content);
           } else {
-            // Need to convert to base64
             try {
-              // For utf8 or other encodings, convert to base64
               const encoder = new TextEncoder();
               const bytes = encoder.encode(content);
               const base64 = btoa(String.fromCharCode(...bytes));
@@ -332,15 +246,11 @@ export class NetworkListener {
           }
         });
       });
-    } catch (error) {
-      console.error('Error getting content:', error);
+    } catch {
       return null;
     }
   }
 
-  /**
-   * Get MIME type from response headers
-   */
   private getMimeType(request: ChromeNetworkRequest): string | null {
     const headers = request.response.headers;
     for (const header of headers) {
@@ -351,9 +261,6 @@ export class NetworkListener {
     return null;
   }
 
-  /**
-   * Get content length from response headers
-   */
   private getContentLength(request: ChromeNetworkRequest): number {
     const headers = request.response.headers;
     for (const header of headers) {
@@ -364,23 +271,14 @@ export class NetworkListener {
     return 0;
   }
 
-  /**
-   * Get captured images
-   */
   getCapturedImages(): MediaRequest[] {
     return this.capturedImages;
   }
 
-  /**
-   * Get captured videos
-   */
   getCapturedVideos(): MediaRequest[] {
     return this.capturedVideos;
   }
 
-  /**
-   * Get statistics
-   */
   getStats() {
     return {
       capturedImageCount: this.capturedImages.length,
@@ -394,9 +292,6 @@ export class NetworkListener {
     };
   }
 
-  /**
-   * Clear captured media
-   */
   clearImages(): void {
     this.capturedImages = [];
   }
@@ -414,64 +309,41 @@ export class NetworkListener {
     this.failedVideoCount = 0;
   }
 
-  /**
-   * Set proxy endpoint
-   */
-  setProxyEndpoint(endpoint: string): void {
-    this.proxyEndpoint = endpoint;
-  }
-
-  /**
-   * Set enabled image types
-   */
   setEnabledImageTypes(types: string[]): void {
     this.enabledImageTypes = new Set(types);
   }
 
-  /**
-   * Set enabled video types
-   */
   setEnabledVideoTypes(types: string[]): void {
     this.enabledVideoTypes = new Set(types);
   }
 
-  /**
-   * Set minimum file size (in bytes) for images
-   */
   setMinFileSize(size: number): void {
     this.minFileSize = size;
   }
 
-  /**
-   * Set minimum file size (in bytes) for videos
-   */
   setMinVideoSize(size: number): void {
     this.minVideoSize = size;
   }
 
-  /**
-   * Set domain whitelist
-   */
+  setMaxFileSize(size: number): void {
+    this.maxFileSize = size;
+  }
+
   setDomainWhitelist(domains: string[]): void {
     this.domainWhitelist = new Set(domains);
   }
 
-  /**
-   * Get current filter settings
-   */
   getFilterSettings() {
     return {
       enabledImageTypes: Array.from(this.enabledImageTypes),
       enabledVideoTypes: Array.from(this.enabledVideoTypes),
       minFileSize: this.minFileSize,
       minVideoSize: this.minVideoSize,
+      maxFileSize: this.maxFileSize,
       domainWhitelist: Array.from(this.domainWhitelist),
     };
   }
 
-  /**
-   * Check if listening
-   */
   isActive(): boolean {
     return this.isListening;
   }

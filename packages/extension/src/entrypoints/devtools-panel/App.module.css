@@ -22,6 +22,9 @@
   --button-hover: #e8e8e8;
   --input-border: #d0d0d0;
   --input-focus-border: #1a73e8;
+  --scrollbar-track: #f1f1f1;
+  --scrollbar-thumb: #c1c1c1;
+  --scrollbar-thumb-hover: #a1a1a1;
 
   /* Remove padding - DevTools panels have no margin */
   padding: 0;
@@ -62,6 +65,9 @@
   --button-hover: #4c4c4c;
   --input-border: #555555;
   --input-focus-border: #0e639c;
+  --scrollbar-track: #2d2d30;
+  --scrollbar-thumb: #5a5a5a;
+  --scrollbar-thumb-hover: #787878;
 }
 
 .lightTheme {
@@ -80,4 +86,30 @@
 
 :global .statusDotOffline {
   background: var(--error-color);
+}
+
+/* WebKit 浏览器滚动条样式 */
+:global *::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+:global *::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+:global *::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 2px;
+  min-height: 20px;
+}
+
+:global *::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+/* Firefox 滚动条样式 */
+:global * {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
 }

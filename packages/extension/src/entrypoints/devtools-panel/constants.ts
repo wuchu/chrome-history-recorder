@@ -8,8 +8,5 @@ export const DEFAULT_VIDEO_TYPES = {
   mov: false,
   avi: false,
 } as const;
-
-export const DEFAULT_STORAGE_PATH = '~/Downloads/chrome-history';
-export const DEFAULT_PROXY_ENDPOINT = 'http://localhost:3777';
 export const DEFAULT_MIN_IMAGE_SIZE_KB = 10;
 export const DEFAULT_MIN_VIDEO_SIZE_MB = 1;

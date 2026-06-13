@@ -3,7 +3,10 @@
     "serviceOnline": "服务已连接",
     "serviceOffline": "服务离线",
     "startCapture": "开始捕获",
-    "stopCapture": "停止捕获"
+    "stopCapture": "停止捕获",
+    "wsConnected": "WS 已连接",
+    "wsDisconnected": "WS 断开",
+    "classifying": "分类中 {{count}} 个，等待 {{pending}} 个"
   },
   "stats": {
     "images": "图片",
@@ -12,6 +15,33 @@
     "skipped": "跳过",
     "failed": "失败",
     "size": "大小"
+  },
+  "captureStream": {
+    "title": "实时捕获"
+  },
+  "mediaGrid": {
+    "count": "{{count}} 个媒体",
+    "clear": "清空",
+    "empty": "暂无媒体"
+  },
+  "mediaDetail": {
+    "fileInfo": "文件信息",
+    "classification": "分类信息",
+    "source": "来源",
+    "hash": "Hash",
+    "size": "大小",
+    "type": "类型",
+    "capturedAt": "捕获时间",
+    "category": "分类",
+    "aiFilename": "AI 文件名",
+    "modelUsed": "模型",
+    "classifiedAt": "分类时间",
+    "confidence": "置信度",
+    "tags": "标签",
+    "download": "下载",
+    "copyFilename": "复制文件名",
+    "requeue": "重新分类/重命名",
+    "requeueing": "加入中..."
   },
   "mediaList": {
     "capturedImages": "捕获的图片",
@@ -22,18 +52,11 @@
   },
   "config": {
     "title": "配置选项",
-    "storagePath": "存储路径",
-    "proxyEndpoint": "代理端点",
     "save": "保存",
     "apply": "应用",
-    "imageFilter": "图片过滤",
-    "minSize": "最小大小",
-    "videoFilter": "视频过滤",
-    "videoTypes": "视频类型"
-  },
-  "alerts": {
-    "pathSaved": "路径配置已保存",
-    "connectionFailed": "无法连接到代理服务"
+    "aiSettings": "AI 分类",
+    "loadingModels": "加载中...",
+    "saving": "保存中..."
   },
   "theme": {
     "label": "主题",
