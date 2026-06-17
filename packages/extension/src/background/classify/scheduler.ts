@@ -4,9 +4,9 @@
  * Manages classification task queue and processing.
  */
 
-import { getVFSWebSocketClient, VFSQueueStatus } from '../vfs-ws-client.js';
-import { getOllamaClient, ClassificationResult } from './ollama-client.js';
-import { getFileManager } from '../file-manager.js';
+import { getVFSWebSocketClient, VFSQueueStatus } from '../vfs-ws-client';
+import { getOllamaClient } from './ollama-client';
+import { getFileManager } from '../file-manager';
 
 /**
  * Scheduler configuration

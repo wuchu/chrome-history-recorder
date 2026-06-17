@@ -32,10 +32,9 @@
 ### REQ-4: 响应式列数
 
 - **REQ-4.1**: 监听容器宽度变化 (ResizeObserver)
-- **REQ-4.2**: 宽度 < 500px → 2 列
-- **REQ-4.3**: 宽度 500-800px → 3 列
-- **REQ-4.4**: 宽度 800-1100px → 4 列
-- **REQ-4.5**: 宽度 > 1100px → 5 列
+- **REQ-4.2**: 列数按容器宽度连续计算：`columns = floor((width + gap) / (columnWidth + gap))`
+- **REQ-4.3**: 下限 1 列（容器宽度小于 `columnWidth + gap` 时退化为单列），上不封顶
+- **REQ-4.4**: `columnWidth` 与 `gap` 默认值分别为 200px 与 10px，可由调用方覆盖
 
 ### REQ-5: 虚拟化渲染
 
@@ -55,6 +54,7 @@
 ### REQ-7: 项目渲染
 
 - **REQ-7.1**: 缩略图使用 `<img src={thumbnailUrl} loading="lazy" />`
+- **REQ-7.1a**: 主 Masonry 网格的图片缩略图源必须至少达到目标列宽的 2:1 源像素比例；默认 200px 目标列宽必须使用 `large` 缩略图（最长边 400px）
 - **REQ-7.2**: 显示 StatusBadge (pending/processing/completed/failed)
 - **REQ-7.3**: 已分类项目显示 category 标签
 - **REQ-7.4**: 已分类项目显示 confidence 进度条
@@ -199,3 +199,17 @@ interface ClassifyProgressSectionProps {
 - **ERR-3.1**: 显示断连状态
 - **ERR-3.2**: 自动重连 (现有 useWebSocket 已实现)
 - **ERR-3.3**: 重连后历史数据仍然可用
+
+### REQ-9: Side Panel host compatibility
+
+- **REQ-9.1**: The virtual masonry grid SHALL support rendering inside the Chrome Side Panel media browser
+- **REQ-9.2**: When rendered in a narrow Side Panel viewport, the grid SHALL support a one-column layout
+- **REQ-9.3**: Lazy-loaded thumbnails and stable item click behavior SHALL be preserved in the Side Panel
+- **REQ-9.4**: New media and classification status arriving through Background runtime messages SHALL be merged by media hash
+- **REQ-9.5**: The grid SHALL avoid duplicate items across historical and real-time sources
+
+### REQ-10: UI-surface-agnostic media browser components
+
+- **REQ-10.1**: The masonry grid and media detail components SHALL avoid direct dependencies on DevTools-only APIs
+- **REQ-10.2**: When the Side Panel imports media browser components, they SHALL render using props and runtime-message-backed data
+- **REQ-10.3**: Media browser components SHALL NOT call `chrome.devtools.*` APIs directly

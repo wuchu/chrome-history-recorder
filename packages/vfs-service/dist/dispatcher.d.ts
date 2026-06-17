@@ -3,7 +3,7 @@
  *
  * Routes WebSocket requests to appropriate API handlers.
  */
-import { VFSAPI } from './api.js';
+import { VFSAPI } from './api';
 /**
  * Request type
  */

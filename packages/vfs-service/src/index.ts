@@ -4,13 +4,13 @@
  * WebSocket + HTTP Server for Chrome Extension.
  */
 
-import { SQLiteDatabase, ensureWorkspace } from './sqlite.js';
-import { BlobStorage } from './blob.js';
-import { ThumbnailStorage } from './thumbnail.js';
-import { VFSAPI } from './api.js';
-import { createWebSocketServer } from './websocket-server.js';
-import { createHTTPServer } from './http-server.js';
-import { parseArgs } from './config.js';
+import { SQLiteDatabase, ensureWorkspace } from './sqlite';
+import { BlobStorage } from './blob';
+import { ThumbnailStorage } from './thumbnail';
+import { VFSAPI } from './api';
+import { createWebSocketServer } from './websocket-server';
+import { createHTTPServer } from './http-server';
+import { parseArgs } from './config';
 
 /**
  * WebSocket Server port (default: 8765)

@@ -4,7 +4,7 @@
  * Routes WebSocket requests to appropriate API handlers.
  */
 
-import { VFSAPI } from './api.js';
+import { VFSAPI } from './api';
 
 /**
  * Request type
@@ -67,7 +67,11 @@ export function createDispatcher(api: VFSAPI): (request: VFSRequest) => Promise<
 /**
  * Dispatch method to API handler
  */
-async function dispatchMethod(api: VFSAPI, method: string, params: Record<string, unknown>): Promise<unknown> {
+async function dispatchMethod(
+  api: VFSAPI,
+  method: string,
+  params: Record<string, unknown>
+): Promise<unknown> {
   switch (method) {
     // File operations
     case 'saveFile':
@@ -101,6 +105,9 @@ async function dispatchMethod(api: VFSAPI, method: string, params: Record<string
     case 'getWorkspaceConfig':
       return api.getWorkspaceConfig();
 
+    case 'syncBlobsToIndex':
+      return api.syncBlobsToIndex();
+
     case 'setWorkspaceConfig':
       return api.setWorkspaceConfig();
 
@@ -122,6 +129,12 @@ async function dispatchMethod(api: VFSAPI, method: string, params: Record<string
 
     case 'clearQueue':
       return api.clearQueue();
+
+    case 'getTagCounts':
+      return api.getTagCounts();
+
+    case 'clearIndex':
+      return api.clearIndex();
 
     default:
       throw new Error(`Unknown method: ${method}`);

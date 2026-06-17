@@ -72,6 +72,15 @@ export interface VFSQueueStatus {
   total: number;
 }
 
+export interface SyncBlobsToIndexResult {
+  scanned: number;
+  indexed: number;
+  skippedExisting: number;
+  skippedUnsupported: number;
+  skippedInvalidHash: number;
+  errors: Array<{ path: string; reason: string }>;
+}
+
 /**
  * WebSocket connection state
  */
@@ -88,15 +97,18 @@ export class VFSWebSocketClient {
   private ws: WebSocket | null = null;
   private connectionState: ConnectionState = 'disconnected';
   private reconnectAttempts: number = 0;
-  private pendingRequests: Map<number, {
-    resolve: (value: unknown) => void;
-    reject: (reason: unknown) => void;
-  }> = new Map();
+  private pendingRequests: Map<
+    number,
+    {
+      resolve: (value: unknown) => void;
+      reject: (reason: unknown) => void;
+    }
+  > = new Map();
   private nextRequestId: number = 0;
   private onDisconnectCallbacks: Array<(error: string) => void> = [];
   private onConnectCallbacks: Array<() => void> = [];
   private onEventCallbacks: Array<(event: string, data: unknown) => void> = [];
-  private reconnectTimer: NodeJS.Timeout | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(config: VFSWebSocketClientConfig = {}) {
     this.url = config.url ?? 'ws://localhost:8765';
@@ -180,7 +192,10 @@ export class VFSWebSocketClient {
     const request = { id, method, params };
 
     return new Promise<T>((resolve, reject) => {
-      this.pendingRequests.set(id, { resolve, reject });
+      this.pendingRequests.set(id, {
+        resolve: (value: unknown) => resolve(value as T),
+        reject,
+      });
       this.ws!.send(JSON.stringify(request));
 
       // Timeout
@@ -203,7 +218,9 @@ export class VFSWebSocketClient {
     const timestamp = new Date().toISOString();
     console.log(`[VFSWebSocketClient] ✓ Connected at ${timestamp}`);
     console.log(`[VFSWebSocketClient] Connection state changed: ${previousState} -> connected`);
-    console.log(`[VFSWebSocketClient] Triggering ${this.onConnectCallbacks.length} onConnect callback(s)...`);
+    console.log(
+      `[VFSWebSocketClient] Triggering ${this.onConnectCallbacks.length} onConnect callback(s)...`
+    );
     for (const callback of this.onConnectCallbacks) {
       callback();
     }
@@ -266,7 +283,9 @@ export class VFSWebSocketClient {
     const timestamp = new Date().toISOString();
     console.error(`[VFSWebSocketClient] Disconnected at ${timestamp}: ${reason}`);
     console.log(`[VFSWebSocketClient] Connection state changed: ${previousState} -> disconnected`);
-    console.log(`[VFSWebSocketClient] Triggering ${this.onDisconnectCallbacks.length} onDisconnect callback(s)...`);
+    console.log(
+      `[VFSWebSocketClient] Triggering ${this.onDisconnectCallbacks.length} onDisconnect callback(s)...`
+    );
     for (const callback of this.onDisconnectCallbacks) {
       callback(reason);
     }
@@ -293,7 +312,9 @@ export class VFSWebSocketClient {
     }
 
     this.reconnectAttempts++;
-    console.log(`[VFSWebSocketClient] Reconnecting in ${this.reconnectInterval}ms (attempt ${this.reconnectAttempts})`);
+    console.log(
+      `[VFSWebSocketClient] Reconnecting in ${this.reconnectInterval}ms (attempt ${this.reconnectAttempts})`
+    );
 
     this.reconnectTimer = setTimeout(() => {
       this.connect();
@@ -315,7 +336,9 @@ export class VFSWebSocketClient {
    */
   onDisconnect(callback: (error: string) => void): void {
     this.onDisconnectCallbacks.push(callback);
-    console.log(`[VFSWebSocketClient] Added onDisconnect callback, total: ${this.onDisconnectCallbacks.length}`);
+    console.log(
+      `[VFSWebSocketClient] Added onDisconnect callback, total: ${this.onDisconnectCallbacks.length}`
+    );
   }
 
   /**
@@ -323,7 +346,9 @@ export class VFSWebSocketClient {
    */
   onConnect(callback: () => void): void {
     this.onConnectCallbacks.push(callback);
-    console.log(`[VFSWebSocketClient] Added onConnect callback, total: ${this.onConnectCallbacks.length}`);
+    console.log(
+      `[VFSWebSocketClient] Added onConnect callback, total: ${this.onConnectCallbacks.length}`
+    );
   }
 
   /**
@@ -331,7 +356,9 @@ export class VFSWebSocketClient {
    */
   onEvent(callback: (event: string, data: unknown) => void): void {
     this.onEventCallbacks.push(callback);
-    console.log(`[VFSWebSocketClient] Added onEvent callback, total: ${this.onEventCallbacks.length}`);
+    console.log(
+      `[VFSWebSocketClient] Added onEvent callback, total: ${this.onEventCallbacks.length}`
+    );
   }
 
   // API Methods (same signature as VFSClient)
@@ -349,7 +376,9 @@ export class VFSWebSocketClient {
     const bufferArray = Array.isArray(params.buffer)
       ? params.buffer
       : Array.from(new Uint8Array(params.buffer));
-    console.log(`[VFSWebSocketClient] Sending saveFile: ${params.mimeType}, ${bufferArray.length} bytes`);
+    console.log(
+      `[VFSWebSocketClient] Sending saveFile: ${params.mimeType}, ${bufferArray.length} bytes`
+    );
     return this.send('saveFile', {
       buffer: bufferArray,
       mimeType: params.mimeType,
@@ -385,13 +414,16 @@ export class VFSWebSocketClient {
     total: number;
     hasMore: boolean;
   }> {
-    return this.send('listFiles', query ?? {});
+    return this.send('listFiles', { ...(query ?? {}) });
   }
 
   /**
    * Update metadata
    */
-  async updateMetadata(hash: string, updates: Partial<VFSFileMetadata>): Promise<{
+  async updateMetadata(
+    hash: string,
+    updates: Partial<VFSFileMetadata>
+  ): Promise<{
     success: boolean;
     updatedMetadata?: VFSFileMetadata;
   }> {
@@ -408,7 +440,10 @@ export class VFSWebSocketClient {
   /**
    * Get thumbnail
    */
-  async getThumbnail(hash: string, size?: 'small' | 'medium' | 'large'): Promise<{
+  async getThumbnail(
+    hash: string,
+    size?: 'small' | 'medium' | 'large'
+  ): Promise<{
     buffer: number[] | { type?: string; data?: number[] };
     mimeType: string;
   } | null> {
@@ -436,6 +471,13 @@ export class VFSWebSocketClient {
   }
 
   /**
+   * Sync existing workspace blobs into the VFS index
+   */
+  async syncBlobsToIndex(): Promise<SyncBlobsToIndexResult> {
+    return this.send('syncBlobsToIndex');
+  }
+
+  /**
    * Enqueue classification
    */
   async enqueueClassification(hash: string, priority?: number): Promise<{ success: boolean }> {
@@ -452,18 +494,24 @@ export class VFSWebSocketClient {
   /**
    * Get pending tasks
    */
-  async getPendingTasks(limit?: number): Promise<Array<{
-    hash: string;
-    status: string;
-    priority: number;
-  }>> {
+  async getPendingTasks(limit?: number): Promise<
+    Array<{
+      hash: string;
+      status: string;
+      priority: number;
+    }>
+  > {
     return this.send('getPendingTasks', { limit });
   }
 
   /**
    * Update task status
    */
-  async updateTaskStatus(hash: string, status: string, error?: string): Promise<{ success: boolean }> {
+  async updateTaskStatus(
+    hash: string,
+    status: string,
+    error?: string
+  ): Promise<{ success: boolean }> {
     return this.send('updateTaskStatus', { hash, status, error });
   }
 
@@ -484,8 +532,15 @@ export class VFSWebSocketClient {
   /**
    * Get tag counts
    */
-  async getTagCounts(): Promise<{ counts: Record<string, number> }> {
+  async getTagCounts(): Promise<Record<string, number>> {
     return this.send('getTagCounts');
+  }
+
+  /**
+   * Clear index
+   */
+  async clearIndex(): Promise<{ success: boolean }> {
+    return this.send('clearIndex');
   }
 }
 
@@ -500,7 +555,10 @@ export function getVFSWebSocketClient(): VFSWebSocketClient {
     console.log('[VFSWebSocketClient] Creating new singleton instance (via getVFSWebSocketClient)');
     vfsWebSocketClient = new VFSWebSocketClient();
   }
-  console.log('[VFSWebSocketClient] Returning singleton instance, connected:', vfsWebSocketClient.isConnected());
+  console.log(
+    '[VFSWebSocketClient] Returning singleton instance, connected:',
+    vfsWebSocketClient.isConnected()
+  );
   return vfsWebSocketClient;
 }
 
@@ -508,7 +566,9 @@ export function getVFSWebSocketClient(): VFSWebSocketClient {
  * Initialize VFS WebSocket Client
  */
 export function initVFSWebSocketClient(config?: VFSWebSocketClientConfig): VFSWebSocketClient {
-  console.log('[VFSWebSocketClient] initVFSWebSocketClient called, creating new singleton instance');
+  console.log(
+    '[VFSWebSocketClient] initVFSWebSocketClient called, creating new singleton instance'
+  );
   vfsWebSocketClient = new VFSWebSocketClient(config);
   console.log('[VFSWebSocketClient] Singleton instance created, connecting...');
   vfsWebSocketClient.connect();

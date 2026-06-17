@@ -10,7 +10,13 @@ export const SYSTEM_TAGS: TagDefinition[] = [
   { id: 'system:image', name: 'image', label: '📷 图片', isSystem: true, sortOrder: 1 },
   { id: 'system:video', name: 'video', label: '🎬 视频', isSystem: true, sortOrder: 2 },
   { id: 'system:starred', name: 'starred', label: '⭐ 已收藏', isSystem: true, sortOrder: 100 },
-  { id: 'system:uncategorized', name: 'uncategorized', label: '未分类', isSystem: true, sortOrder: 999 },
+  {
+    id: 'system:uncategorized',
+    name: 'uncategorized',
+    label: '未分类',
+    isSystem: true,
+    sortOrder: 999,
+  },
 ];
 
 /**
@@ -94,22 +100,28 @@ export function combineTags(systemTags: string[], userTags: string[]): string[] 
 /**
  * Get tag definition by id
  */
-export function getTagById(id: string, userDefinedTags: TagDefinition[]): TagDefinition | undefined {
-  return [...SYSTEM_TAGS, ...userDefinedTags].find(t => t.id === id);
+export function getTagById(
+  id: string,
+  userDefinedTags: TagDefinition[]
+): TagDefinition | undefined {
+  return [...SYSTEM_TAGS, ...userDefinedTags].find((t) => t.id === id);
 }
 
 /**
  * Get tag definition by name
  */
-export function getTagByName(name: string, userDefinedTags: TagDefinition[]): TagDefinition | undefined {
-  return [...SYSTEM_TAGS, ...userDefinedTags].find(t => t.name === name);
+export function getTagByName(
+  name: string,
+  userDefinedTags: TagDefinition[]
+): TagDefinition | undefined {
+  return [...SYSTEM_TAGS, ...userDefinedTags].find((t) => t.name === name);
 }
 
 /**
  * Check if a tag is a system tag
  */
 export function isSystemTag(tagIdOrName: string): boolean {
-  return SYSTEM_TAGS.some(t => t.id === tagIdOrName || t.name === tagIdOrName);
+  return SYSTEM_TAGS.some((t) => t.id === tagIdOrName || t.name === tagIdOrName);
 }
 
 /**
@@ -123,20 +135,10 @@ export function getVisibleTabs(
     { ...ALL_TAG, count: tagCounts['all'] || 0 },
   ];
 
-  // Add system tags with files
+  // Add all system tags (always show, even if count is 0)
   for (const systemTag of SYSTEM_TAGS) {
-    if (systemTag.name !== 'uncategorized') {
-      const count = tagCounts[systemTag.name] || 0;
-      if (count > 0) {
-        tabs.push({ ...systemTag, count });
-      }
-    } else {
-      // Always show uncategorized if there are uncategorized files
-      const count = tagCounts['uncategorized'] || 0;
-      if (count > 0) {
-        tabs.push({ ...systemTag, count });
-      }
-    }
+    const count = tagCounts[systemTag.name] || 0;
+    tabs.push({ ...systemTag, count });
   }
 
   // Add user tags with files
@@ -157,6 +159,6 @@ export function getVisibleTabs(
  * Validate and filter tags against user-defined set
  */
 export function filterValidTags(tags: string[], userDefinedTags: TagDefinition[]): string[] {
-  const validNames = new Set(userDefinedTags.map(t => t.name));
-  return tags.filter(tag => validNames.has(tag)).slice(0, 3);
+  const validNames = new Set(userDefinedTags.map((t) => t.name));
+  return tags.filter((tag) => validNames.has(tag)).slice(0, 3);
 }

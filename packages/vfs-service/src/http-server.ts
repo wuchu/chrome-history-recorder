@@ -5,10 +5,9 @@
  */
 
 import http from 'http';
-import url from 'url';
-import { VFSAPI } from './api.js';
-import { FileMetadata } from './sqlite.js';
-import { ThumbnailSize } from './thumbnail.js';
+import { VFSAPI } from './api';
+import { FileMetadata } from './sqlite';
+import { ThumbnailSize } from './thumbnail';
 
 /**
  * HTTP Server configuration
@@ -67,10 +66,11 @@ export class VFSHTTPServer {
       return;
     }
 
-    // Parse URL
-    const parsedUrl = url.parse(req.url || '/', true);
+    // Parse URL using the WHATWG URL API (legacy `url.parse` is deprecated; DEP0169).
+    const requestHost = req.headers.host ?? 'localhost';
+    const parsedUrl = new URL(req.url || '/', `http://${requestHost}`);
     const pathname = parsedUrl.pathname || '/';
-    const query = parsedUrl.query;
+    const query = parsedUrl.searchParams;
 
     try {
       // Route request
@@ -141,7 +141,7 @@ export class VFSHTTPServer {
   private async handleFiles(
     res: http.ServerResponse,
     pathname: string,
-    query: Record<string, string | string[] | undefined>
+    query: URLSearchParams
   ): Promise<void> {
     // Extract hash from path: /files/:hash/...
     const parts = pathname.split('/').filter(Boolean);
@@ -168,10 +168,7 @@ export class VFSHTTPServer {
   /**
    * Handle file download endpoint
    */
-  private async handleFileDownload(
-    res: http.ServerResponse,
-    hash: string
-  ): Promise<void> {
+  private async handleFileDownload(res: http.ServerResponse, hash: string): Promise<void> {
     const result = this.api.getFile(hash);
     if (!result) {
       this.handleNotFound(res, 'File not found');
@@ -194,10 +191,10 @@ export class VFSHTTPServer {
   private async handleThumbnail(
     res: http.ServerResponse,
     hash: string,
-    query: Record<string, string | string[] | undefined>
+    query: URLSearchParams
   ): Promise<void> {
     // Get thumbnail size from query
-    const sizeValue = query.size as string | undefined;
+    const sizeValue = query.get('size') ?? undefined;
     const size: ThumbnailSize = (sizeValue as ThumbnailSize) || 'medium';
 
     // Validate size
@@ -226,10 +223,7 @@ export class VFSHTTPServer {
   /**
    * Handle metadata endpoint
    */
-  private handleMetadata(
-    res: http.ServerResponse,
-    hash: string
-  ): void {
+  private handleMetadata(res: http.ServerResponse, hash: string): void {
     const metadata = this.api.getMetadata(hash);
     if (!metadata) {
       this.handleNotFound(res, 'Metadata not found');
@@ -269,10 +263,7 @@ export class VFSHTTPServer {
   /**
    * Handle 404 Not Found
    */
-  private handleNotFound(
-    res: http.ServerResponse,
-    message?: string
-  ): void {
+  private handleNotFound(res: http.ServerResponse, message?: string): void {
     res.setHeader('Content-Type', 'application/json');
     res.writeHead(404);
     res.end(JSON.stringify({ error: message || 'Not found' }));
@@ -281,11 +272,7 @@ export class VFSHTTPServer {
   /**
    * Handle error response
    */
-  private handleError(
-    res: http.ServerResponse,
-    message: string,
-    statusCode: number = 500
-  ): void {
+  private handleError(res: http.ServerResponse, message: string, statusCode: number = 500): void {
     res.setHeader('Content-Type', 'application/json');
     res.writeHead(statusCode);
     res.end(JSON.stringify({ error: message }));

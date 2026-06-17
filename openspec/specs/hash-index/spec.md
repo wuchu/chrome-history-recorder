@@ -1,21 +1,19 @@
-## REMOVED Requirements
+# Hash Index
 
-### Requirement: Hash index persistence
-**Reason**: The standalone CLI `.ai-classify-index.json` file is retired. The active system stores file identity and metadata in VFS/SQLite.
-**Migration**: Use VFS metadata records keyed by content hash.
+## Purpose
 
-### Requirement: Duplicate detection
-**Reason**: CLI hash-index duplicate detection is replaced by VFS content-addressed storage and metadata lookup.
-**Migration**: Use VFS hash-based save/list behavior.
+The standalone CLI `.ai-classify-index.json` hash index is retired. The active system stores file identity and metadata in VFS/SQLite, keyed by content hash. This spec records that there are no active hash-index requirements outside VFS.
 
-### Requirement: Hash computation
-**Reason**: Standalone CLI hash computation requirements are no longer needed as a separate capability.
-**Migration**: Use VFS/Extension capture hashing behavior.
+## Requirements
 
-### Requirement: Index operations
-**Reason**: CLI index management commands are retired with the CLI package.
-**Migration**: Use VFS APIs and DevTools actions that operate on media records.
+### Requirement: Standalone CLI hash index is not a supported store
+The system SHALL NOT maintain a standalone CLI hash index file (such as `.ai-classify-index.json`) for duplicate detection or processing records.
 
-### Requirement: Index record structure
-**Reason**: CLI index record structure is replaced by VFS metadata schema.
-**Migration**: Use VFS file metadata fields for paths, capture time, category, AI filename, tags, confidence, and model information.
+#### Scenario: No external index file
+- **WHEN** the system tracks processed media
+- **THEN** it SHALL store identity, hash, and processing records in VFS/SQLite
+- **AND** it SHALL NOT read or write a standalone CLI hash index file
+
+#### Scenario: Replacement behavior in VFS
+- **WHEN** the system needs duplicate detection, hash computation, index queries, or processing record fields (paths, capture time, category, AI filename, tags, confidence, model)
+- **THEN** VFS hash-based save/list behavior and the VFS file metadata schema SHALL provide that capability

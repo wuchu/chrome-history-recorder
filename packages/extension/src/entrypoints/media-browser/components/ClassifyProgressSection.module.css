@@ -1,0 +1,54 @@
+.container {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.leftSection {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.robotIcon {
+  font-size: 14px;
+  color: var(--text-primary);
+  flex-shrink: 0;
+}
+
+.label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.progressWrapper {
+  flex: 1;
+  min-width: 0;
+  max-width: 200px;
+}
+
+.rightSection {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.loading {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+/* Dark theme adjustments */
+:global(.darkTheme) .container {
+  background: rgba(255, 255, 255, 0.05);
+}

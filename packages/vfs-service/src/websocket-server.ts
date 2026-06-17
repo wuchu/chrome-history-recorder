@@ -5,8 +5,8 @@
  */
 
 import { WebSocketServer, WebSocket, RawData } from 'ws';
-import { VFSAPI } from './api.js';
-import { createDispatcher, VFSRequest, VFSResponse } from './dispatcher.js';
+import { VFSAPI } from './api';
+import { createDispatcher, VFSRequest, VFSResponse } from './dispatcher';
 
 /**
  * Extended WebSocket with ping tracking

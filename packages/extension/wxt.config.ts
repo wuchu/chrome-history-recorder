@@ -11,15 +11,27 @@ export default defineConfig({
   outDir: '.wxt',
   manifest: {
     name: 'Media Recorder',
-    description: 'Capture images and videos from web pages using DevTools API',
+    description: 'Capture images and videos from web pages using a Chrome Side Panel',
     version: '0.4.0',
-    permissions: ['activeTab', 'storage', 'downloads', 'declarativeNetRequest'],
+    permissions: [
+      'activeTab',
+      'storage',
+      'downloads',
+      'declarativeNetRequest',
+      'sidePanel',
+      'debugger',
+    ],
     host_permissions: [
       '<all_urls>', // 允许访问所有域名，用于拦截所有网站的媒体
       'http://localhost/*', // 允许访问本地 Ollama/VFS 服务
       'http://127.0.0.1/*', // 允许访问本地 Ollama 服务
     ],
-    devtools_page: 'devtools.html',
+    action: {
+      default_title: 'Media Recorder',
+    },
+    side_panel: {
+      default_path: 'sidepanel.html',
+    },
     // Fixed key for development - ensures consistent Extension ID
     // Remove this for production builds
     ...(process.env.NODE_ENV !== 'production' && { key: DEV_PUBLIC_KEY }),
@@ -31,6 +43,6 @@ export default defineConfig({
         disabled: true,
       }
     : {
-        chromiumArgs: ['https://www.baidu.com', '--auto-open-devtools-for-tabs'],
+        chromiumArgs: ['https://www.baidu.com'],
       },
 });

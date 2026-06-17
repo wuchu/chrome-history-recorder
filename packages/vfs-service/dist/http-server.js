@@ -1,14 +1,20 @@
+"use strict";
 /**
  * VFS Service - HTTP Server Module
  *
  * Provides HTTP endpoints for file download, thumbnails, and stats.
  */
-import http from 'http';
-import url from 'url';
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.VFSHTTPServer = void 0;
+exports.createHTTPServer = createHTTPServer;
+const http_1 = __importDefault(require("http"));
 /**
  * HTTP Server class
  */
-export class VFSHTTPServer {
+class VFSHTTPServer {
     server;
     api;
     port;
@@ -16,7 +22,7 @@ export class VFSHTTPServer {
         this.api = api;
         this.port = config.port;
         // Create HTTP server
-        this.server = http.createServer((req, res) => {
+        this.server = http_1.default.createServer((req, res) => {
             this.handleRequest(req, res);
         });
         this.setupServer(config.host || 'localhost');
@@ -46,10 +52,11 @@ export class VFSHTTPServer {
             res.end();
             return;
         }
-        // Parse URL
-        const parsedUrl = url.parse(req.url || '/', true);
+        // Parse URL using the WHATWG URL API (legacy `url.parse` is deprecated; DEP0169).
+        const requestHost = req.headers.host ?? 'localhost';
+        const parsedUrl = new URL(req.url || '/', `http://${requestHost}`);
         const pathname = parsedUrl.pathname || '/';
-        const query = parsedUrl.query;
+        const query = parsedUrl.searchParams;
         try {
             // Route request
             if (pathname === '/') {
@@ -161,7 +168,7 @@ export class VFSHTTPServer {
      */
     async handleThumbnail(res, hash, query) {
         // Get thumbnail size from query
-        const sizeValue = query.size;
+        const sizeValue = query.get('size') ?? undefined;
         const size = sizeValue || 'medium';
         // Validate size
         const validSizes = ['small', 'medium', 'large'];
@@ -242,10 +249,11 @@ export class VFSHTTPServer {
         console.error('HTTP Server closed');
     }
 }
+exports.VFSHTTPServer = VFSHTTPServer;
 /**
  * Create HTTP server
  */
-export function createHTTPServer(api, config) {
+function createHTTPServer(api, config) {
     return new VFSHTTPServer(api, config);
 }
 //# sourceMappingURL=http-server.js.map

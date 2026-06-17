@@ -1,4 +1,10 @@
-## ADDED Requirements
+# Simplified DevTools Config
+
+## Purpose
+
+Define the DevTools Panel configuration surface after legacy proxy and standalone CLI controls are retired. The DevTools configuration area focuses on the active Extension Background + VFS Service workflow and preserves predictable capture defaults without requiring low-frequency form inputs.
+
+## Requirements
 
 ### Requirement: DevTools configuration focuses on active runtime controls
 The DevTools Panel SHALL expose only configuration controls that operate the current Extension Background and VFS Service workflow.

@@ -4,9 +4,29 @@
  * Implements all VFS API methods.
  */
 
-import { SQLiteDatabase, FileMetadata, MetadataUpdate, ListQuery } from './sqlite.js';
-import { BlobStorage, calculateHash, getExtensionFromMimeType } from './blob.js';
-import { ThumbnailStorage, ThumbnailSize } from './thumbnail.js';
+import fs from 'fs';
+import { SQLiteDatabase, FileMetadata, MetadataUpdate, ListQuery } from './sqlite';
+import {
+  BlobStorage,
+  calculateHash,
+  getExtensionFromMimeType,
+  getMimeTypeFromExtension,
+} from './blob';
+import { ThumbnailStorage, ThumbnailSize } from './thumbnail';
+
+export interface SyncBlobsToIndexError {
+  path: string;
+  reason: string;
+}
+
+export interface SyncBlobsToIndexResult {
+  scanned: number;
+  indexed: number;
+  skippedExisting: number;
+  skippedUnsupported: number;
+  skippedInvalidHash: number;
+  errors: SyncBlobsToIndexError[];
+}
 
 /**
  * VFS Service API class
@@ -39,9 +59,7 @@ export class VFSAPI {
     capturedAt?: string;
   }): { hash: string; duplicate: boolean; size: number } {
     const { mimeType, sourceUrl, capturedAt } = params;
-    const buffer = Buffer.isBuffer(params.buffer)
-      ? params.buffer
-      : Buffer.from(params.buffer);
+    const buffer = Buffer.isBuffer(params.buffer) ? params.buffer : Buffer.from(params.buffer);
     if (buffer.length === 0) {
       throw new Error('Cannot save empty file buffer');
     }
@@ -62,7 +80,13 @@ export class VFSAPI {
     // Save blob
     const result = this.blobStorage.saveBlob(buffer, hash, mimeType);
 
-    // Insert metadata
+    // Insert metadata with system tags
+    const tags: string[] = [];
+    if (mimeType.startsWith('image/')) {
+      tags.push('system:image');
+    } else if (mimeType.startsWith('video/')) {
+      tags.push('system:video');
+    }
     this.db.insertFile({
       hash,
       blob_ext: ext,
@@ -72,7 +96,7 @@ export class VFSAPI {
       captured_at: capturedAt || now,
       category: 'uncategorized',
       ai_filename: null,
-      tags: null,
+      tags: tags.length > 0 ? JSON.stringify(tags) : null,
       confidence: 0,
       classified_at: null,
       model_used: null,
@@ -92,7 +116,9 @@ export class VFSAPI {
   /**
    * Get file API
    */
-  getFile(hash: string): { buffer: Buffer; mimeType: string; size: number; metadata: FileMetadata } | null {
+  getFile(
+    hash: string
+  ): { buffer: Buffer; mimeType: string; size: number; metadata: FileMetadata } | null {
     const metadata = this.db.getFile(hash);
     if (!metadata) {
       return null;
@@ -142,10 +168,13 @@ export class VFSAPI {
   /**
    * Update metadata API
    */
-  updateMetadata(params: { hash: string; updates: MetadataUpdate }): { success: boolean; updatedMetadata?: FileMetadata } {
+  updateMetadata(params: { hash: string; updates: MetadataUpdate }): {
+    success: boolean;
+    updatedMetadata?: FileMetadata;
+  } {
     const { hash, updates } = params;
     const success = this.db.updateMetadata(hash, updates);
-    const updatedMetadata = success ? this.db.getFile(hash) ?? undefined : undefined;
+    const updatedMetadata = success ? (this.db.getFile(hash) ?? undefined) : undefined;
     return { success, updatedMetadata };
   }
 
@@ -159,7 +188,10 @@ export class VFSAPI {
   /**
    * Get thumbnail API
    */
-  async getThumbnail(params: { hash: string; size?: ThumbnailSize }): Promise<{ buffer: Buffer; mimeType: string } | null> {
+  async getThumbnail(params: {
+    hash: string;
+    size?: ThumbnailSize;
+  }): Promise<{ buffer: Buffer; mimeType: string } | null> {
     const { hash, size = 'medium' } = params;
     const metadata = this.db.getFile(hash);
     if (!metadata) {
@@ -185,7 +217,13 @@ export class VFSAPI {
   /**
    * Get stats API
    */
-  getStats(): { totalFiles: number; totalSize: number; images: number; videos: number; byCategory: Record<string, number> } {
+  getStats(): {
+    totalFiles: number;
+    totalSize: number;
+    images: number;
+    videos: number;
+    byCategory: Record<string, number>;
+  } {
     return this.db.getStats();
   }
 
@@ -194,6 +232,90 @@ export class VFSAPI {
    */
   getWorkspaceConfig(): { path: string } {
     return { path: this.workspacePath };
+  }
+
+  /**
+   * Sync existing workspace blobs into the SQLite metadata index.
+   */
+  syncBlobsToIndex(): SyncBlobsToIndexResult {
+    const result: SyncBlobsToIndexResult = {
+      scanned: 0,
+      indexed: 0,
+      skippedExisting: 0,
+      skippedUnsupported: 0,
+      skippedInvalidHash: 0,
+      errors: [],
+    };
+
+    let blobs: Array<{ hash: string; ext: string; path: string; size: number }>;
+    try {
+      blobs = this.blobStorage.listBlobs();
+    } catch (error) {
+      result.errors.push({
+        path: this.blobStorage.getBlobsPath(),
+        reason: error instanceof Error ? error.message : 'Failed to list blobs',
+      });
+      return result;
+    }
+
+    for (const blob of blobs) {
+      result.scanned += 1;
+
+      const mimeType = getMimeTypeFromExtension(blob.ext);
+      if (!mimeType.startsWith('image/') && !mimeType.startsWith('video/')) {
+        result.skippedUnsupported += 1;
+        continue;
+      }
+
+      try {
+        const buffer = fs.readFileSync(blob.path);
+        const contentHash = calculateHash(buffer);
+        if (contentHash !== blob.hash) {
+          result.skippedInvalidHash += 1;
+          continue;
+        }
+
+        if (this.db.fileExists(contentHash)) {
+          result.skippedExisting += 1;
+          continue;
+        }
+
+        const stat = fs.statSync(blob.path);
+        // Add system tags
+        const tags: string[] = [];
+        if (mimeType.startsWith('image/')) {
+          tags.push('system:image');
+        } else if (mimeType.startsWith('video/')) {
+          tags.push('system:video');
+        }
+        this.db.insertFile({
+          hash: contentHash,
+          blob_ext: blob.ext,
+          mime_type: mimeType,
+          size: blob.size,
+          source_url: null,
+          captured_at: stat.mtime.toISOString(),
+          category: 'uncategorized',
+          ai_filename: null,
+          tags: tags.length > 0 ? JSON.stringify(tags) : null,
+          confidence: 0,
+          classified_at: null,
+          model_used: null,
+          is_starred: 0,
+          user_notes: null,
+          is_deleted: 0,
+          deleted_at: null,
+        });
+        result.indexed += 1;
+      } catch (error) {
+        result.errors.push({
+          path: blob.path,
+          reason: error instanceof Error ? error.message : 'Failed to sync blob',
+        });
+      }
+    }
+
+    return result;
   }
 
   /**
@@ -218,7 +340,13 @@ export class VFSAPI {
   /**
    * Get queue status API
    */
-  getQueueStatus(): { pending: number; processing: number; completed: number; failed: number; total: number } {
+  getQueueStatus(): {
+    pending: number;
+    processing: number;
+    completed: number;
+    failed: number;
+    total: number;
+  } {
     return this.db.getQueueStatus();
   }
 
@@ -266,8 +394,14 @@ export class VFSAPI {
   /**
    * Get tag counts API
    */
-  getTagCounts(): { counts: Record<string, number> } {
-    const counts = this.db.getTagCounts();
-    return { counts };
+  getTagCounts(): Record<string, number> {
+    return this.db.getTagCounts();
+  }
+
+  /**
+   * Clear index API
+   */
+  clearIndex(): { success: boolean } {
+    return this.db.clearIndex();
   }
 }

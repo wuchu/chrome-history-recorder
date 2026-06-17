@@ -1,14 +1,18 @@
+"use strict";
 /**
  * VFS Service - WebSocket Server Module
  *
  * Provides WebSocket endpoint for API calls and real-time events.
  */
-import { WebSocketServer, WebSocket } from 'ws';
-import { createDispatcher } from './dispatcher.js';
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.VFSSWebSocketServer = void 0;
+exports.createWebSocketServer = createWebSocketServer;
+const ws_1 = require("ws");
+const dispatcher_1 = require("./dispatcher");
 /**
  * WebSocket Server class
  */
-export class VFSSWebSocketServer {
+class VFSSWebSocketServer {
     server;
     api;
     dispatcher;
@@ -18,11 +22,11 @@ export class VFSSWebSocketServer {
     workspacePath;
     constructor(api, workspacePath, config) {
         this.api = api;
-        this.dispatcher = createDispatcher(api);
+        this.dispatcher = (0, dispatcher_1.createDispatcher)(api);
         this.port = config.port;
         this.workspacePath = workspacePath;
         // Create WebSocket server
-        this.server = new WebSocketServer({
+        this.server = new ws_1.WebSocketServer({
             port: config.port,
             host: config.host || 'localhost',
         });
@@ -160,7 +164,7 @@ export class VFSSWebSocketServer {
      * Send message to WebSocket client
      */
     sendMessage(ws, message) {
-        if (ws.readyState === WebSocket.OPEN) {
+        if (ws.readyState === ws_1.WebSocket.OPEN) {
             ws.send(JSON.stringify(message));
         }
     }
@@ -170,7 +174,7 @@ export class VFSSWebSocketServer {
     broadcast(message) {
         const payload = JSON.stringify(message);
         for (const client of this.clients) {
-            if (client.readyState === WebSocket.OPEN) {
+            if (client.readyState === ws_1.WebSocket.OPEN) {
                 client.send(payload);
             }
         }
@@ -181,7 +185,7 @@ export class VFSSWebSocketServer {
     startHeartbeat() {
         this.heartbeatInterval = setInterval(() => {
             for (const client of this.clients) {
-                if (client.readyState === WebSocket.OPEN) {
+                if (client.readyState === ws_1.WebSocket.OPEN) {
                     // Check if client responded to last ping
                     if (!client.pingReceived) {
                         // Client didn't respond, close connection
@@ -228,10 +232,11 @@ export class VFSSWebSocketServer {
         return this.clients.size;
     }
 }
+exports.VFSSWebSocketServer = VFSSWebSocketServer;
 /**
  * Create WebSocket server
  */
-export function createWebSocketServer(api, workspacePath, config) {
+function createWebSocketServer(api, workspacePath, config) {
     return new VFSSWebSocketServer(api, workspacePath, config);
 }
 //# sourceMappingURL=websocket-server.js.map

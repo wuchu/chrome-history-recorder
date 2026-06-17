@@ -5,8 +5,13 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { BlobStorage, calculateHash, getExtensionFromMimeType, getMimeTypeFromExtension } from '../src/blob.js';
-import { ensureWorkspace } from '../src/sqlite.js';
+import {
+  BlobStorage,
+  calculateHash,
+  getExtensionFromMimeType,
+  getMimeTypeFromExtension,
+} from '../src/blob';
+import { ensureWorkspace } from '../src/sqlite';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -18,7 +23,10 @@ describe('BlobStorage', () => {
 
   beforeEach(() => {
     // Create unique test workspace for each test
-    testWorkspace = path.join(os.tmpdir(), `vfs-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    testWorkspace = path.join(
+      os.tmpdir(),
+      `vfs-test-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    );
     ensureWorkspace(testWorkspace);
     blobStorage = new BlobStorage(testWorkspace);
   });
@@ -60,7 +68,7 @@ describe('BlobStorage', () => {
     });
 
     it('should handle binary content', () => {
-      const buffer = Buffer.from([0x00, 0xFF, 0xAB, 0xCD]);
+      const buffer = Buffer.from([0x00, 0xff, 0xab, 0xcd]);
       const hash = calculateHash(buffer);
       expect(hash.length).toBe(16);
       expect(hash).toMatch(/^[a-f0-9]{16}$/);
@@ -180,7 +188,7 @@ describe('BlobStorage', () => {
     });
 
     it('should read binary content correctly', () => {
-      const buffer = Buffer.from([0x00, 0xFF, 0xAB, 0xCD, 0xEF]);
+      const buffer = Buffer.from([0x00, 0xff, 0xab, 0xcd, 0xef]);
       const hash = calculateHash(buffer);
       blobStorage.saveBlob(buffer, hash, 'image/png');
 
@@ -191,7 +199,7 @@ describe('BlobStorage', () => {
 
     it('should read large files', () => {
       // Create a 1MB buffer
-      const buffer = Buffer.alloc(1024 * 1024, 0xAB);
+      const buffer = Buffer.alloc(1024 * 1024, 0xab);
       const hash = calculateHash(buffer);
       blobStorage.saveBlob(buffer, hash, 'video/mp4');
 
@@ -272,13 +280,9 @@ describe('BlobStorage', () => {
 
   describe('Blob list operations', () => {
     it('should list all blobs', () => {
-      const buffers = [
-        Buffer.from('test1'),
-        Buffer.from('test2'),
-        Buffer.from('test3'),
-      ];
+      const buffers = [Buffer.from('test1'), Buffer.from('test2'), Buffer.from('test3')];
 
-      const hashes = buffers.map(b => calculateHash(b));
+      const hashes = buffers.map((b) => calculateHash(b));
 
       blobStorage.saveBlob(buffers[0], hashes[0], 'image/jpeg');
       blobStorage.saveBlob(buffers[1], hashes[1], 'image/png');
@@ -287,7 +291,7 @@ describe('BlobStorage', () => {
       const blobs = blobStorage.listBlobs();
       expect(blobs.length).toBe(3);
 
-      const blobHashes = blobs.map(b => b.hash);
+      const blobHashes = blobs.map((b) => b.hash);
       expect(blobHashes).toContain(hashes[0]);
       expect(blobHashes).toContain(hashes[1]);
       expect(blobHashes).toContain(hashes[2]);
@@ -304,7 +308,7 @@ describe('BlobStorage', () => {
       blobStorage.saveBlob(buffer, hash, 'image/jpeg');
 
       const blobs = blobStorage.listBlobs();
-      const blob = blobs.find(b => b.hash === hash);
+      const blob = blobs.find((b) => b.hash === hash);
 
       expect(blob?.ext).toBe('jpg');
       expect(blob?.size).toBe(buffer.length);

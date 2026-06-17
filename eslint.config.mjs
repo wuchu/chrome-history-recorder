@@ -8,6 +8,7 @@ export default tseslint.config(
     ignores: [
       'node_modules/**',
       'dist/**',
+      'packages/*/dist/**',
       '.wxt/**',
       '*.d.ts',
       'packages/extension/.wxt/**',

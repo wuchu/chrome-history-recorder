@@ -1,6 +1,6 @@
 # Chrome Media Recorder
 
-一个专为 Chrome 浏览器设计的媒体自动捕获系统，使用 DevTools API 拦截网页图片和视频，通过 WebSocket + HTTP 双通道架构保存到本地文件系统。
+一个专为 Chrome 浏览器设计的媒体自动捕获系统，使用 Chrome Side Panel 控制捕获，并通过 Background Service Worker 的 debugger/CDP Network 后端拦截网页图片，通过 WebSocket + HTTP 双通道架构保存到本地文件系统。
 
 ## 项目简介
 
@@ -8,9 +8,9 @@
 
 ### 核心特性
 
-- **Chrome 专属**: 支持 Chrome 88+，使用 Manifest V3 和 DevTools API
+- **Chrome 专属**: 支持 Chrome 88+，使用 Manifest V3、Side Panel API 和 debugger/CDP Network API
 - **WebSocket + HTTP 双通道**: WebSocket 用于实时通信和事件推送，HTTP 用于文件下载和缩略图获取
-- **DevTools + Options 集成**: 在 Chrome DevTools 中集成专用媒体面板，并通过扩展 Options 页面管理程序配置
+- **Side Panel + Options 集成**: 在 Chrome 右侧 Side Panel 中提供媒体捕获和浏览，并通过扩展 Options 页面管理程序配置
 - **智能去重**: 基于 SHA-256 内容哈希，自动防止重复保存
 - **多格式支持**: 图片（JPEG、PNG、WebP、GIF、BMP）和视频（MP4、WebM、MOV、AVI）
 - **AI 分类**: 集成 Ollama，使用视觉模型自动分类和命名文件
@@ -84,6 +84,7 @@ pnpm dev
 ```
 
 服务启动后会监听：
+
 - WebSocket: `ws://localhost:8765`
 - HTTP: `http://localhost:8766`
 
@@ -98,11 +99,14 @@ pnpm dev
 ### 使用
 
 1. 确保 VFS Service 正在运行
-2. 在任意网页打开 DevTools (F12)
-3. 切换到 "Media Recorder" 面板
-4. 查看 VFS 连接状态（绿色 ● 表示已连接）
-5. 点击 "Start Capture" 开始捕获媒体
-6. 捕获的图片和视频将自动保存到 `~/.vfs-workspace/`
+2. 在任意网页点击扩展图标打开 Chrome 右侧 Side Panel
+3. 查看 VFS 连接状态（绿色 ● 表示已连接）
+4. 点击 "Start Capture" 开始捕获当前标签页的图片
+5. 捕获的图片将自动保存到 `~/.vfs-workspace/`
+
+捕获启用时，Chrome 会授予扩展 `debugger` 权限并可能显示当前标签页正在被调试的提示。这是 Side Panel 模式下读取图片响应体所需的 Chrome 能力；点击 "Stop Capture" 会释放该标签页的 debugger 会话。当前版本仍保留 DevTools 面板作为迁移期 fallback，但主流程不再要求打开 DevTools。
+
+当前 Side Panel 捕获第一版聚焦网络图片响应：暂不支持 Canvas/WebGL 生成的 `data:` 图片、页面内组装的 `blob:` 图片，也不承诺还原复杂视频流、Range 分片或 MSE 播放内容。
 
 ### 配置 AI 分类
 
@@ -126,10 +130,10 @@ AI 分类会在捕获文件后加入本地 VFS 分类队列。扩展 Options 页
 
 ## 子模块文档
 
-| 模块        | 说明                           | 文档                                        |
-| ----------- | ------------------------------ | ------------------------------------------- |
-| extension   | Chrome 扩展，DevTools 面板与 Background AI 分类 | [README.md](packages/extension/README.md)   |
-| vfs-service | VFS Service（WebSocket + HTTP、队列与元数据存储） | [README.md](packages/vfs-service/README.md) |
+| 模块        | 说明                                                  | 文档                                        |
+| ----------- | ----------------------------------------------------- | ------------------------------------------- |
+| extension   | Chrome 扩展，Side Panel 媒体浏览与 Background AI 分类 | [README.md](packages/extension/README.md)   |
+| vfs-service | VFS Service（WebSocket + HTTP、队列与元数据存储）     | [README.md](packages/vfs-service/README.md) |
 
 ## VFS Service 端点
 
@@ -155,14 +159,14 @@ AI 分类会在捕获文件后加入本地 VFS 分类队列。扩展 Options 页
 
 ### HTTP API (http://localhost:8766)
 
-| 端点                          | 说明                 |
-| ----------------------------- | -------------------- |
-| `GET /files/:hash`            | 下载文件             |
-| `GET /files/:hash/thumbnail`  | 获取缩略图（支持 ?size=small/medium/large） |
-| `GET /files/:hash/metadata`   | 获取文件元数据       |
-| `GET /stats`                  | 获取统计信息         |
-| `GET /health`                 | 健康检查             |
-| `GET /`                       | 服务信息             |
+| 端点                         | 说明                                        |
+| ---------------------------- | ------------------------------------------- |
+| `GET /files/:hash`           | 下载文件                                    |
+| `GET /files/:hash/thumbnail` | 获取缩略图（支持 ?size=small/medium/large） |
+| `GET /files/:hash/metadata`  | 获取文件元数据                              |
+| `GET /stats`                 | 获取统计信息                                |
+| `GET /health`                | 健康检查                                    |
+| `GET /`                      | 服务信息                                    |
 
 ### 实时事件
 

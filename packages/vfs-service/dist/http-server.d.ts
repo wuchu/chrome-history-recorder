@@ -3,7 +3,7 @@
  *
  * Provides HTTP endpoints for file download, thumbnails, and stats.
  */
-import { VFSAPI } from './api.js';
+import { VFSAPI } from './api';
 /**
  * HTTP Server configuration
  */

@@ -3,7 +3,7 @@
  *
  * Provides WebSocket endpoint for API calls and real-time events.
  */
-import { VFSAPI } from './api.js';
+import { VFSAPI } from './api';
 /**
  * WebSocket Server configuration
  */

@@ -173,6 +173,12 @@ export declare class SQLiteDatabase {
      */
     clearQueue(): void;
     /**
+     * Clear index: delete all rows from files and classify_queue tables
+     */
+    clearIndex(): {
+        success: boolean;
+    };
+    /**
      * Close database connection
      */
     close(): void;

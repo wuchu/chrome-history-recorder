@@ -1,15 +1,21 @@
+"use strict";
 /**
  * VFS Service - Thumbnail Generation Module
  *
  * Generates thumbnails for images and videos.
  */
-import sharp from 'sharp';
-import path from 'path';
-import fs from 'fs';
-import { spawn } from 'child_process';
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.ThumbnailStorage = void 0;
+const sharp_1 = __importDefault(require("sharp"));
+const path_1 = __importDefault(require("path"));
+const fs_1 = __importDefault(require("fs"));
+const child_process_1 = require("child_process");
 // Import ffmpeg-static - it exports string | null
-import ffmpegStatic from 'ffmpeg-static';
-const ffmpegPath = ffmpegStatic;
+const ffmpeg_static_1 = __importDefault(require("ffmpeg-static"));
+const ffmpegPath = ffmpeg_static_1.default;
 const THUMBNAIL_DIMENSIONS = {
     small: 100,
     medium: 200,
@@ -18,36 +24,36 @@ const THUMBNAIL_DIMENSIONS = {
 /**
  * Thumbnail storage class
  */
-export class ThumbnailStorage {
+class ThumbnailStorage {
     thumbnailsPath;
     blobsPath;
     constructor(workspacePath) {
-        this.thumbnailsPath = path.join(workspacePath, 'thumbnails');
-        this.blobsPath = path.join(workspacePath, 'blobs');
+        this.thumbnailsPath = path_1.default.join(workspacePath, 'thumbnails');
+        this.blobsPath = path_1.default.join(workspacePath, 'blobs');
     }
     /**
      * Get thumbnail file path
      */
     getThumbnailPath(hash, size) {
         const dimension = THUMBNAIL_DIMENSIONS[size];
-        return path.join(this.thumbnailsPath, `${hash}-${dimension}.jpg`);
+        return path_1.default.join(this.thumbnailsPath, `${hash}-${dimension}.jpg`);
     }
     /**
      * Check if thumbnail exists
      */
     thumbnailExists(hash, size) {
         const filePath = this.getThumbnailPath(hash, size);
-        return fs.existsSync(filePath);
+        return fs_1.default.existsSync(filePath);
     }
     /**
      * Get thumbnail buffer
      */
     getThumbnail(hash, size) {
         const filePath = this.getThumbnailPath(hash, size);
-        if (!fs.existsSync(filePath)) {
+        if (!fs_1.default.existsSync(filePath)) {
             return null;
         }
-        return fs.readFileSync(filePath);
+        return fs_1.default.readFileSync(filePath);
     }
     /**
      * Generate image thumbnail
@@ -56,7 +62,7 @@ export class ThumbnailStorage {
         const dimension = THUMBNAIL_DIMENSIONS[size];
         const thumbnailPath = this.getThumbnailPath(hash, size);
         // Generate thumbnail
-        const thumbnailBuffer = await sharp(imagePath)
+        const thumbnailBuffer = await (0, sharp_1.default)(imagePath)
             .resize(dimension, dimension, {
             fit: 'inside',
             withoutEnlargement: true,
@@ -64,7 +70,7 @@ export class ThumbnailStorage {
             .jpeg({ quality: 80 })
             .toBuffer();
         // Save to cache
-        fs.writeFileSync(thumbnailPath, thumbnailBuffer);
+        fs_1.default.writeFileSync(thumbnailPath, thumbnailBuffer);
         return thumbnailBuffer;
     }
     /**
@@ -73,11 +79,11 @@ export class ThumbnailStorage {
     async generateVideoThumbnail(videoPath, hash, size) {
         const dimension = THUMBNAIL_DIMENSIONS[size];
         const thumbnailPath = this.getThumbnailPath(hash, size);
-        const framePath = path.join(this.thumbnailsPath, `${hash}-frame.jpg`);
+        const framePath = path_1.default.join(this.thumbnailsPath, `${hash}-frame.jpg`);
         // Extract first frame using ffmpeg
         await this.extractVideoFrame(videoPath, framePath);
         // Resize frame to thumbnail
-        const thumbnailBuffer = await sharp(framePath)
+        const thumbnailBuffer = await (0, sharp_1.default)(framePath)
             .resize(dimension, dimension, {
             fit: 'inside',
             withoutEnlargement: true,
@@ -85,10 +91,10 @@ export class ThumbnailStorage {
             .jpeg({ quality: 80 })
             .toBuffer();
         // Save to cache
-        fs.writeFileSync(thumbnailPath, thumbnailBuffer);
+        fs_1.default.writeFileSync(thumbnailPath, thumbnailBuffer);
         // Clean up temporary frame
-        if (fs.existsSync(framePath)) {
-            fs.unlinkSync(framePath);
+        if (fs_1.default.existsSync(framePath)) {
+            fs_1.default.unlinkSync(framePath);
         }
         return thumbnailBuffer;
     }
@@ -108,7 +114,7 @@ export class ThumbnailStorage {
                 '-y',
                 outputPath,
             ];
-            const proc = spawn(ffmpegPath, args);
+            const proc = (0, child_process_1.spawn)(ffmpegPath, args);
             proc.on('close', (code) => {
                 if (code === 0) {
                     resolve();
@@ -126,8 +132,8 @@ export class ThumbnailStorage {
      * Generate thumbnail for blob
      */
     async generateThumbnailForBlob(hash, ext, mimeType, size) {
-        const blobPath = path.join(this.blobsPath, `${hash}.${ext}`);
-        if (!fs.existsSync(blobPath)) {
+        const blobPath = path_1.default.join(this.blobsPath, `${hash}.${ext}`);
+        if (!fs_1.default.existsSync(blobPath)) {
             throw new Error(`Blob not found: ${hash}`);
         }
         // Check if thumbnail already exists
@@ -149,10 +155,10 @@ export class ThumbnailStorage {
      * Clear thumbnail cache
      */
     clearCache() {
-        const files = fs.readdirSync(this.thumbnailsPath);
+        const files = fs_1.default.readdirSync(this.thumbnailsPath);
         for (const file of files) {
-            const filePath = path.join(this.thumbnailsPath, file);
-            fs.unlinkSync(filePath);
+            const filePath = path_1.default.join(this.thumbnailsPath, file);
+            fs_1.default.unlinkSync(filePath);
         }
     }
     /**
@@ -162,4 +168,5 @@ export class ThumbnailStorage {
         return this.thumbnailsPath;
     }
 }
+exports.ThumbnailStorage = ThumbnailStorage;
 //# sourceMappingURL=thumbnail.js.map

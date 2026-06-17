@@ -5,14 +5,24 @@
  */
 
 import { initVFSWebSocketClient, getVFSWebSocketClient } from '../../background/vfs-ws-client';
+import { defineBackground } from 'wxt/utils/define-background';
 import { initFileManager, getFileManager } from '../../background/file-manager';
 import { initOllamaClient, getOllamaClient } from '../../background/classify/ollama-client';
 import { initClassifyScheduler, getClassifyScheduler } from '../../background/classify/scheduler';
 import { initConfigManager, getConfigManager } from '../../background/config-manager';
-import type { ExtensionConfig } from '../../shared/extension-runtime';
+import {
+  initDebuggerCaptureController,
+  getDebuggerCaptureController,
+} from '../../background/debugger-capture';
 
 export default defineBackground(() => {
   console.log('[VFS Extension] Background service worker starting...');
+
+  if (chrome.sidePanel?.setPanelBehavior) {
+    chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((error) => {
+      console.warn('[VFS Extension] Failed to configure side panel behavior:', error);
+    });
+  }
 
   // Initialize all modules
   async function initialize(): Promise<void> {
@@ -22,12 +32,18 @@ export default defineBackground(() => {
       console.log('[VFS Extension] Step 1: Initializing Config Manager...');
       const configManager = await initConfigManager();
       const config = configManager.getConfig();
-      console.log('[VFS Extension] Config loaded:', { ollamaEndpoint: config.ollamaEndpoint, visionModel: config.visionModel });
+      console.log('[VFS Extension] Config loaded:', {
+        ollamaEndpoint: config.ollamaEndpoint,
+        visionModel: config.visionModel,
+      });
 
       // Initialize VFS WebSocket Client FIRST
       console.log('[VFS Extension] Step 2: Initializing VFS WebSocket Client...');
       const vfsWsClient = initVFSWebSocketClient();
-      console.log('[VFS Extension] VFS WebSocket Client instance created, singleton ID:', vfsWsClient.constructor.name);
+      console.log(
+        '[VFS Extension] VFS WebSocket Client instance created, singleton ID:',
+        vfsWsClient.constructor.name
+      );
 
       // Initialize File Manager (will use existing VFS WebSocket Client instance)
       console.log('[VFS Extension] Step 3: Initializing File Manager...');
@@ -36,8 +52,14 @@ export default defineBackground(() => {
 
       // Check that File Manager uses the same VFS WebSocket Client instance
       const fileManagerVfsClient = getVFSWebSocketClient();
-      console.log('[VFS Extension] File Manager VFS Client singleton ID:', fileManagerVfsClient.constructor.name);
-      console.log('[VFS Extension] Are they the same instance?', vfsWsClient === fileManagerVfsClient);
+      console.log(
+        '[VFS Extension] File Manager VFS Client singleton ID:',
+        fileManagerVfsClient.constructor.name
+      );
+      console.log(
+        '[VFS Extension] Are they the same instance?',
+        vfsWsClient === fileManagerVfsClient
+      );
 
       // Wait for connection with timeout
       console.log('[VFS Extension] Step 4: Waiting for VFS WebSocket connection...');
@@ -65,7 +87,7 @@ export default defineBackground(() => {
         await connectionPromise;
         console.log('[VFS Extension] ✓ VFS WebSocket connected successfully');
         // File Manager already broadcasted vfs:connected via its onConnect callback
-      } catch (error) {
+      } catch {
         console.warn('[VFS Extension] ✗ VFS WebSocket not connected, will auto-reconnect');
         getFileManager().broadcastEvent('vfs:disconnected', { error: 'Connection timeout' });
       }
@@ -140,6 +162,12 @@ export default defineBackground(() => {
         autoStart: !config.classificationPaused,
       });
 
+      console.log('[VFS Extension] Step 11: Initializing Debugger Capture Controller...');
+      initDebuggerCaptureController({
+        getFileManager,
+        getScheduler: getClassifyScheduler,
+      });
+
       console.log('[VFS Extension] ========== INITIALIZATION COMPLETE ==========');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
@@ -151,7 +179,7 @@ export default defineBackground(() => {
   // Start initialization
   initialize();
 
-  // Handle messages from Content Scripts and DevTools Panel
+  // Handle messages from Content Scripts, DevTools Panel, Options, and Side Panel
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const fileManager = getFileManager();
     const scheduler = getClassifyScheduler();
@@ -162,6 +190,7 @@ export default defineBackground(() => {
       try {
         switch (message.type) {
           // File operations
+          /* eslint-disable no-case-declarations */
           case 'capture:media':
             const captureResult = await fileManager.handleCaptureMedia(message.data);
             // Auto-enqueue for classification
@@ -177,7 +206,12 @@ export default defineBackground(() => {
               limit: message.limit,
               offset: message.offset,
               category: message.category,
+              tag: message.tag,
             };
+            // Also extract tag from message.query if available
+            if (message.query?.tag) {
+              listQuery.tag = message.query.tag;
+            }
             console.log('[VFS Extension] Received listFiles/list-files message, query:', listQuery);
             const listResult = await fileManager.handleListFiles(listQuery);
             console.log('[VFS Extension] listFiles result:', listResult);
@@ -192,6 +226,16 @@ export default defineBackground(() => {
           case 'getStats':
             const stats = await fileManager.getStats();
             sendResponse({ success: true, data: stats });
+            break;
+
+          case 'syncBlobsToIndex':
+            const syncResult = await getVFSWebSocketClient().syncBlobsToIndex();
+            sendResponse({ success: true, data: syncResult, ...syncResult });
+            break;
+
+          case 'clearIndex':
+            const clearResult = await getVFSWebSocketClient().clearIndex();
+            sendResponse({ ...clearResult, data: clearResult });
             break;
 
           case 'getThumbnailUrl':
@@ -239,19 +283,31 @@ export default defineBackground(() => {
           case 'start-classification':
             scheduler.start();
             await configManager.updateConfig({ classificationPaused: false });
-            sendResponse({ success: true, data: scheduler.getSchedulerStatus(), ...scheduler.getSchedulerStatus() });
+            sendResponse({
+              success: true,
+              data: scheduler.getSchedulerStatus(),
+              ...scheduler.getSchedulerStatus(),
+            });
             break;
 
           case 'pauseClassification':
           case 'pause-classification':
             scheduler.pause();
             await configManager.updateConfig({ classificationPaused: true });
-            sendResponse({ success: true, data: scheduler.getSchedulerStatus(), ...scheduler.getSchedulerStatus() });
+            sendResponse({
+              success: true,
+              data: scheduler.getSchedulerStatus(),
+              ...scheduler.getSchedulerStatus(),
+            });
             break;
 
           case 'getClassificationControlStatus':
           case 'get-classification-control-status':
-            sendResponse({ success: true, data: scheduler.getSchedulerStatus(), ...scheduler.getSchedulerStatus() });
+            sendResponse({
+              success: true,
+              data: scheduler.getSchedulerStatus(),
+              ...scheduler.getSchedulerStatus(),
+            });
             break;
 
           // Config operations
@@ -307,7 +363,12 @@ export default defineBackground(() => {
               // Non-mutating: just fetch models, don't overwrite user selection
               const models = await getOllamaClient().listModels();
               const configData = configManager.getConfig();
-              sendResponse({ success: true, data: { models, selectedModel: configData.visionModel, changed: false }, models, selectedModel: configData.visionModel });
+              sendResponse({
+                success: true,
+                data: { models, selectedModel: configData.visionModel, changed: false },
+                models,
+                selectedModel: configData.visionModel,
+              });
             } catch (error) {
               const errorMessage = error instanceof Error ? error.message : 'Unknown error';
               console.warn('[VFS Extension] Ollama model discovery failed:', errorMessage);
@@ -335,6 +396,44 @@ export default defineBackground(() => {
               ollamaAvailable: ollamaStatus,
             });
             break;
+
+          case 'capture:get-state': {
+            const tabId = typeof message.tabId === 'number' ? message.tabId : sender.tab?.id;
+            if (typeof tabId !== 'number') {
+              sendResponse({ success: false, error: 'Missing tabId for capture state' });
+              break;
+            }
+            const captureState = getDebuggerCaptureController().getState(tabId);
+            sendResponse({ success: true, data: captureState, ...captureState });
+            break;
+          }
+
+          case 'capture:start': {
+            const tabId = typeof message.tabId === 'number' ? message.tabId : sender.tab?.id;
+            if (typeof tabId !== 'number') {
+              sendResponse({ success: false, error: 'Missing tabId for capture start' });
+              break;
+            }
+            const captureState = await getDebuggerCaptureController().start(tabId);
+            sendResponse({
+              success: captureState.status !== 'error',
+              data: captureState,
+              ...captureState,
+              error: captureState.error,
+            });
+            break;
+          }
+
+          case 'capture:stop': {
+            const tabId = typeof message.tabId === 'number' ? message.tabId : sender.tab?.id;
+            if (typeof tabId !== 'number') {
+              sendResponse({ success: false, error: 'Missing tabId for capture stop' });
+              break;
+            }
+            const captureState = await getDebuggerCaptureController().stop(tabId);
+            sendResponse({ success: true, data: captureState, ...captureState });
+            break;
+          }
 
           case 'devToolsOpened':
             console.log('[VFS Extension] Received devToolsOpened message');

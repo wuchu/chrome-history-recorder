@@ -4,15 +4,225 @@
  * Tests for complete workflows and system integration.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { VFSAPI } from '../src/api.js';
-import { SQLiteDatabase, ensureWorkspace } from '../src/sqlite.js';
-import { BlobStorage, calculateHash } from '../src/blob.js';
-import { ThumbnailStorage } from '../src/thumbnail.js';
-import { createDispatcher, type VFSRequest } from '../src/dispatcher.js';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { VFSAPI } from '../src/api';
+import { SQLiteDatabase, ensureWorkspace } from '../src/sqlite';
+import { BlobStorage, calculateHash } from '../src/blob';
+import { ThumbnailStorage } from '../src/thumbnail';
+import { createDispatcher, type VFSRequest } from '../src/dispatcher';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+
+/**
+ * Save file response data type
+ */
+interface SaveFileResponse {
+  hash: string;
+  duplicate: boolean;
+  size: number;
+}
+
+/**
+ * Type guard for save file response
+ */
+function isSaveFileResponse(data: unknown): data is SaveFileResponse {
+  return (
+    typeof data === 'object' &&
+    data !== null &&
+    'hash' in data &&
+    'duplicate' in data &&
+    'size' in data
+  );
+}
+
+/**
+ * Simple success response with success boolean
+ */
+interface SimpleSuccessResponse {
+  success: boolean;
+}
+
+/**
+ * Queue task type
+ */
+interface QueueTask {
+  hash: string;
+  status: string;
+}
+
+/**
+ * File type from getFile
+ */
+interface FileResponse {
+  buffer: Buffer;
+}
+
+/**
+ * Update metadata response
+ */
+interface UpdateMetadataResponse {
+  updatedMetadata?: {
+    category?: string;
+  };
+}
+
+/**
+ * Retry failed tasks response
+ */
+interface RetryResponse {
+  count: number;
+}
+
+/**
+ * List files response
+ */
+interface ListFilesResponse {
+  items: Array<{
+    hash: string;
+    captured_at: string;
+    category?: string;
+  }>;
+  total: number;
+  hasMore: boolean;
+}
+
+/**
+ * Queue status response
+ */
+interface QueueStatusResponse {
+  pending: number;
+  completed: number;
+  failed?: number;
+  scheduler?: {
+    processing: number;
+  };
+  processing: number;
+}
+
+/**
+ * File metadata response
+ */
+interface FileMetadataResponse {
+  category?: string;
+  ai_filename?: string;
+  confidence?: number;
+  is_starred?: number;
+}
+
+/**
+ * Workspace config response
+ */
+interface WorkspaceConfigResponse {
+  path: string;
+}
+
+/**
+ * Sync blobs response
+ */
+interface SyncBlobsResponse {
+  indexed: number;
+}
+
+/**
+ * Stats response
+ */
+interface StatsResponse {
+  totalFiles: number;
+  images: number;
+  videos: number;
+  totalSize: number;
+  byCategory: Record<string, number>;
+}
+
+/**
+ * Type guard for simple success response
+ */
+function isSimpleSuccessResponse(data: unknown): data is SimpleSuccessResponse {
+  return typeof data === 'object' && data !== null && 'success' in data;
+}
+
+/**
+ * Type guard for queue task array
+ */
+function isQueueTaskArray(data: unknown): data is QueueTask[] {
+  return Array.isArray(data);
+}
+
+/**
+ * Type guard for file response
+ */
+function isFileResponse(data: unknown): data is FileResponse {
+  return typeof data === 'object' && data !== null && 'buffer' in data;
+}
+
+/**
+ * Type guard for update metadata response
+ */
+function isUpdateMetadataResponse(data: unknown): data is UpdateMetadataResponse {
+  return typeof data === 'object' && data !== null;
+}
+
+/**
+ * Type guard for retry response
+ */
+function isRetryResponse(data: unknown): data is RetryResponse {
+  return typeof data === 'object' && data !== null && 'count' in data;
+}
+
+/**
+ * Type guard for list files response
+ */
+function isListFilesResponse(data: unknown): data is ListFilesResponse {
+  return (
+    typeof data === 'object' &&
+    data !== null &&
+    'items' in data &&
+    'total' in data &&
+    'hasMore' in data
+  );
+}
+
+/**
+ * Type guard for queue status response
+ */
+function isQueueStatusResponse(data: unknown): data is QueueStatusResponse {
+  return typeof data === 'object' && data !== null && 'pending' in data && 'completed' in data;
+}
+
+/**
+ * Type guard for file metadata response
+ */
+function isFileMetadataResponse(data: unknown): data is FileMetadataResponse {
+  return typeof data === 'object' && data !== null;
+}
+
+/**
+ * Type guard for workspace config response
+ */
+function isWorkspaceConfigResponse(data: unknown): data is WorkspaceConfigResponse {
+  return typeof data === 'object' && data !== null && 'path' in data;
+}
+
+/**
+ * Type guard for sync blobs response
+ */
+function isSyncBlobsResponse(data: unknown): data is SyncBlobsResponse {
+  return typeof data === 'object' && data !== null && 'indexed' in data;
+}
+
+/**
+ * Type guard for stats response
+ */
+function isStatsResponse(data: unknown): data is StatsResponse {
+  return (
+    typeof data === 'object' &&
+    data !== null &&
+    'totalFiles' in data &&
+    'images' in data &&
+    'videos' in data
+  );
+}
 
 describe('Integration Tests', () => {
   let api: VFSAPI;
@@ -23,7 +233,10 @@ describe('Integration Tests', () => {
   let dispatcher: ReturnType<typeof createDispatcher>;
 
   beforeEach(() => {
-    testWorkspace = path.join(os.tmpdir(), `vfs-integration-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    testWorkspace = path.join(
+      os.tmpdir(),
+      `vfs-integration-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    );
     ensureWorkspace(testWorkspace);
     db = new SQLiteDatabase(testWorkspace);
     blobStorage = new BlobStorage(testWorkspace);
@@ -75,11 +288,13 @@ describe('Integration Tests', () => {
 
       // Verify successful save
       expect(response.success).toBe(true);
-      expect((response.data as any).hash).toBeDefined();
-      expect((response.data as any).duplicate).toBe(false);
+      expect(isSaveFileResponse(response.data)).toBe(true);
+      const saveData = response.data as SaveFileResponse;
+      expect(saveData.hash).toBeDefined();
+      expect(saveData.duplicate).toBe(false);
 
       // Verify blob is stored
-      const hash = (response.data as any).hash;
+      const hash = saveData.hash;
       expect(blobStorage.blobExists(hash, 'jpg')).toBe(true);
 
       // Verify metadata is stored
@@ -103,7 +318,8 @@ describe('Integration Tests', () => {
           params: capture,
         };
         const response = await dispatcher(request);
-        hashes.push((response.data as any).hash);
+        expect(isSaveFileResponse(response.data)).toBe(true);
+        hashes.push((response.data as SaveFileResponse).hash);
       }
 
       // Verify all files are saved
@@ -114,8 +330,12 @@ describe('Integration Tests', () => {
 
       // Verify all blobs exist
       for (let i = 0; i < captures.length; i++) {
-        const ext = captures[i].mimeType === 'image/jpeg' ? 'jpg' :
-                    captures[i].mimeType === 'image/png' ? 'png' : 'mp4';
+        const ext =
+          captures[i].mimeType === 'image/jpeg'
+            ? 'jpg'
+            : captures[i].mimeType === 'image/png'
+              ? 'png'
+              : 'mp4';
         expect(blobStorage.blobExists(hashes[i], ext)).toBe(true);
       }
     });
@@ -146,9 +366,13 @@ describe('Integration Tests', () => {
       const response2 = await dispatcher(request2);
 
       // Verify duplicate detection
-      expect((response1.data as any).hash).toBe((response2.data as any).hash);
-      expect((response1.data as any).duplicate).toBe(false);
-      expect((response2.data as any).duplicate).toBe(true);
+      expect(isSaveFileResponse(response1.data)).toBe(true);
+      expect(isSaveFileResponse(response2.data)).toBe(true);
+      expect((response1.data as SaveFileResponse).hash).toBe(
+        (response2.data as SaveFileResponse).hash
+      );
+      expect((response1.data as SaveFileResponse).duplicate).toBe(false);
+      expect((response2.data as SaveFileResponse).duplicate).toBe(true);
 
       // Verify only one file in storage
       const stats = api.getStats();
@@ -167,7 +391,8 @@ describe('Integration Tests', () => {
         params: capture,
       };
       const saveResponse = await dispatcher(saveRequest);
-      const hash = (saveResponse.data as any).hash;
+      expect(isSaveFileResponse(saveResponse.data)).toBe(true);
+      const hash = (saveResponse.data as SaveFileResponse).hash;
 
       // Enqueue for classification
       const enqueueRequest: VFSRequest = {
@@ -177,7 +402,8 @@ describe('Integration Tests', () => {
       const enqueueResponse = await dispatcher(enqueueRequest);
 
       expect(enqueueResponse.success).toBe(true);
-      expect((enqueueResponse.data as any).success).toBe(true);
+      expect(isSimpleSuccessResponse(enqueueResponse.data)).toBe(true);
+      expect((enqueueResponse.data as SimpleSuccessResponse).success).toBe(true);
 
       // Verify task is in queue
       const queueStatus = api.getQueueStatus();
@@ -210,9 +436,11 @@ describe('Integration Tests', () => {
       const pendingResponse = await dispatcher(pendingRequest);
 
       expect(pendingResponse.success).toBe(true);
-      expect((pendingResponse.data as any).length).toBe(1);
+      expect(isQueueTaskArray(pendingResponse.data)).toBe(true);
+      const tasks = pendingResponse.data as QueueTask[];
+      expect(tasks.length).toBe(1);
 
-      const task = (pendingResponse.data as any)[0];
+      const task = tasks[0];
       expect(task.hash).toBe(saveResult.hash);
       expect(task.status).toBe('pending');
 
@@ -231,7 +459,8 @@ describe('Integration Tests', () => {
       const fileResponse = await dispatcher(fileRequest);
 
       expect(fileResponse.success).toBe(true);
-      expect((fileResponse.data as any).buffer).toBeDefined();
+      expect(isFileResponse(fileResponse.data)).toBe(true);
+      expect((fileResponse.data as FileResponse).buffer).toBeDefined();
 
       // Step 4: Simulated classification result
       const classificationResult = {
@@ -252,7 +481,10 @@ describe('Integration Tests', () => {
       const updateResponse = await dispatcher(updateRequest);
 
       expect(updateResponse.success).toBe(true);
-      expect((updateResponse.data as any).updatedMetadata?.category).toBe('cats');
+      expect(isUpdateMetadataResponse(updateResponse.data)).toBe(true);
+      expect((updateResponse.data as UpdateMetadataResponse).updatedMetadata?.category).toBe(
+        'cats'
+      );
 
       // Step 6: Mark task as completed
       const completeRequest: VFSRequest = {
@@ -303,7 +535,8 @@ describe('Integration Tests', () => {
       };
       const retryResponse = await dispatcher(retryRequest);
 
-      expect((retryResponse.data as any).count).toBe(1);
+      expect(isRetryResponse(retryResponse.data)).toBe(true);
+      expect((retryResponse.data as RetryResponse).count).toBe(1);
 
       // Verify tasks are back to pending
       const newQueueStatus = api.getQueueStatus();
@@ -376,12 +609,14 @@ describe('Integration Tests', () => {
       const listResponse = await dispatcher(listRequest);
 
       expect(listResponse.success).toBe(true);
-      expect((listResponse.data as any).items.length).toBe(5);
-      expect((listResponse.data as any).total).toBe(10);
-      expect((listResponse.data as any).hasMore).toBe(true);
+      expect(isListFilesResponse(listResponse.data)).toBe(true);
+      const listData = listResponse.data as ListFilesResponse;
+      expect(listData.items.length).toBe(5);
+      expect(listData.total).toBe(10);
+      expect(listData.hasMore).toBe(true);
 
       // Verify ordering (newest first)
-      const items = (listResponse.data as any).items;
+      const items = listData.items;
       expect(new Date(items[0].captured_at) > new Date(items[1].captured_at)).toBe(true);
     });
 
@@ -402,14 +637,19 @@ describe('Integration Tests', () => {
       };
       const catsResponse = await dispatcher(catsRequest);
 
-      expect((catsResponse.data as any).total).toBe(2);
-      expect((catsResponse.data as any).items.every(f => f.category === 'cats')).toBe(true);
+      expect(isListFilesResponse(catsResponse.data)).toBe(true);
+      const catsData = catsResponse.data as ListFilesResponse;
+      expect(catsData.total).toBe(2);
+      expect(catsData.items.every((f) => f.category === 'cats')).toBe(true);
     });
 
     it('should show classification status for each file', async () => {
       // Setup: Create files with different classification states
       const pendingFile = api.saveFile({ buffer: Buffer.from('pending'), mimeType: 'image/jpeg' });
-      const completedFile = api.saveFile({ buffer: Buffer.from('completed'), mimeType: 'image/jpeg' });
+      const completedFile = api.saveFile({
+        buffer: Buffer.from('completed'),
+        mimeType: 'image/jpeg',
+      });
 
       api.enqueueClassification({ hash: pendingFile.hash });
       api.enqueueClassification({ hash: completedFile.hash });
@@ -422,8 +662,10 @@ describe('Integration Tests', () => {
       };
       const statusResponse = await dispatcher(statusRequest);
 
-      expect((statusResponse.data as any).pending).toBe(1);
-      expect((statusResponse.data as any).completed).toBe(1);
+      expect(isQueueStatusResponse(statusResponse.data)).toBe(true);
+      const statusData = statusResponse.data as QueueStatusResponse;
+      expect(statusData.pending).toBe(1);
+      expect(statusData.completed).toBe(1);
     });
 
     it('should get file metadata for display', async () => {
@@ -452,7 +694,8 @@ describe('Integration Tests', () => {
       const metadataResponse = await dispatcher(metadataRequest);
 
       expect(metadataResponse.success).toBe(true);
-      const metadata = metadataResponse.data as any;
+      expect(isFileMetadataResponse(metadataResponse.data)).toBe(true);
+      const metadata = metadataResponse.data as FileMetadataResponse;
       expect(metadata.category).toBe('landscapes');
       expect(metadata.ai_filename).toBe('mountain_view.jpg');
       expect(metadata.confidence).toBe(0.88);
@@ -511,12 +754,17 @@ describe('Integration Tests', () => {
 
       expect(response.id).toBeUndefined();
       expect(response.success).toBe(true);
-      expect((response.data as any).path).toBe(testWorkspace);
+      expect(isWorkspaceConfigResponse(response.data)).toBe(true);
+      expect((response.data as WorkspaceConfigResponse).path).toBe(testWorkspace);
     });
 
     it('should handle multiple sequential requests', async () => {
       const requests = [
-        { id: 1, method: 'saveFile', params: { buffer: Buffer.from('test1'), mimeType: 'image/jpeg' } },
+        {
+          id: 1,
+          method: 'saveFile',
+          params: { buffer: Buffer.from('test1'), mimeType: 'image/jpeg' },
+        },
         { id: 2, method: 'getStats' },
         { id: 3, method: 'listFiles', params: { limit: 10 } },
         { id: 4, method: 'getWorkspaceConfig' },
@@ -549,7 +797,26 @@ describe('Integration Tests', () => {
       const response = await dispatcher(request);
 
       expect(response.success).toBe(true);
-      expect((response.data as any).path).toBe(testWorkspace);
+      expect(isWorkspaceConfigResponse(response.data)).toBe(true);
+      expect((response.data as WorkspaceConfigResponse).path).toBe(testWorkspace);
+    });
+
+    it('should expose syncBlobsToIndex through dispatcher', async () => {
+      const buffer = Buffer.from('dispatcher sync image');
+      const hash = calculateHash(buffer);
+      fs.writeFileSync(blobStorage.getBlobPath(hash, 'jpg'), buffer);
+
+      const request: VFSRequest = {
+        id: 321,
+        method: 'syncBlobsToIndex',
+      };
+      const response = await dispatcher(request);
+
+      expect(response.id).toBe(321);
+      expect(response.success).toBe(true);
+      expect(isSyncBlobsResponse(response.data)).toBe(true);
+      expect((response.data as SyncBlobsResponse).indexed).toBe(1);
+      expect(api.getMetadata(hash)?.mime_type).toBe('image/jpeg');
     });
   });
 
@@ -568,7 +835,8 @@ describe('Integration Tests', () => {
       const response = await dispatcher(request);
 
       expect(response.success).toBe(true);
-      expect((response.data as any).path).toBe(testWorkspace);
+      expect(isWorkspaceConfigResponse(response.data)).toBe(true);
+      expect((response.data as WorkspaceConfigResponse).path).toBe(testWorkspace);
     });
 
     it('should not allow changing workspace config', async () => {
@@ -582,8 +850,10 @@ describe('Integration Tests', () => {
       // setWorkspaceConfig returns { success: false, error: ... } as data
       // The dispatcher wraps this in success: true
       expect(response.success).toBe(true);
-      expect((response.data as any).success).toBe(false);
-      expect((response.data as any).error).toContain('cannot be changed');
+      expect(isSimpleSuccessResponse(response.data)).toBe(true);
+      const data = response.data as SimpleSuccessResponse & { error?: string };
+      expect(data.success).toBe(false);
+      expect('error' in data && data.error).toContain('cannot be changed');
     });
 
     it('should provide stats for monitoring', async () => {
@@ -598,7 +868,8 @@ describe('Integration Tests', () => {
       const response = await dispatcher(request);
 
       expect(response.success).toBe(true);
-      const stats = response.data as any;
+      expect(isStatsResponse(response.data)).toBe(true);
+      const stats = response.data as StatsResponse;
       expect(stats.totalFiles).toBe(2);
       expect(stats.images).toBe(1);
       expect(stats.videos).toBe(1);
@@ -621,7 +892,8 @@ describe('Integration Tests', () => {
       };
       const captureResponse = await dispatcher(captureRequest);
       expect(captureResponse.success).toBe(true);
-      const hash = (captureResponse.data as any).hash;
+      expect(isSaveFileResponse(captureResponse.data)).toBe(true);
+      const hash = (captureResponse.data as SaveFileResponse).hash;
 
       // 2. Enqueue for classification
       const enqueueRequest: VFSRequest = {
@@ -646,7 +918,8 @@ describe('Integration Tests', () => {
         params: { limit: 10 },
       };
       const listResponse = await dispatcher(listRequest);
-      expect((listResponse.data as any).total).toBe(1);
+      expect(isListFilesResponse(listResponse.data)).toBe(true);
+      expect((listResponse.data as ListFilesResponse).total).toBe(1);
 
       // 5. View details
       const metadataRequest: VFSRequest = {
@@ -655,7 +928,8 @@ describe('Integration Tests', () => {
         params: { hash },
       };
       const metadataResponse = await dispatcher(metadataRequest);
-      expect((metadataResponse.data as any).category).toBe('test-category');
+      expect(isFileMetadataResponse(metadataResponse.data)).toBe(true);
+      expect((metadataResponse.data as FileMetadataResponse).category).toBe('test-category');
 
       // 6. Verify final state
       const statsRequest: VFSRequest = {
@@ -663,8 +937,10 @@ describe('Integration Tests', () => {
         method: 'getStats',
       };
       const statsResponse = await dispatcher(statsRequest);
-      expect((statsResponse.data as any).totalFiles).toBe(1);
-      expect((statsResponse.data as any).byCategory['test-category']).toBe(1);
+      expect(isStatsResponse(statsResponse.data)).toBe(true);
+      const statsData = statsResponse.data as StatsResponse;
+      expect(statsData.totalFiles).toBe(1);
+      expect(statsData.byCategory['test-category']).toBe(1);
     });
 
     it('should handle delete workflow', async () => {
@@ -688,7 +964,8 @@ describe('Integration Tests', () => {
         params: {},
       };
       const listResponse = await dispatcher(listRequest);
-      expect((listResponse.data as any).total).toBe(0);
+      expect(isListFilesResponse(listResponse.data)).toBe(true);
+      expect((listResponse.data as ListFilesResponse).total).toBe(0);
 
       // Hard delete
       const hardDeleteRequest: VFSRequest = {

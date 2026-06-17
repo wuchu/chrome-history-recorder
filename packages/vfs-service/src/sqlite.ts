@@ -262,6 +262,29 @@ export class SQLiteDatabase {
     if (updates.is_starred !== undefined) {
       updateFields.push('is_starred = ?');
       updateValues.push(updates.is_starred ? 1 : 0);
+
+      // Sync system:starred tag
+      let tags: string[] = [];
+      if (file.tags) {
+        try {
+          const parsedTags = JSON.parse(file.tags);
+          if (Array.isArray(parsedTags)) {
+            tags = parsedTags;
+          }
+        } catch {
+          // ignore
+        }
+      }
+      if (updates.is_starred) {
+        if (!tags.includes('system:starred')) {
+          tags.push('system:starred');
+        }
+      } else {
+        tags = tags.filter((t) => t !== 'system:starred');
+      }
+      // Update tags field if it was changed
+      updateFields.push('tags = ?');
+      updateValues.push(tags.length > 0 ? JSON.stringify(tags) : null);
     }
     if (updates.user_notes !== undefined) {
       updateFields.push('user_notes = ?');
@@ -332,12 +355,10 @@ export class SQLiteDatabase {
     const whereValues: unknown[] = [];
 
     if (query.category) {
-      whereClause = includeDeleted
-        ? 'WHERE category = ?'
-        : 'WHERE is_deleted = 0 AND category = ?';
+      whereClause = includeDeleted ? 'WHERE category = ?' : 'WHERE is_deleted = 0 AND category = ?';
       whereValues.push(query.category);
     } else if (query.tag) {
-      // Tag filtering
+      // Tag filtering - unified logic
       const tag = query.tag;
       if (tag === 'all') {
         // No filter needed
@@ -350,19 +371,8 @@ export class SQLiteDatabase {
           : `WHERE is_deleted = 0 AND (tags IS NULL OR tags = '[]' OR NOT EXISTS (
               SELECT 1 FROM json_each(tags) WHERE json_each.value NOT LIKE 'system:%'
             ))`;
-      } else if (tag === 'image' || tag === 'video') {
-        // Filter by mime type
-        whereClause = includeDeleted
-          ? `WHERE mime_type LIKE ?`
-          : `WHERE is_deleted = 0 AND mime_type LIKE ?`;
-        whereValues.push(`${tag}%`);
-      } else if (tag === 'starred') {
-        // Filter by starred
-        whereClause = includeDeleted
-          ? `WHERE is_starred = 1`
-          : `WHERE is_deleted = 0 AND is_starred = 1`;
       } else {
-        // Filter by user tag or system tag (check if tag exists in tags array)
+        // Filter by user tag or system tag (check both tag name and system:tag name)
         whereClause = includeDeleted
           ? `WHERE (
               EXISTS (SELECT 1 FROM json_each(tags) WHERE json_each.value = ?)
@@ -418,26 +428,26 @@ export class SQLiteDatabase {
     for (const row of rows) {
       counts.all++;
 
-      // Image/video
-      if (row.mime_type.startsWith('image/')) {
-        counts.image = (counts.image || 0) + 1;
-      } else if (row.mime_type.startsWith('video/')) {
-        counts.video = (counts.video || 0) + 1;
-      }
-
-      // Starred
-      if (row.is_starred === 1) {
-        counts.starred = (counts.starred || 0) + 1;
-      }
-
-      // User tags
+      // User tags and system tags from tags field
       let hasUserTags = false;
+      let hasSystemImage = false;
+      let hasSystemVideo = false;
+      let hasSystemStarred = false;
+
       if (row.tags) {
         try {
           const tags = JSON.parse(row.tags);
           if (Array.isArray(tags)) {
             for (const tag of tags) {
-              if (!tag.startsWith('system:')) {
+              if (tag.startsWith('system:')) {
+                // System tags - count both with and without prefix
+                const tagName = tag.substring(7);
+                counts[tagName] = (counts[tagName] || 0) + 1;
+                if (tagName === 'image') hasSystemImage = true;
+                if (tagName === 'video') hasSystemVideo = true;
+                if (tagName === 'starred') hasSystemStarred = true;
+              } else {
+                // User tags
                 hasUserTags = true;
                 counts[tag] = (counts[tag] || 0) + 1;
               }
@@ -446,6 +456,17 @@ export class SQLiteDatabase {
         } catch {
           // ignore
         }
+      }
+
+      // Backward compatibility - count based on mime_type and is_starred
+      // in case some files don't have system tags yet
+      if (row.mime_type.startsWith('image/') && !hasSystemImage) {
+        counts.image = (counts.image || 0) + 1;
+      } else if (row.mime_type.startsWith('video/') && !hasSystemVideo) {
+        counts.video = (counts.video || 0) + 1;
+      }
+      if (row.is_starred === 1 && !hasSystemStarred) {
+        counts.starred = (counts.starred || 0) + 1;
       }
 
       // Uncategorized
@@ -645,6 +666,18 @@ export class SQLiteDatabase {
    */
   clearQueue(): void {
     this.db.exec('DELETE FROM classify_queue');
+  }
+
+  /**
+   * Clear index: delete all rows from files and classify_queue tables
+   */
+  clearIndex(): { success: boolean } {
+    const transaction = this.db.transaction(() => {
+      this.db.exec('DELETE FROM classify_queue');
+      this.db.exec('DELETE FROM files');
+    });
+    transaction();
+    return { success: true };
   }
 
   /**

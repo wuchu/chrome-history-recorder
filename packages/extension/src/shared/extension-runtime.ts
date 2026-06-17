@@ -61,6 +61,15 @@ export interface ServiceStatus {
   ollamaAvailable: boolean;
 }
 
+export interface SyncBlobsToIndexResult {
+  scanned: number;
+  indexed: number;
+  skippedExisting: number;
+  skippedUnsupported: number;
+  skippedInvalidHash: number;
+  errors: Array<{ path: string; reason: string }>;
+}
+
 interface RuntimeResponse<T> {
   success?: boolean;
   data?: T;
@@ -69,7 +78,10 @@ interface RuntimeResponse<T> {
 }
 
 async function sendRuntimeMessage<T>(message: Record<string, unknown>): Promise<T> {
-  const response = await chrome.runtime.sendMessage(message) as RuntimeResponse<T> | T | undefined;
+  const response = (await chrome.runtime.sendMessage(message)) as
+    | RuntimeResponse<T>
+    | T
+    | undefined;
   if (!response) {
     throw new Error('No response from extension background');
   }
@@ -90,24 +102,36 @@ export async function updateConfig(updates: Partial<ExtensionConfig>): Promise<v
   await sendRuntimeMessage<void>({ type: 'updateConfig', updates });
 }
 
-export async function listOllamaModels(): Promise<{ models: OllamaModel[]; selectedModel?: string; changed?: boolean }> {
+export async function listOllamaModels(): Promise<{
+  models: OllamaModel[];
+  selectedModel?: string;
+  changed?: boolean;
+}> {
   return sendRuntimeMessage<{ models: OllamaModel[]; selectedModel?: string; changed?: boolean }>({
     type: 'listOllamaModels',
   });
 }
 
 export async function checkOllamaHealth(): Promise<boolean> {
-  const response = await chrome.runtime.sendMessage({ type: 'checkOllamaHealth' }) as { available?: boolean } | undefined;
+  const response = (await chrome.runtime.sendMessage({ type: 'checkOllamaHealth' })) as
+    | { available?: boolean }
+    | undefined;
   return Boolean(response?.available);
 }
 
 export async function isVFSConnected(): Promise<boolean> {
-  const response = await chrome.runtime.sendMessage({ type: 'isVFSConnected' }) as { connected?: boolean } | undefined;
+  const response = (await chrome.runtime.sendMessage({ type: 'isVFSConnected' })) as
+    | { connected?: boolean }
+    | undefined;
   return Boolean(response?.connected);
 }
 
 export async function reconnectVFS(): Promise<void> {
   await sendRuntimeMessage<void>({ type: 'reconnectVFS' });
+}
+
+export async function syncBlobsToIndex(): Promise<SyncBlobsToIndexResult> {
+  return sendRuntimeMessage<SyncBlobsToIndexResult>({ type: 'syncBlobsToIndex' });
 }
 
 export async function getQueueStatus(): Promise<QueueStatus> {
@@ -145,4 +169,8 @@ export async function loadServiceStatus(): Promise<ServiceStatus> {
     checkOllamaHealth(),
   ]);
   return { vfsConnected, ollamaAvailable };
+}
+
+export async function clearIndex(): Promise<{ success: boolean }> {
+  return sendRuntimeMessage<{ success: boolean }>({ type: 'clearIndex' });
 }

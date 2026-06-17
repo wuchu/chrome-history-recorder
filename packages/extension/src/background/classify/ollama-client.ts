@@ -89,8 +89,9 @@ const STYLE_PROMPTS_EN: Record<FilenameStyle, string> = {
 function buildPrompt(config: OllamaClientConfig): string {
   const isZh = config.language?.startsWith('zh-');
   const style = config.filenameStyle ?? 'auto';
-  const stylePrompt = config.filenameStylePrompt ?? (isZh ? STYLE_PROMPTS_ZH[style] : STYLE_PROMPTS_EN[style]);
-  const availableTags = config.userDefinedTags?.map(t => t.name).join(', ') ?? '';
+  const stylePrompt =
+    config.filenameStylePrompt ?? (isZh ? STYLE_PROMPTS_ZH[style] : STYLE_PROMPTS_EN[style]);
+  const availableTags = config.userDefinedTags?.map((t) => t.name).join(', ') ?? '';
 
   if (isZh) {
     if (availableTags) {
@@ -137,11 +138,13 @@ Example: cat | lazy_cat_sunbathing_on_window`.trim();
  * Sanitize filename
  */
 function sanitizeFilename(name: string): string {
-  return name
-    .replace(/[/\\:*?"<>|]/g, '')
-    .replace(/\s+/g, '_')
-    .trim()
-    .slice(0, 50) || 'unnamed';
+  return (
+    name
+      .replace(/[/\\:*?"<>|]/g, '')
+      .replace(/\s+/g, '_')
+      .trim()
+      .slice(0, 50) || 'unnamed'
+  );
 }
 
 /**
@@ -203,13 +206,14 @@ function isLikelyVisionModel(model: OllamaModel): boolean {
  */
 export const DEFAULT_PREFERRED_MODEL = 'gemma4:e4b';
 
-export function selectPreferredOllamaModel(models: OllamaModel[], currentModel?: string): string | null {
+export function selectPreferredOllamaModel(
+  models: OllamaModel[],
+  currentModel?: string
+): string | null {
   if (models.length === 0) return null;
 
   // 1. Honor an already-configured model when it's still installed and looks like a vision model.
-  const current = currentModel
-    ? models.find((model) => model.name === currentModel)
-    : undefined;
+  const current = currentModel ? models.find((model) => model.name === currentModel) : undefined;
   if (current && isLikelyVisionModel(current)) {
     return current.name;
   }
@@ -234,11 +238,7 @@ export function selectPreferredOllamaModel(models: OllamaModel[], currentModel?:
  * Normalize binary data returned through JSON/WebSocket.
  */
 function normalizeFileBuffer(buffer: number[] | { type?: string; data?: number[] }): ArrayBuffer {
-  const bytes = Array.isArray(buffer)
-    ? buffer
-    : Array.isArray(buffer.data)
-      ? buffer.data
-      : [];
+  const bytes = Array.isArray(buffer) ? buffer : Array.isArray(buffer.data) ? buffer.data : [];
 
   if (bytes.length === 0) {
     throw new Error('VFS returned empty or invalid file buffer');
@@ -250,7 +250,11 @@ function normalizeFileBuffer(buffer: number[] | { type?: string; data?: number[]
 /**
  * Parse classification result
  */
-function parseClassificationResult(content: string, originalHash: string, userDefinedTags?: TagDefinition[]): ClassificationResult {
+function parseClassificationResult(
+  content: string,
+  originalHash: string,
+  userDefinedTags?: TagDefinition[]
+): ClassificationResult {
   const cleanContent = content.trim();
 
   // 1. Try pipe-separated format with tags
@@ -262,10 +266,13 @@ function parseClassificationResult(content: string, originalHash: string, userDe
       let category = sanitizeCategory(parts[0]);
 
       if (parts[0].includes(',')) {
-        const tagStrings = parts[0].split(',').map((t) => t.trim().toLowerCase()).filter(Boolean);
+        const tagStrings = parts[0]
+          .split(',')
+          .map((t) => t.trim().toLowerCase())
+          .filter(Boolean);
         if (userDefinedTags) {
-          const validTagNames = new Set(userDefinedTags.map(t => t.name.toLowerCase()));
-          tags = tagStrings.filter(t => validTagNames.has(t)).slice(0, 3);
+          const validTagNames = new Set(userDefinedTags.map((t) => t.name.toLowerCase()));
+          tags = tagStrings.filter((t) => validTagNames.has(t)).slice(0, 3);
         } else {
           tags = tagStrings.slice(0, 3);
         }
@@ -273,7 +280,7 @@ function parseClassificationResult(content: string, originalHash: string, userDe
           category = tags[0]; // Use first tag as category for compatibility
         }
       } else if (userDefinedTags) {
-        const validTagNames = new Set(userDefinedTags.map(t => t.name.toLowerCase()));
+        const validTagNames = new Set(userDefinedTags.map((t) => t.name.toLowerCase()));
         const tag = parts[0].toLowerCase();
         if (validTagNames.has(tag)) {
           tags = [tag];
@@ -298,8 +305,8 @@ function parseClassificationResult(content: string, originalHash: string, userDe
     let category = sanitizeCategory(words[0]);
 
     if (userDefinedTags) {
-      const validTagNames = new Set(userDefinedTags.map(t => t.name.toLowerCase()));
-      tags = words.filter(w => validTagNames.has(w.toLowerCase())).slice(0, 3);
+      const validTagNames = new Set(userDefinedTags.map((t) => t.name.toLowerCase()));
+      tags = words.filter((w) => validTagNames.has(w.toLowerCase())).slice(0, 3);
       if (tags.length > 0) {
         category = tags[0];
       }
@@ -321,7 +328,7 @@ function parseClassificationResult(content: string, originalHash: string, userDe
       let tags: string[] = parsed.tags ?? [];
 
       if (userDefinedTags && tags.length > 0) {
-        const validTagNames = new Set(userDefinedTags.map(t => t.name.toLowerCase()));
+        const validTagNames = new Set(userDefinedTags.map((t) => t.name.toLowerCase()));
         tags = tags.filter((t: string) => validTagNames.has(t.toLowerCase())).slice(0, 3);
       }
 
@@ -380,7 +387,9 @@ export class OllamaClient {
 
       // Trigger callback if status changed OR if this is the first check
       if (this.lastHealthStatus === undefined || this.lastHealthStatus !== newStatus) {
-        console.log(`[OllamaClient] Health status changed: ${this.lastHealthStatus ?? 'unknown'} -> ${newStatus}`);
+        console.log(
+          `[OllamaClient] Health status changed: ${this.lastHealthStatus ?? 'unknown'} -> ${newStatus}`
+        );
         this.lastHealthStatus = newStatus;
         this.available = newStatus;
         this.onStatusCallback?.(newStatus);
@@ -392,7 +401,9 @@ export class OllamaClient {
 
       // Trigger callback if status changed OR if this is the first check
       if (this.lastHealthStatus === undefined || this.lastHealthStatus !== newStatus) {
-        console.log(`[OllamaClient] Health status changed: ${this.lastHealthStatus ?? 'unknown'} -> ${newStatus}`);
+        console.log(
+          `[OllamaClient] Health status changed: ${this.lastHealthStatus ?? 'unknown'} -> ${newStatus}`
+        );
         this.lastHealthStatus = newStatus;
         this.available = false;
         this.onStatusCallback?.(newStatus);
@@ -450,7 +461,7 @@ export class OllamaClient {
         throw new Error(`Ollama model list error: ${response.status}`);
       }
 
-      const data = await response.json() as OllamaTagsResponse;
+      const data = (await response.json()) as OllamaTagsResponse;
       return normalizeOllamaModels(data);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
@@ -461,7 +472,11 @@ export class OllamaClient {
   /**
    * Select and apply the best installed model if the current one is unavailable
    */
-  async selectAvailableModel(): Promise<{ models: OllamaModel[]; selectedModel: string | null; changed: boolean }> {
+  async selectAvailableModel(): Promise<{
+    models: OllamaModel[];
+    selectedModel: string | null;
+    changed: boolean;
+  }> {
     const models = await this.listModels();
     const selectedModel = selectPreferredOllamaModel(models, this.config.model);
     const changed = Boolean(selectedModel && selectedModel !== this.config.model);
@@ -507,7 +522,7 @@ export class OllamaClient {
   /**
    * Classify image buffer
    */
-  async classifyImage(buffer: ArrayBuffer, mimeType: string): Promise<ClassificationResult> {
+  async classifyImage(buffer: ArrayBuffer, _mimeType: string): Promise<ClassificationResult> {
     if (!this.available) {
       throw new Error('Ollama service not available');
     }
@@ -543,13 +558,13 @@ export class OllamaClient {
         if (response.status === 404) {
           throw new Error(
             `Ollama model not found or chat endpoint unavailable for model "${this.config.model}"${detail}. ` +
-            `Select an installed vision model from the model dropdown or run: ollama pull ${this.config.model}`
+              `Select an installed vision model from the model dropdown or run: ollama pull ${this.config.model}`
           );
         }
         if (response.status === 400) {
           throw new Error(
             `Ollama rejected the image request for model "${this.config.model}"${detail}. ` +
-            'This usually means the selected model does not support images. Select a vision model such as llava:7b.'
+              'This usually means the selected model does not support images. Select a vision model such as llava:7b.'
           );
         }
         throw new Error(`Ollama API error: ${response.status}${detail}`);
@@ -586,7 +601,9 @@ export class OllamaClient {
         console.log(`[OllamaClient] Using large thumbnail for classification: ${hash}`);
       } else {
         classifyBuffer = normalizeFileBuffer(file.buffer);
-        console.log(`[OllamaClient] Thumbnail unavailable, using original file for classification: ${hash}`);
+        console.log(
+          `[OllamaClient] Thumbnail unavailable, using original file for classification: ${hash}`
+        );
       }
     } catch (error) {
       console.warn('[OllamaClient] Failed to get thumbnail, falling back to original file:', error);

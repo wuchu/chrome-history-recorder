@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { SQLiteDatabase, ensureWorkspace } from '../src/sqlite.js';
+import { SQLiteDatabase, ensureWorkspace } from '../src/sqlite';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -16,7 +16,10 @@ describe('SQLiteDatabase', () => {
 
   beforeEach(() => {
     // Create unique test workspace for each test
-    testWorkspace = path.join(os.tmpdir(), `vfs-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    testWorkspace = path.join(
+      os.tmpdir(),
+      `vfs-test-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    );
     ensureWorkspace(testWorkspace);
     // Add small delay to ensure workspace is fully created
     db = new SQLiteDatabase(testWorkspace);
@@ -157,7 +160,7 @@ describe('SQLiteDatabase', () => {
     });
 
     it('should update file metadata', async () => {
-      await new Promise(resolve => setTimeout(resolve, 10)); // Small delay
+      await new Promise((resolve) => setTimeout(resolve, 10)); // Small delay
       db.updateMetadata('abc123', {
         category: 'cats',
         ai_filename: 'cute_cat.jpg',
@@ -281,7 +284,7 @@ describe('SQLiteDatabase', () => {
       const result = db.listFiles({ category: 'cats' });
       expect(result.items.length).toBe(3);
       expect(result.total).toBe(3);
-      expect(result.items.every(f => f.category === 'cats')).toBe(true);
+      expect(result.items.every((f) => f.category === 'cats')).toBe(true);
     });
 
     it('should sort by captured_at descending', () => {
@@ -296,14 +299,14 @@ describe('SQLiteDatabase', () => {
 
     it('should exclude deleted files by default', () => {
       const result = db.listFiles({});
-      expect(result.items.every(f => f.is_deleted === 0)).toBe(true);
+      expect(result.items.every((f) => f.is_deleted === 0)).toBe(true);
       expect(result.total).toBe(10);
     });
 
     it('should include deleted files when requested', () => {
       const result = db.listFiles({ includeDeleted: true });
       expect(result.total).toBe(11);
-      expect(result.items.some(f => f.is_deleted === 1)).toBe(true);
+      expect(result.items.some((f) => f.is_deleted === 1)).toBe(true);
     });
   });
 

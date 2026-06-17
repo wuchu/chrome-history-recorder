@@ -34,23 +34,30 @@ const LANGUAGE_OPTIONS = [
   { value: 'en-US', label: 'English' },
 ];
 
-const FILENAME_STYLE_OPTIONS: Array<{ value: FilenameStyle; label: string; description: string }> = [
-  { value: 'auto', label: '自动', description: '根据图片内容自动选择风格' },
-  { value: 'fun', label: '有趣', description: '活泼、俏皮、像在讲故事' },
-  { value: 'sexy', label: '迷人', description: '优雅、有吸引力、有美感' },
-  { value: 'artistic', label: '艺术', description: '像描述摄影或画作' },
-  { value: 'poetic', label: '诗意', description: '带有意境和情感' },
-  { value: 'minimal', label: '极简', description: '只保留核心信息' },
-  { value: 'professional', label: '专业', description: '客观、准确、简洁' },
-  { value: 'narrative', label: '叙事', description: '描述场景中的情节' },
-];
+const FILENAME_STYLE_OPTIONS: Array<{ value: FilenameStyle; label: string; description: string }> =
+  [
+    { value: 'auto', label: '自动', description: '根据图片内容自动选择风格' },
+    { value: 'fun', label: '有趣', description: '活泼、俏皮、像在讲故事' },
+    { value: 'sexy', label: '迷人', description: '优雅、有吸引力、有美感' },
+    { value: 'artistic', label: '艺术', description: '像描述摄影或画作' },
+    { value: 'poetic', label: '诗意', description: '带有意境和情感' },
+    { value: 'minimal', label: '极简', description: '只保留核心信息' },
+    { value: 'professional', label: '专业', description: '客观、准确、简洁' },
+    { value: 'narrative', label: '叙事', description: '描述场景中的情节' },
+  ];
 
 // 系统标签定义
 const SYSTEM_TAGS: TagDefinition[] = [
   { id: 'system:image', name: 'image', label: '📷 图片', isSystem: true, sortOrder: 1 },
   { id: 'system:video', name: 'video', label: '🎬 视频', isSystem: true, sortOrder: 2 },
   { id: 'system:starred', name: 'starred', label: '⭐ 已收藏', isSystem: true, sortOrder: 100 },
-  { id: 'system:uncategorized', name: 'uncategorized', label: '未分类', isSystem: true, sortOrder: 999 },
+  {
+    id: 'system:uncategorized',
+    name: 'uncategorized',
+    label: '未分类',
+    isSystem: true,
+    sortOrder: 999,
+  },
 ];
 
 function formatModelSize(size?: number): string | undefined {
@@ -79,6 +86,8 @@ function App() {
     pauseClassification,
     retryFailedTasks: retryFailed,
     clearQueue,
+    syncMediaIndex,
+    clearMediaIndex,
   } = useOptionsData();
 
   const [endpointDraft, setEndpointDraft] = useState(config.ollamaEndpoint);
@@ -86,7 +95,6 @@ function App() {
   const [isTagModalVisible, setIsTagModalVisible] = useState(false);
   const [isBatchImportVisible, setIsBatchImportVisible] = useState(false);
   const [editingTag, setEditingTag] = useState<TagDefinition | null>(null);
-  const [batchImportText, setBatchImportText] = useState('');
   const [isTranslating, setIsTranslating] = useState(false);
   const [tagForm] = Form.useForm();
   const [batchForm] = Form.useForm();
@@ -111,7 +119,11 @@ function App() {
     return ollamaModels.some((model) => model.name === config.visionModel);
   }, [config.visionModel, ollamaModels]);
 
-  const saveSetting = async (updates: Partial<ExtensionConfig>, key: string, successText: string) => {
+  const saveSetting = async (
+    updates: Partial<ExtensionConfig>,
+    key: string,
+    successText: string
+  ) => {
     await saveConfig(updates, key);
     messageApi.success(successText);
   };
@@ -167,6 +179,29 @@ function App() {
     messageApi.success('队列已清空');
   };
 
+  const handleSyncMediaIndex = async () => {
+    try {
+      const result = await syncMediaIndex();
+      const errorText = result.errors.length > 0 ? `，错误 ${result.errors.length} 个` : '';
+      messageApi.success(
+        `同步完成：新增 ${result.indexed} 个，跳过已存在 ${result.skippedExisting} 个${errorText}`
+      );
+    } catch (syncError) {
+      const text = syncError instanceof Error ? syncError.message : '同步媒体索引失败';
+      messageApi.error(text);
+    }
+  };
+
+  const handleClearIndex = async () => {
+    try {
+      await clearMediaIndex();
+      messageApi.success('索引已清空，可以点击"同步原始媒体到索引"重新建立索引');
+    } catch (clearError) {
+      const text = clearError instanceof Error ? clearError.message : '清空索引失败';
+      messageApi.error(text);
+    }
+  };
+
   // 标签管理功能
   const openAddTagModal = () => {
     setEditingTag(null);
@@ -208,7 +243,11 @@ function App() {
         nextTags = [...nextTags, newTag];
       }
 
-      await saveSetting({ userDefinedTags: nextTags }, 'tags', editingTag ? '标签已更新' : '标签已添加');
+      await saveSetting(
+        { userDefinedTags: nextTags },
+        'tags',
+        editingTag ? '标签已更新' : '标签已添加'
+      );
       setIsTagModalVisible(false);
     } catch (formError) {
       console.error('标签表单验证失败:', formError);
@@ -242,7 +281,6 @@ function App() {
 
   // 批量导入功能
   const openBatchImportModal = () => {
-    setBatchImportText('');
     batchForm.resetFields();
     setIsBatchImportVisible(true);
   };
@@ -258,11 +296,11 @@ function App() {
       }
 
       // 解析标签
-      const lines = text.split('\n').filter(line => line.trim());
+      const lines = text.split('\n').filter((line: string) => line.trim());
       const newTags: TagDefinition[] = [];
       const currentMaxOrder = config.userDefinedTags.length;
 
-      lines.forEach((line, index) => {
+      lines.forEach((line: string, index: number) => {
         const parts = line.split(',');
         const name = parts[0]?.trim().toLowerCase().replace(/\s+/g, '_');
         const label = parts[1]?.trim() || parts[0]?.trim();
@@ -343,7 +381,8 @@ function App() {
           <div className="options-header">
             <Title level={2}>Media Recorder 设置</Title>
             <Paragraph className="options-subtitle">
-              配置本地 VFS、Ollama AI 分类、文件名风格和分类队列。AI 分类默认暂停，捕获的媒体可以先进入待处理队列。
+              配置本地 VFS、Ollama AI 分类、文件名风格和分类队列。AI
+              分类默认暂停，捕获的媒体可以先进入待处理队列。
             </Paragraph>
           </div>
 
@@ -351,7 +390,11 @@ function App() {
 
           <Spin spinning={loading} tip="加载配置中...">
             <Space direction="vertical" size="large" className="full-width">
-              <Card className="options-card" title="服务状态" extra={<Button onClick={refreshAll}>全部刷新</Button>}>
+              <Card
+                className="options-card"
+                title="服务状态"
+                extra={<Button onClick={refreshAll}>全部刷新</Button>}
+              >
                 <Row gutter={[16, 16]}>
                   <Col xs={24} md={12}>
                     <div className="status-row">
@@ -384,9 +427,49 @@ function App() {
                 </Row>
               </Card>
 
+              <Card className="options-card" title="媒体索引维护">
+                <div className="status-row">
+                  <Space direction="vertical" size={2}>
+                    <Text strong>原始媒体索引</Text>
+                    <Badge
+                      status={serviceStatus.vfsConnected ? 'success' : 'error'}
+                      text={serviceStatus.vfsConnected ? 'VFS 已连接' : 'VFS 未连接'}
+                    />
+                  </Space>
+                  <Space>
+                    <Popconfirm
+                      title="清空索引"
+                      description="确定要清空所有索引吗？物理文件不会被删除，你可以随后重新同步。"
+                      onConfirm={handleClearIndex}
+                      okText="清空"
+                      cancelText="取消"
+                    >
+                      <Button
+                        danger
+                        loading={saving.clearIndex}
+                        disabled={!serviceStatus.vfsConnected}
+                      >
+                        清空索引
+                      </Button>
+                    </Popconfirm>
+                    <Button
+                      type="primary"
+                      loading={saving.syncBlobsToIndex}
+                      disabled={!serviceStatus.vfsConnected}
+                      onClick={handleSyncMediaIndex}
+                    >
+                      同步原始媒体到索引
+                    </Button>
+                  </Space>
+                </div>
+              </Card>
+
               <Card className="options-card" title="Ollama 设置">
                 <Form layout="vertical">
-                  <Form.Item label="Ollama 地址" extra="修改后失焦或按 Enter 保存，并用于后续健康检查和分类请求。">
+                  <Form.Item
+                    label="Ollama 地址"
+                    extra="修改后失焦或按 Enter 保存，并用于后续健康检查和分类请求。"
+                  >
                     <Input.Search
                       value={endpointDraft}
                       enterButton="保存"
@@ -400,7 +483,9 @@ function App() {
 
                   <Form.Item
                     label="视觉模型"
-                    validateStatus={config.visionModel && !configuredModelAvailable ? 'warning' : undefined}
+                    validateStatus={
+                      config.visionModel && !configuredModelAvailable ? 'warning' : undefined
+                    }
                     help={
                       config.visionModel && !configuredModelAvailable
                         ? `当前配置的模型 ${config.visionModel} 不在已发现的 Ollama 模型中`
@@ -430,7 +515,13 @@ function App() {
                         optionRender={(option) => {
                           const model = ollamaModels.find((item) => item.name === option.value);
                           const detail = model
-                            ? [model.parameterSize, model.quantizationLevel, formatModelSize(model.size)].filter(Boolean).join(' · ')
+                            ? [
+                                model.parameterSize,
+                                model.quantizationLevel,
+                                formatModelSize(model.size),
+                              ]
+                                .filter(Boolean)
+                                .join(' · ')
                             : '当前配置值';
                           return (
                             <Space direction="vertical" size={0}>
@@ -460,12 +551,16 @@ function App() {
                 extra={
                   <Space>
                     <Button onClick={openBatchImportModal}>批量导入</Button>
-                    <Button type="primary" onClick={openAddTagModal}>新增标签</Button>
+                    <Button type="primary" onClick={openAddTagModal}>
+                      新增标签
+                    </Button>
                   </Space>
                 }
               >
                 <div style={{ marginBottom: 16 }}>
-                  <Title level={5} style={{ marginBottom: 8 }}>系统标签（只读）</Title>
+                  <Title level={5} style={{ marginBottom: 8 }}>
+                    系统标签（只读）
+                  </Title>
                   <Space wrap>
                     {SYSTEM_TAGS.map((tag) => (
                       <Tag key={tag.id} color="blue">
@@ -476,9 +571,13 @@ function App() {
                 </div>
 
                 <div>
-                  <Title level={5} style={{ marginBottom: 8 }}>用户定义标签</Title>
+                  <Title level={5} style={{ marginBottom: 8 }}>
+                    用户定义标签
+                  </Title>
                   {config.userDefinedTags.length === 0 ? (
-                    <Text type="secondary">暂无用户定义标签，点击"新增标签"添加，或使用"批量导入"一次导入多个标签。</Text>
+                    <Text type="secondary">
+                      暂无用户定义标签，点击"新增标签"添加，或使用"批量导入"一次导入多个标签。
+                    </Text>
                   ) : (
                     <Space direction="vertical" style={{ width: '100%' }}>
                       {config.userDefinedTags.map((tag, index) => (
@@ -516,11 +615,7 @@ function App() {
                             >
                               ↓
                             </Button>
-                            <Button
-                              type="text"
-                              size="small"
-                              onClick={() => openEditTagModal(tag)}
-                            >
+                            <Button type="text" size="small" onClick={() => openEditTagModal(tag)}>
                               编辑
                             </Button>
                             <Popconfirm
@@ -571,7 +666,11 @@ function App() {
                           value={config.classificationConcurrency}
                           onChange={(value) => {
                             if (typeof value === 'number') {
-                              saveSetting({ classificationConcurrency: value }, 'classificationConcurrency', '并发数已保存');
+                              saveSetting(
+                                { classificationConcurrency: value },
+                                'classificationConcurrency',
+                                '并发数已保存'
+                              );
                             }
                           }}
                         />
@@ -579,7 +678,10 @@ function App() {
                     </Form>
                   </Col>
                   <Col xs={24} md={8}>
-                    <Statistic title="当前处理中" value={queueStatus.scheduler?.processing ?? queueStatus.processing} />
+                    <Statistic
+                      title="当前处理中"
+                      value={queueStatus.scheduler?.processing ?? queueStatus.processing}
+                    />
                   </Col>
                 </Row>
               </Card>
@@ -593,7 +695,9 @@ function App() {
                         value: style.value,
                         label: `${style.label} - ${style.description}`,
                       }))}
-                      onChange={(filenameStyle) => saveSetting({ filenameStyle }, 'filenameStyle', '文件名风格已保存')}
+                      onChange={(filenameStyle) =>
+                        saveSetting({ filenameStyle }, 'filenameStyle', '文件名风格已保存')
+                      }
                     />
                   </Form.Item>
                   <Form.Item label="自定义提示" extra="留空时使用所选风格的默认提示。失焦后保存。">
@@ -614,13 +718,25 @@ function App() {
                 extra={<Button onClick={refreshQueue}>刷新队列</Button>}
               >
                 <Row gutter={[16, 16]}>
-                  <Col xs={12} md={6}><Statistic title="等待" value={queueStatus.pending} /></Col>
-                  <Col xs={12} md={6}><Statistic title="处理中" value={queueStatus.processing} /></Col>
-                  <Col xs={12} md={6}><Statistic title="完成" value={queueStatus.completed} /></Col>
-                  <Col xs={12} md={6}><Statistic title="失败" value={queueStatus.failed} /></Col>
+                  <Col xs={12} md={6}>
+                    <Statistic title="等待" value={queueStatus.pending} />
+                  </Col>
+                  <Col xs={12} md={6}>
+                    <Statistic title="处理中" value={queueStatus.processing} />
+                  </Col>
+                  <Col xs={12} md={6}>
+                    <Statistic title="完成" value={queueStatus.completed} />
+                  </Col>
+                  <Col xs={12} md={6}>
+                    <Statistic title="失败" value={queueStatus.failed} />
+                  </Col>
                 </Row>
                 <Space style={{ marginTop: 16 }}>
-                  <Button loading={saving.retryFailed} disabled={queueStatus.failed === 0} onClick={handleRetryFailed}>
+                  <Button
+                    loading={saving.retryFailed}
+                    disabled={queueStatus.failed === 0}
+                    onClick={handleRetryFailed}
+                  >
                     重试失败任务
                   </Button>
                   <Popconfirm
@@ -630,7 +746,9 @@ function App() {
                     cancelText="取消"
                     onConfirm={handleClearQueue}
                   >
-                    <Button danger loading={saving.clearQueue}>清空队列</Button>
+                    <Button danger loading={saving.clearQueue}>
+                      清空队列
+                    </Button>
                   </Popconfirm>
                 </Space>
               </Card>
@@ -640,7 +758,7 @@ function App() {
       </Layout>
 
       <Modal
-        title={editingTag ? "编辑标签" : "新增标签"}
+        title={editingTag ? '编辑标签' : '新增标签'}
         open={isTagModalVisible}
         onOk={handleTagModalOk}
         onCancel={() => setIsTagModalVisible(false)}
@@ -651,7 +769,7 @@ function App() {
           <Form.Item
             name="name"
             label="标签英文名称"
-            rules={[{ required: true, message: "请输入标签英文名称" }]}
+            rules={[{ required: true, message: '请输入标签英文名称' }]}
             extra="用于 AI 分类时的标签识别，使用英文或拼音，不要有空格"
           >
             <Input placeholder="例如：cat, game, screenshot" />
@@ -659,7 +777,7 @@ function App() {
           <Form.Item
             name="label"
             label="显示名称"
-            rules={[{ required: true, message: "请输入显示名称" }]}
+            rules={[{ required: true, message: '请输入显示名称' }]}
             extra="在界面上显示的标签名称，可以使用 emoji 和中文"
           >
             <Input placeholder="例如：🐱 猫咪, 🎮 游戏, 📸 截图" />
@@ -702,7 +820,9 @@ memo`}
             使用 Ollama 翻译为中文
           </Button>
           {!serviceStatus.ollamaAvailable && (
-            <Text type="secondary" style={{ marginLeft: 8 }}>需要 Ollama 可用才能翻译</Text>
+            <Text type="secondary" style={{ marginLeft: 8 }}>
+              需要 Ollama 可用才能翻译
+            </Text>
           )}
         </div>
       </Modal>

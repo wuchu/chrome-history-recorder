@@ -1,21 +1,20 @@
-## REMOVED Requirements
+# CLI Flexible Configuration
 
-### Requirement: 自定义配置文件路径
-**Reason**: The standalone `ai-classify` CLI and its config-file loading behavior are retired.
-**Migration**: Use Extension configuration stored through Chrome storage and Background config management.
+## Purpose
 
-### Requirement: 纯参数启动模式
-**Reason**: The supported workflow no longer starts classification from CLI parameters.
-**Migration**: Use DevTools capture/classification controls.
+The standalone `ai-classify` CLI is retired. CLI flexible configuration (custom config-file paths, pure parameter mode, global options, prompt overrides, concurrency flags) is no longer supported. This spec records that there are no active CLI configuration requirements and points consumers to the supported workflow.
 
-### Requirement: 全局选项支持
-**Reason**: Standalone CLI subcommands and global options are removed with the CLI package.
-**Migration**: Use Extension DevTools controls and Background messages.
+## Requirements
 
-### Requirement: 自定义分类提示词
-**Reason**: CLI prompt override flags are retired with the standalone CLI configuration surface.
-**Migration**: Use the Extension's classifier defaults and supported Background configuration fields.
+### Requirement: Standalone CLI configuration is not a supported surface
+The system SHALL NOT expose standalone `ai-classify` CLI configuration modes (custom config file paths, pure parameter startup, global subcommand options, prompt override flags, CLI concurrency flags) as supported configuration surfaces.
 
-### Requirement: 最大并发请求数配置
-**Reason**: CLI concurrency flags are retired with the standalone CLI.
-**Migration**: Use Extension Background scheduler configuration where supported.
+#### Scenario: CLI flags are absent
+- **WHEN** a user wants to configure capture, classification, prompts, or concurrency
+- **THEN** the system SHALL direct them to Extension configuration in Chrome storage and DevTools controls instead of CLI flags
+
+#### Scenario: Replacement controls in Extension and DevTools
+- **WHEN** the user configures the supported workflow
+- **THEN** the Extension Background SHALL load configuration from Chrome storage
+- **AND** DevTools SHALL provide capture and classification controls
+- **AND** Extension Background scheduler defaults SHALL govern concurrency and prompts

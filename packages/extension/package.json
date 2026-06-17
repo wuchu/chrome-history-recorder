@@ -12,6 +12,7 @@
     "postinstall": "wxt prepare"
   },
   "dependencies": {
+    "@ant-design/icons": "^6.2.5",
     "@virtuoso.dev/masonry": "^1.4.3",
     "antd": "^6.4.3",
     "i18next": "^24.0.0",

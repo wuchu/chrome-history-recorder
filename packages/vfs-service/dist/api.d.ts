@@ -3,9 +3,21 @@
  *
  * Implements all VFS API methods.
  */
-import { SQLiteDatabase, FileMetadata, MetadataUpdate, ListQuery } from './sqlite.js';
-import { BlobStorage } from './blob.js';
-import { ThumbnailStorage, ThumbnailSize } from './thumbnail.js';
+import { SQLiteDatabase, FileMetadata, MetadataUpdate, ListQuery } from './sqlite';
+import { BlobStorage } from './blob';
+import { ThumbnailStorage, ThumbnailSize } from './thumbnail';
+export interface SyncBlobsToIndexError {
+    path: string;
+    reason: string;
+}
+export interface SyncBlobsToIndexResult {
+    scanned: number;
+    indexed: number;
+    skippedExisting: number;
+    skippedUnsupported: number;
+    skippedInvalidHash: number;
+    errors: SyncBlobsToIndexError[];
+}
 /**
  * VFS Service API class
  */
@@ -95,6 +107,10 @@ export declare class VFSAPI {
         path: string;
     };
     /**
+     * Sync existing workspace blobs into the SQLite metadata index.
+     */
+    syncBlobsToIndex(): SyncBlobsToIndexResult;
+    /**
      * Set workspace config API (not supported - workspace is read-only after initialization)
      */
     setWorkspaceConfig(): {
@@ -153,8 +169,12 @@ export declare class VFSAPI {
     /**
      * Get tag counts API
      */
-    getTagCounts(): {
-        counts: Record<string, number>;
+    getTagCounts(): Record<string, number>;
+    /**
+     * Clear index API
+     */
+    clearIndex(): {
+        success: boolean;
     };
 }
 //# sourceMappingURL=api.d.ts.map

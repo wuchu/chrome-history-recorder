@@ -1,27 +1,64 @@
-## ADDED Requirements
+# DevTools Media Grid
+
+## Purpose
+
+Provide the DevTools Panel media browsing experience: a thumbnail grid for captured media, real-time capture stream, history browsing, search/filter, focused media viewer, and aggregated service status. The panel reflects the active Extension Background + VFS Service architecture.
+
+## Requirements
+
+
+### Requirement: Scrollable tag tab bar
+The DevTools Panel SHALL provide a scrollable tag tab bar above the media grid.
+
+#### Scenario: Tab bar placement
+- **WHEN** the DevTools Panel is displayed
+- **THEN** the tag tab bar SHALL appear below the Classify Progress Section and above the media grid
+- **AND** the tab bar SHALL replace the old MediaTabs (images/videos)
+
+#### Scenario: Scroll functionality
+- **WHEN** there are more tags than fit in the tab bar width
+- **THEN** the tab bar SHALL support horizontal scrolling
+- **AND** visual scroll indicators SHALL be provided
+
+### Requirement: Tag display in media cards
+The media grid SHALL NOT display tag text on thumbnail cards; tag-based filtering MAY remain available outside the card surface.
+
+#### Scenario: Hide tags on card
+- **WHEN** a media card is displayed in the primary masonry grid
+- **THEN** the system SHALL show the media thumbnail only
+- **AND** the system SHALL NOT show system tag chips or user tag chips on the card
+
+### Requirement: DevTools opens dedicated settings page
+The DevTools panel SHALL provide access to the dedicated extension Options page instead of embedding full program configuration forms.
+
+#### Scenario: Show settings entry point
+- **WHEN** the DevTools panel renders
+- **THEN** it SHALL show a visible action for opening extension settings
+- **AND** the action SHALL open the extension Options page
+
+#### Scenario: Settings action failure
+- **WHEN** opening the extension Options page fails
+- **THEN** the DevTools panel SHALL surface an error or fallback message to the user
 
 ### Requirement: 缩略图网格布局
-DevTools 面板必须 (SHALL) 以缩略图网格形式展示捕获的媒体。
+DevTools 面板必须 (SHALL) 以纯缩略图网格形式展示捕获的媒体。
 
 #### Scenario: 网格布局展示
 - **WHEN** 用户打开 DevTools 面板
 - **THEN** 系统必须 (SHALL) 以网格形式展示媒体缩略图
-- **AND** 网格必须 (SHALL) 使用 CSS Grid 或 Flexbox 布局
-- **AND** 网格间距应该 (SHOULD) 为 4-8px
+- **AND** 网格必须 (SHALL) 使用 CSS Grid、Flexbox 或虚拟化 Masonry 布局
+- **AND** 网格间距应该 (SHOULD) 为 4-10px
 
 #### Scenario: 缩略图卡片结构
 - **WHEN** 显示单个媒体项
-- **THEN** 系统必须 (SHALL) 显示包含以下内容的卡片：
-  - 缩略图图片区域
-  - 分类状态图标（✓ 已分类 / ◉ 分类中 / ○ 等待 / ✗ 失败）
-  - 简短文件名（截断显示）
-  - 分类名称和置信度（如已分类）
-  - 文件大小和类型信息
+- **THEN** 系统必须 (SHALL) 显示可点击的缩略图区域
+- **AND** 系统必须 (SHALL) 在缩略图加载中或加载失败时显示轻量占位状态
+- **AND** 系统禁止 (MUST NOT) 在主网格卡片上显示分类、AI 文件名、置信度、文件大小、类型信息或标签文本
 
 #### Scenario: 缩略图尺寸
 - **WHEN** 显示缩略图网格
 - **THEN** 系统必须 (SHALL) 显示适当尺寸的缩略图
-- **AND** 缩略图宽度应该 (SHOULD) 为 100-120px
+- **AND** 缩略图宽度应该 (SHOULD) 与当前网格列宽匹配
 - **AND** 缩略图高度应该 (SHOULD) 保持宽高比例
 
 #### Scenario: 响应式网格
@@ -57,33 +94,27 @@ DevTools 面板必须 (SHALL) 显示实时捕获流。
   - ✗ 失败：红色
 
 ### Requirement: 历史分类结果网格
-DevTools 面板必须 (SHALL) 提供历史分类结果浏览。
+DevTools 面板必须 (SHALL) 提供历史媒体浏览，并以纯缩略图网格展示历史结果。
 
 #### Scenario: 历史结果 Tab
-- **WHEN** 用户点击"历史分类结果"区域
-- **THEN** 系统必须 (SHALL) 展示历史分类结果网格
-- **AND** 网格必须 (SHALL) 显示所有已分类的媒体
+- **WHEN** 用户查看历史媒体区域
+- **THEN** 系统必须 (SHALL) 展示历史媒体缩略图网格
+- **AND** 网格必须 (SHALL) 显示符合当前过滤条件的媒体
 
 #### Scenario: 分页加载
 - **WHEN** 历史结果数量较多
 - **THEN** 系统必须 (SHALL) 分页加载结果
 - **AND** 每页应该 (SHOULD) 显示 20-50 项
-- **AND** 系统必须 (SHALL) 提供"加载更多"按钮
+- **AND** 系统必须 (SHALL) 提供继续加载能力
 
-#### Scenario: 分类信息显示
-- **WHEN** 显示已分类的缩略图
-- **THEN** 系统必须 (SHALL) 在卡片底部显示：
-  - 分类后的文件名
-  - 分类目录名称
-  - 置信度百分比
-  - 文件大小和类型
+#### Scenario: 分类信息不显示在网格卡片
+- **WHEN** 显示已分类的历史媒体缩略图
+- **THEN** 系统必须 (SHALL) 只在卡片上显示缩略图和加载状态
+- **AND** 系统禁止 (MUST NOT) 在卡片底部显示分类后的文件名、分类目录名称、置信度百分比、文件大小或类型
 
-#### Scenario: 置信度可视化
-- **WHEN** 显示置信度
-- **THEN** 系统必须 (SHALL) 使用进度条或颜色表示置信度
-- **AND** 高置信度（>90%）应该 (SHOULD) 使用绿色
-- **AND** 中置信度（70-90%）应该 (SHOULD) 使用黄色
-- **AND** 低置信度（<70%）应该 (SHOULD) 使用红色
+#### Scenario: 置信度不在网格可视化
+- **WHEN** 显示历史媒体缩略图
+- **THEN** 系统禁止 (MUST NOT) 在主网格卡片中显示置信度进度条或置信度颜色编码
 
 ### Requirement: 搜索和过滤
 DevTools 面板必须 (SHALL) 提供搜索和过滤功能。
@@ -113,54 +144,97 @@ DevTools 面板必须 (SHALL) 提供搜索和过滤功能。
 - **THEN** 系统必须 (SHALL) 按指定顺序排列媒体
 - **AND** 排序选项必须 (SHALL) 包含：最新、最旧、置信度最高、置信度最低
 
-### Requirement: 媒体详情面板
-DevTools 面板必须 (SHALL) 提供媒体详情查看面板。
+### Requirement: Media details panel
+The DevTools Panel SHALL provide a focused media viewer that opens from a thumbnail and prioritizes viewing the local VFS-backed original image.
 
-#### Scenario: 点击缩略图打开详情
+#### Scenario: 点击缩略图打开查看器
 - **WHEN** 用户点击缩略图
-- **THEN** 系统必须 (SHALL) 打开详情面板
-- **AND** 详情面板必须 (SHALL) 显示在右侧或弹出层
+- **THEN** 系统必须 (SHALL) 打开媒体查看器
+- **AND** 查看器必须 (SHALL) 显示为弹出层或覆盖层
 
-#### Scenario: 大图预览
-- **WHEN** 详情面板打开
-- **THEN** 系统必须 (SHALL) 显示媒体的大图预览
-- **AND** 图片必须 (SHALL) 使用较高分辨率（如 400px 宽度）
-- **AND** 视频必须 (SHALL) 提供播放控件（如支持）
+#### Scenario: 本地 VFS 原图预览
+- **WHEN** 图片查看器打开
+- **THEN** 系统必须 (SHALL) 使用媒体 hash 构建本地 VFS 原图 URL
+- **AND** 图片 URL 必须 (SHALL) 指向 `GET /files/:hash`
+- **AND** 系统禁止 (MUST NOT) 优先使用或回退到原始页面的 source URL 作为查看器图片源
 
-#### Scenario: 分类结果详情
-- **WHEN** 媒体已分类
-- **THEN** 系统必须 (SHALL) 显示详细分类信息：
-  - Category: 分类名称
-  - Filename: 新文件名
-  - Confidence: 置信度进度条
-  - Tags: 标签列表
+#### Scenario: 大图查看体验
+- **WHEN** 图片查看器打开
+- **THEN** 系统必须 (SHALL) 将图片作为主要视觉内容显示
+- **AND** 图片必须 (SHALL) 在可用视口内按比例完整显示
+- **AND** 元数据内容禁止 (MUST NOT) 与大图争抢主要显示区域
 
-#### Scenario: 文件信息详情
-- **WHEN** 详情面板显示
-- **THEN** 系统必须 (SHALL) 显示文件元信息：
-  - Hash: 文件哈希值
-  - Size: 文件大小（带单位）
-  - Type: MIME 类型
-  - Captured: 捕获时间
+#### Scenario: 查看器标题
+- **WHEN** 图片查看器打开
+- **THEN** 查看器必须 (SHALL) 在左上角显示图片标题
+- **AND** 标题必须 (SHALL) 优先显示 AI 重命名后的文件名
+- **AND** 没有重命名文件名时必须 (SHALL) 显示媒体 hash
 
-#### Scenario: 来源信息
-- **WHEN** 详情面板显示
-- **THEN** 系统必须 (SHALL) 显示来源信息：
-  - URL: 来源 URL（可点击跳转）
-  - Page: 查看原页面链接
+#### Scenario: 视频预览不可用
+- **WHEN** 查看器打开的媒体不是图片
+- **THEN** 系统必须 (SHALL) 显示视频预览不可用状态
+- **AND** 系统禁止 (MUST NOT) 尝试用图片查看器加载视频源
 
-#### Scenario: 操作按钮
-- **WHEN** 详情面板显示
-- **THEN** 系统必须 (SHALL) 提供操作按钮：
-  - 重新分类：触发重新分类
-  - 删除：删除该文件
-  - 导出：下载文件
-  - 复制文件名：复制新文件名到剪贴板
+#### Scenario: 查看器操作按钮
+- **WHEN** 查看器显示
+- **THEN** 系统必须 (SHALL) 提供关闭操作
+- **AND** 系统禁止 (MUST NOT) 在原图查看器工具栏显示下载操作
+- **AND** 系统禁止 (MUST NOT) 在原图查看器工具栏显示旋转或重新分类/重命名图标操作
 
-#### Scenario: 关闭详情面板
-- **WHEN** 用户点击关闭按钮
-- **THEN** 系统必须 (SHALL) 关闭详情面板
+#### Scenario: 关闭查看器
+- **WHEN** 用户点击关闭按钮、点击查看器背景或按 Escape 键
+- **THEN** 系统必须 (SHALL) 关闭查看器
 - **AND** 系统必须 (SHALL) 返回网格视图
+
+### Requirement: 分类进度控制区
+DevTools 面板必须 (SHALL) 在分类进度区域提供队列和调度器控制。
+
+#### Scenario: 显示开始和暂停控制
+- **WHEN** 分类进度区域显示
+- **THEN** 系统必须 (SHALL) 显示当前分类处理状态
+- **AND** 系统必须 (SHALL) 提供开始或暂停按钮
+
+#### Scenario: 显示队列维护控制
+- **WHEN** 分类进度区域显示
+- **THEN** 系统必须 (SHALL) 提供重试失败任务和清空队列操作
+- **AND** 操作完成后必须 (SHALL) 刷新队列统计
+
+### Requirement: 历史图片加载消息协议兼容
+DevTools 面板必须 (SHALL) 使用正确的消息协议加载历史图片。
+
+#### Scenario: 发送正确消息类型
+- **WHEN** useHistoricalImages hook 加载历史图片
+- **THEN** 系统必须 (SHALL) 发送消息类型为 'listFiles'（camelCase）
+- **AND** 禁止使用 (MUST NOT) 'list-files'（kebab-case）
+
+#### Scenario: 正确包装查询参数
+- **WHEN** 发送加载历史图片请求
+- **THEN** 系统必须 (SHALL) 将分页和过滤参数包装在 `query` 对象中
+- **AND** 消息格式必须 (SHALL) 为 `{ type: 'listFiles', query: { limit, offset, type } }`
+
+#### Scenario: 处理标准响应格式
+- **WHEN** Background 返回 listFiles 响应
+- **THEN** DevTools 必须 (SHALL) 检查响应的 `success` 字段
+- **AND** 成功时必须 (SHALL) 从 `data` 字段读取文件列表
+- **AND** 失败时必须 (SHALL) 显示 `error` 字段中的错误信息
+
+### Requirement: 服务状态联动显示
+DevTools 面板必须 (SHALL) 根据 VFS 和 Ollama 服务状态联动更新界面。
+
+#### Scenario: VFS 断开时显示提示
+- **WHEN** VFS WebSocket 连接断开
+- **THEN** DevTools 必须 (SHALL) 显示 VFS 未连接状态
+- **AND** 历史图片区域必须 (SHALL) 显示可操作的连接提示
+
+#### Scenario: Ollama 不可用时保持浏览可用
+- **WHEN** Ollama 服务不可用但 VFS 可用
+- **THEN** DevTools 必须 (SHALL) 保持媒体浏览和历史图片加载可用
+- **AND** AI 分类控制必须 (SHALL) 显示 Ollama 不可用提示
+
+#### Scenario: 服务恢复时刷新状态
+- **WHEN** VFS 或 Ollama 服务状态恢复可用
+- **THEN** DevTools 必须 (SHALL) 更新状态显示
+- **AND** 相关的重试、分类或历史加载操作应该 (SHOULD) 重新可用
 
 ### Requirement: 统计信息显示
 DevTools 面板必须 (SHALL) 显示统计信息。
@@ -180,35 +254,18 @@ DevTools 面板必须 (SHALL) 显示统计信息。
 - **THEN** 系统必须 (SHALL) 显示分类统计
 - **AND** 统计必须 (SHALL) 包含：已分类数量、等待数量、失败数量
 
-### Requirement: 配置面板折叠
-DevTools 面板必须 (SHALL) 提供简化的配置区域，且配置区域必须聚焦当前 Extension/VFS 工作流的状态与操作。
-
-#### Scenario: 默认显示简化配置
-- **WHEN** DevTools 面板打开
-- **THEN** 系统必须 (SHALL) 显示可操作的服务状态和 AI 分类配置摘要
-- **AND** 系统必须 (SHALL) 避免默认展示低频捕获过滤表单
-
-#### Scenario: 展示当前运行时控制
-- **WHEN** 配置区域显示
-- **THEN** 系统必须 (SHALL) 展示当前 VFS、Ollama、模型选择或分类控制相关内容
-- **AND** 系统必须 (SHALL) 不展示已经退役的 Proxy 或 standalone CLI 配置项
-
-#### Scenario: 快捷过滤条
-- **WHEN** 用户浏览媒体网格
-- **THEN** 系统可以 (MAY) 显示与媒体浏览直接相关的搜索或过滤控件
-- **AND** 这些控件必须 (SHALL) 不依赖 standalone CLI 配置
-
 ### Requirement: 服务状态聚合
 DevTools 面板必须 (SHALL) 显示当前 Extension/VFS 架构下的服务状态。
 
 #### Scenario: 显示 VFS 状态
 - **WHEN** DevTools 面板显示
 - **THEN** 系统必须 (SHALL) 显示 VFS Service 或 VFS WebSocket 连接状态
-- **AND** 状态必须 (SHALL) 使用图标和文字
+- **AND** 状态必须 (SHALL) 使用统一尺寸的状态圆点和文字
 
 #### Scenario: 显示 Ollama 状态
 - **WHEN** DevTools 面板显示
 - **THEN** 系统必须 (SHALL) 显示 Ollama 服务可用状态
+- **AND** 状态必须 (SHALL) 使用与其他连接状态一致尺寸的状态圆点
 - **AND** 不可用时必须 (SHALL) 提供可操作的检查或重试提示
 
 #### Scenario: 显示 AI 分类状态
@@ -219,6 +276,7 @@ DevTools 面板必须 (SHALL) 显示当前 Extension/VFS 架构下的服务状�
 #### Scenario: 状态图标聚合
 - **WHEN** 多个服务状态显示
 - **THEN** 系统必须 (SHALL) 在状态栏聚合显示当前可用性
+- **AND** 连接状态圆点大小必须 (SHALL) 保持统一
 
 ### Requirement: NetworkListener 监听器管理
 NetworkListener 必须 (SHALL) 正确管理 Chrome DevTools 网络请求监听器的注册和移除。
@@ -237,3 +295,87 @@ NetworkListener 必须 (SHALL) 正确管理 Chrome DevTools 网络请求监听�
 - **WHEN** 组件经历多次挂载/卸载（React StrictMode）
 - **THEN** 系统必须 (SHALL) 每次正确移除监听器
 - **AND** 系统必须 (SHALL) 不残留监听器
+
+### Requirement: DevTools media grid superseded by Side Panel
+The DevTools media grid SHALL no longer be the primary supported media capture and browsing surface after the Side Panel migration.
+
+#### Scenario: Primary media browser location
+- **WHEN** the user opens the extension for media capture or browsing
+- **THEN** the system SHALL present the Side Panel media browser as the primary UI
+- **AND** documentation SHALL NOT require opening Chrome DevTools to use the recorder
+
+#### Scenario: Temporary DevTools compatibility
+- **WHEN** DevTools media grid code remains during migration
+- **THEN** it SHALL be treated as a temporary fallback or debugging surface
+- **AND** new primary media browser requirements SHALL be defined by `side-panel-media-browser`
+
+### Requirement: DevTools-specific network capture retired
+The DevTools media grid SHALL NOT own image interception after migration to Side Panel capture.
+
+#### Scenario: Capture toggle behavior
+- **WHEN** the user starts capture from the supported UI
+- **THEN** the request SHALL be handled by Background tab-scoped capture state
+- **AND** the system SHALL NOT depend on `chrome.devtools.network.onRequestFinished` for primary capture
+
+### Requirement: DevTools media grid superseded by Side Panel
+The DevTools media grid SHALL no longer be the primary supported media capture and browsing surface after the Side Panel migration.
+
+#### Scenario: Primary media browser location
+- **WHEN** the user opens the extension for media capture or browsing
+- **THEN** the system SHALL present the Side Panel media browser as the primary UI
+- **AND** documentation SHALL NOT require opening Chrome DevTools to use the recorder
+
+#### Scenario: Temporary DevTools compatibility
+- **WHEN** DevTools media grid code remains during migration
+- **THEN** it SHALL be treated as a temporary fallback or debugging surface
+- **AND** new primary media browser requirements SHALL be defined by `side-panel-media-browser`
+
+### Requirement: DevTools-specific network capture retired
+The DevTools media grid SHALL NOT own image interception after migration to Side Panel capture.
+
+#### Scenario: Capture toggle behavior
+- **WHEN** the user starts capture from the supported UI
+- **THEN** the request SHALL be handled by Background tab-scoped capture state
+- **AND** the system SHALL NOT depend on `chrome.devtools.network.onRequestFinished` for primary capture
+
+### Requirement: DevTools media grid superseded by Side Panel
+The DevTools media grid SHALL no longer be the primary supported media capture and browsing surface after the Side Panel migration.
+
+#### Scenario: Primary media browser location
+- **WHEN** the user opens the extension for media capture or browsing
+- **THEN** the system SHALL present the Side Panel media browser as the primary UI
+- **AND** documentation SHALL NOT require opening Chrome DevTools to use the recorder
+
+#### Scenario: Temporary DevTools compatibility
+- **WHEN** DevTools media grid code remains during migration
+- **THEN** it SHALL be treated as a temporary fallback or debugging surface
+- **AND** new primary media browser requirements SHALL be defined by `side-panel-media-browser`
+
+### Requirement: DevTools-specific network capture retired
+The DevTools media grid SHALL NOT own image interception after migration to Side Panel capture.
+
+#### Scenario: Capture toggle behavior
+- **WHEN** the user starts capture from the supported UI
+- **THEN** the request SHALL be handled by Background tab-scoped capture state
+- **AND** the system SHALL NOT depend on `chrome.devtools.network.onRequestFinished` for primary capture
+
+### Requirement: DevTools media grid superseded by Side Panel
+The DevTools media grid SHALL no longer be the primary supported media capture and browsing surface after the Side Panel migration.
+
+#### Scenario: Primary media browser location
+- **WHEN** the user opens the extension for media capture or browsing
+- **THEN** the system SHALL present the Side Panel media browser as the primary UI
+- **AND** documentation SHALL NOT require opening Chrome DevTools to use the recorder
+
+#### Scenario: Temporary DevTools compatibility
+- **WHEN** DevTools media grid code remains during migration
+- **THEN** it SHALL be treated as a temporary fallback or debugging surface
+- **AND** new primary media browser requirements SHALL be defined by `side-panel-media-browser`
+
+### Requirement: DevTools-specific network capture retired
+The DevTools media grid SHALL NOT own image interception after migration to Side Panel capture.
+
+#### Scenario: Capture toggle behavior
+- **WHEN** the user starts capture from the supported UI
+- **THEN** the request SHALL be handled by Background tab-scoped capture state
+- **AND** the system SHALL NOT depend on `chrome.devtools.network.onRequestFinished` for primary capture

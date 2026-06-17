@@ -4,7 +4,7 @@
  * Manages user configuration stored in chrome.storage.local.
  */
 
-import { getOllamaClient, FilenameStyle } from './classify/ollama-client';
+import { getOllamaClient } from './classify/ollama-client';
 import { getExistingClassifyScheduler } from './classify/scheduler';
 import { getFileManager } from './file-manager';
 import { syncOllamaDnrRule } from './ollama-dnr';
@@ -95,7 +95,10 @@ export class ConfigManager {
 
     // Broadcast config change
     this.onConfigChangeCallback?.(this.config);
-    getFileManager().broadcastEvent('config:updated', this.config as unknown as Record<string, unknown>);
+    getFileManager().broadcastEvent(
+      'config:updated',
+      this.config as unknown as Record<string, unknown>
+    );
   }
 
   /**

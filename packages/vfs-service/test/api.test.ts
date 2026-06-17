@@ -5,10 +5,10 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { VFSAPI } from '../src/api.js';
-import { SQLiteDatabase, ensureWorkspace } from '../src/sqlite.js';
-import { BlobStorage, calculateHash } from '../src/blob.js';
-import { ThumbnailStorage } from '../src/thumbnail.js';
+import { VFSAPI } from '../src/api';
+import { SQLiteDatabase, ensureWorkspace } from '../src/sqlite';
+import { BlobStorage, calculateHash } from '../src/blob';
+import { ThumbnailStorage } from '../src/thumbnail';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -21,7 +21,10 @@ describe('VFSAPI', () => {
   let testWorkspace: string;
 
   beforeEach(() => {
-    testWorkspace = path.join(os.tmpdir(), `vfs-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    testWorkspace = path.join(
+      os.tmpdir(),
+      `vfs-test-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    );
     ensureWorkspace(testWorkspace);
     db = new SQLiteDatabase(testWorkspace);
     blobStorage = new BlobStorage(testWorkspace);
@@ -234,7 +237,7 @@ describe('VFSAPI', () => {
 
       expect(result.items.length).toBe(2);
       expect(result.total).toBe(2);
-      expect(result.items.every(f => f.category === 'cats')).toBe(true);
+      expect(result.items.every((f) => f.category === 'cats')).toBe(true);
     });
 
     it('should sort by captured_at descending', () => {
@@ -248,17 +251,14 @@ describe('VFSAPI', () => {
     });
 
     it('should exclude deleted files by default', () => {
-      const hashes = [
-        calculateHash(Buffer.from('file1')),
-        calculateHash(Buffer.from('file2')),
-      ];
+      const hashes = [calculateHash(Buffer.from('file1')), calculateHash(Buffer.from('file2'))];
 
       api.deleteFile({ hash: hashes[0] });
 
       const result = api.listFiles({});
       // Total should be 4 (file2-5 are not deleted, file1 is deleted)
       expect(result.total).toBe(4);
-      expect(result.items.every(f => f.is_deleted === 0)).toBe(true);
+      expect(result.items.every((f) => f.is_deleted === 0)).toBe(true);
     });
   });
 
@@ -371,6 +371,113 @@ describe('VFSAPI', () => {
     it('should return workspace path', () => {
       const config = api.getWorkspaceConfig();
       expect(config.path).toBe(testWorkspace);
+    });
+  });
+
+  describe('syncBlobsToIndex API', () => {
+    function writeBlob(buffer: Buffer, ext: string, hash = calculateHash(buffer)): string {
+      const filePath = blobStorage.getBlobPath(hash, ext);
+      fs.writeFileSync(filePath, buffer);
+      return hash;
+    }
+
+    it('should index a missing supported blob from blobs directory', () => {
+      const buffer = Buffer.from('orphan image content');
+      const hash = writeBlob(buffer, 'jpg');
+      const mtime = new Date('2024-02-03T04:05:06.000Z');
+      fs.utimesSync(blobStorage.getBlobPath(hash, 'jpg'), mtime, mtime);
+
+      const result = api.syncBlobsToIndex();
+      const metadata = db.getFile(hash);
+
+      expect(result.scanned).toBe(1);
+      expect(result.indexed).toBe(1);
+      expect(result.skippedExisting).toBe(0);
+      expect(result.errors).toEqual([]);
+      expect(metadata).toBeDefined();
+      expect(metadata?.blob_ext).toBe('jpg');
+      expect(metadata?.mime_type).toBe('image/jpeg');
+      expect(metadata?.size).toBe(buffer.length);
+      expect(metadata?.source_url).toBeNull();
+      expect(metadata?.captured_at).toBe(mtime.toISOString());
+      expect(metadata?.category).toBe('uncategorized');
+      expect(metadata?.ai_filename).toBeNull();
+      expect(metadata?.user_notes).toBeNull();
+      expect(metadata?.is_deleted).toBe(0);
+    });
+
+    it('should skip existing indexed hashes without mutating metadata', () => {
+      const buffer = Buffer.from('already indexed content');
+      const saveResult = api.saveFile({
+        buffer,
+        mimeType: 'image/jpeg',
+        sourceUrl: 'https://example.com/original.jpg',
+        capturedAt: '2024-01-01T00:00:00.000Z',
+      });
+      api.updateMetadata({
+        hash: saveResult.hash,
+        updates: {
+          category: 'cats',
+          ai_filename: 'cat.jpg',
+          tags: ['cat'],
+          confidence: 0.9,
+          is_starred: true,
+          user_notes: 'keep me',
+        },
+      });
+      const before = db.getFile(saveResult.hash);
+
+      const result = api.syncBlobsToIndex();
+      const after = db.getFile(saveResult.hash);
+
+      expect(result.indexed).toBe(0);
+      expect(result.skippedExisting).toBe(1);
+      expect(after).toEqual(before);
+    });
+
+    it('should preserve soft-deleted indexed hashes', () => {
+      const buffer = Buffer.from('soft deleted content');
+      const saveResult = api.saveFile({ buffer, mimeType: 'image/png' });
+      api.deleteFile({ hash: saveResult.hash });
+      const before = db.getFile(saveResult.hash);
+
+      const result = api.syncBlobsToIndex();
+      const after = db.getFile(saveResult.hash);
+
+      expect(result.indexed).toBe(0);
+      expect(result.skippedExisting).toBe(1);
+      expect(after).toEqual(before);
+      expect(after?.is_deleted).toBe(1);
+    });
+
+    it('should skip unsupported extensions and filename hash mismatches', () => {
+      const unsupportedBuffer = Buffer.from('unsupported content');
+      writeBlob(unsupportedBuffer, 'txt');
+
+      const mismatchedBuffer = Buffer.from('mismatched content');
+      const wrongHash = '0123456789abcdef';
+      writeBlob(mismatchedBuffer, 'jpg', wrongHash);
+
+      const result = api.syncBlobsToIndex();
+
+      expect(result.scanned).toBe(2);
+      expect(result.indexed).toBe(0);
+      expect(result.skippedUnsupported).toBe(1);
+      expect(result.skippedInvalidHash).toBe(1);
+      expect(db.getFile(calculateHash(unsupportedBuffer))).toBeNull();
+      expect(db.getFile(wrongHash)).toBeNull();
+    });
+
+    it('should continue after a per-file sync error', () => {
+      const validBuffer = Buffer.from('valid orphan content');
+      const validHash = writeBlob(validBuffer, 'png');
+      fs.mkdirSync(blobStorage.getBlobPath('0123456789abcdef', 'png'));
+
+      const result = api.syncBlobsToIndex();
+
+      expect(result.indexed).toBe(1);
+      expect(result.errors.length).toBe(1);
+      expect(db.getFile(validHash)).toBeDefined();
     });
   });
 

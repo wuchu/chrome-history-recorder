@@ -1,0 +1,23 @@
+html,
+body,
+#root {
+  min-width: 0;
+  min-height: 100%;
+  overflow-x: hidden;
+}
+
+/* Legacy styles - kept for backward compatibility */
+.sidepanel-toolbar {
+  display: none;
+}
+
+.sidepanel-tab,
+.sidepanel-capture-count {
+  font-size: 11px;
+}
+
+.sidepanel-error {
+  color: var(--error-color);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}

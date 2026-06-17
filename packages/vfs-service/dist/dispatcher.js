@@ -1,12 +1,17 @@
+"use strict";
 /**
  * VFS Service - Message Dispatcher Module
  *
  * Routes WebSocket requests to appropriate API handlers.
  */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.createSuccessResponse = createSuccessResponse;
+exports.createErrorResponse = createErrorResponse;
+exports.createDispatcher = createDispatcher;
 /**
  * Create success response
  */
-export function createSuccessResponse(data, id) {
+function createSuccessResponse(data, id) {
     return {
         id,
         success: true,
@@ -16,7 +21,7 @@ export function createSuccessResponse(data, id) {
 /**
  * Create error response
  */
-export function createErrorResponse(error, id) {
+function createErrorResponse(error, id) {
     return {
         id,
         success: false,
@@ -26,7 +31,7 @@ export function createErrorResponse(error, id) {
 /**
  * Create message dispatcher
  */
-export function createDispatcher(api) {
+function createDispatcher(api) {
     return async (request) => {
         const { id, method, params = {} } = request;
         try {
@@ -67,6 +72,8 @@ async function dispatchMethod(api, method, params) {
         // Config operations
         case 'getWorkspaceConfig':
             return api.getWorkspaceConfig();
+        case 'syncBlobsToIndex':
+            return api.syncBlobsToIndex();
         case 'setWorkspaceConfig':
             return api.setWorkspaceConfig();
         // Classification queue operations
@@ -82,6 +89,10 @@ async function dispatchMethod(api, method, params) {
             return api.retryFailedTasks();
         case 'clearQueue':
             return api.clearQueue();
+        case 'getTagCounts':
+            return api.getTagCounts();
+        case 'clearIndex':
+            return api.clearIndex();
         default:
             throw new Error(`Unknown method: ${method}`);
     }

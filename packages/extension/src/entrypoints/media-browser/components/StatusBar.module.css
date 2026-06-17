@@ -1,0 +1,190 @@
+.container {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 8px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.leftSection {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.statusDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+  flex: 0 0 10px;
+}
+
+.online {
+  background: var(--success-color);
+}
+
+.offline {
+  background: var(--error-color);
+}
+
+.serviceStatus {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+}
+
+.vfsStatus {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.vfsConnected {
+  background: var(--success-color);
+}
+
+.vfsDisconnected {
+  background: var(--error-color);
+}
+
+.vfsText {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.ollamaStatus {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ollamaAvailable {
+  background: var(--success-color);
+}
+
+.ollamaUnavailable {
+  background: var(--warning-color, #ff9800);
+}
+
+.ollamaText {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.separator {
+  color: var(--border-color);
+  font-size: 12px;
+  margin: 0 2px;
+}
+
+.captureStats {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.captureSuccessIcon,
+.captureErrorIcon {
+  font-size: 11px;
+  line-height: 1;
+}
+
+.captureCountText {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.classifyStatus {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.classifyIcon {
+  font-size: 10px;
+  color: var(--accent-color);
+}
+
+.classifyText {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.completedCount {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.completedIcon {
+  font-size: 10px;
+  color: var(--success-color);
+}
+
+.completedText {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.captureButton {
+  padding: 2px 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+  cursor: pointer;
+  background: var(--button-bg);
+  color: var(--text-primary);
+  font-size: 11px;
+  transition: all 0.15s ease;
+}
+
+.captureButton:hover:not(:disabled) {
+  background: var(--button-hover);
+}
+
+.active {
+  background: var(--accent-color);
+  color: white;
+  border-color: var(--accent-color);
+}
+
+.active:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.captureButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.rightSection {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.iconButton {
+  padding: 4px 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  cursor: pointer;
+  background: var(--button-bg);
+  color: var(--text-primary);
+  font-size: 16px;
+  transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.iconButton:hover:not(:disabled) {
+  background: var(--button-hover);
+}
+
+.iconButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

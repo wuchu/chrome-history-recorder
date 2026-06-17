@@ -4,7 +4,7 @@
  * Coordinates file operations through VFS WebSocket Client.
  */
 
-import { getVFSWebSocketClient, VFSFileMetadata } from './vfs-ws-client.js';
+import { getVFSWebSocketClient, VFSFileMetadata } from './vfs-ws-client';
 
 /**
  * HTTP Server base URL for thumbnail and file access
@@ -137,6 +137,7 @@ export class FileManager {
    */
   async handleListFiles(query?: {
     category?: string;
+    tag?: string;
     limit?: number;
     offset?: number;
   }): Promise<{
@@ -180,14 +181,16 @@ export class FileManager {
    */
   broadcastEvent(type: FileEventType | string, data: unknown): void {
     console.log(`[FileManager] Broadcasting event: ${type}`, data);
-    chrome.runtime.sendMessage({
-      type,
-      data,
-      timestamp: new Date().toISOString(),
-    }).catch((error) => {
-      console.log('[FileManager] Broadcast failed (no listeners):', error);
-      // Ignore errors (no listeners)
-    });
+    chrome.runtime
+      .sendMessage({
+        type,
+        data,
+        timestamp: new Date().toISOString(),
+      })
+      .catch((error) => {
+        console.log('[FileManager] Broadcast failed (no listeners):', error);
+        // Ignore errors (no listeners)
+      });
   }
 
   /**

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   clearQueue,
   checkOllamaHealth,
+  clearIndex,
   ExtensionConfig,
   getConfig,
   getQueueStatus,
@@ -14,6 +15,8 @@ import {
   retryFailedTasks,
   ServiceStatus,
   startClassification,
+  syncBlobsToIndex,
+  SyncBlobsToIndexResult,
   updateConfig,
 } from '../../../shared/extension-runtime';
 
@@ -95,11 +98,7 @@ export function useOptionsData() {
     setLoading(true);
     setError(null);
     try {
-      await Promise.all([
-        refreshConfig(),
-        refreshQueue(),
-        refreshServiceStatus(),
-      ]);
+      await Promise.all([refreshConfig(), refreshQueue(), refreshServiceStatus()]);
       try {
         await refreshOllamaModels();
       } catch (modelsError) {
@@ -113,24 +112,27 @@ export function useOptionsData() {
     }
   }, [refreshConfig, refreshOllamaModels, refreshQueue, refreshServiceStatus]);
 
-  const saveConfig = useCallback(async (updates: Partial<ExtensionConfig>, key = 'config') => {
-    const previousConfig = config;
-    const nextConfig = { ...config, ...updates };
-    setConfig(nextConfig);
-    setSaving(key, true);
-    setError(null);
-    try {
-      await updateConfig(updates);
-      await refreshConfig();
-    } catch (saveError) {
-      setConfig(previousConfig);
-      const message = saveError instanceof Error ? saveError.message : '保存配置失败';
-      setError(message);
-      throw saveError;
-    } finally {
-      setSaving(key, false);
-    }
-  }, [config, refreshConfig, setSaving]);
+  const saveConfig = useCallback(
+    async (updates: Partial<ExtensionConfig>, key = 'config') => {
+      const previousConfig = config;
+      const nextConfig = { ...config, ...updates };
+      setConfig(nextConfig);
+      setSaving(key, true);
+      setError(null);
+      try {
+        await updateConfig(updates);
+        await refreshConfig();
+      } catch (saveError) {
+        setConfig(previousConfig);
+        const message = saveError instanceof Error ? saveError.message : '保存配置失败';
+        setError(message);
+        throw saveError;
+      } finally {
+        setSaving(key, false);
+      }
+    },
+    [config, refreshConfig, setSaving]
+  );
 
   const refreshOllamaHealth = useCallback(async () => {
     setSaving('ollamaHealth', true);
@@ -196,24 +198,47 @@ export function useOptionsData() {
     }
   }, [refreshQueue, setSaving]);
 
+  const syncMediaIndex = useCallback(async (): Promise<SyncBlobsToIndexResult> => {
+    setSaving('syncBlobsToIndex', true);
+    try {
+      return await syncBlobsToIndex();
+    } finally {
+      setSaving('syncBlobsToIndex', false);
+    }
+  }, [setSaving]);
+
+  const clearMediaIndex = useCallback(async (): Promise<{ success: boolean }> => {
+    setSaving('clearIndex', true);
+    try {
+      return await clearIndex();
+    } finally {
+      setSaving('clearIndex', false);
+    }
+  }, [setSaving]);
+
   useEffect(() => {
     initialize();
   }, [initialize]);
 
-  const saving = useMemo(() => ({
-    config: savingKeys.has('config'),
-    ollamaEndpoint: savingKeys.has('ollamaEndpoint'),
-    visionModel: savingKeys.has('visionModel'),
-    filenameStyle: savingKeys.has('filenameStyle'),
-    classificationState: savingKeys.has('classificationState'),
-    classificationConcurrency: savingKeys.has('classificationConcurrency'),
-    serviceStatus: savingKeys.has('serviceStatus'),
-    ollamaHealth: savingKeys.has('ollamaHealth'),
-    vfsReconnect: savingKeys.has('vfsReconnect'),
-    retryFailed: savingKeys.has('retryFailed'),
-    clearQueue: savingKeys.has('clearQueue'),
-    tags: savingKeys.has('tags'),
-  }), [savingKeys]);
+  const saving = useMemo(
+    () => ({
+      config: savingKeys.has('config'),
+      ollamaEndpoint: savingKeys.has('ollamaEndpoint'),
+      visionModel: savingKeys.has('visionModel'),
+      filenameStyle: savingKeys.has('filenameStyle'),
+      classificationState: savingKeys.has('classificationState'),
+      classificationConcurrency: savingKeys.has('classificationConcurrency'),
+      serviceStatus: savingKeys.has('serviceStatus'),
+      ollamaHealth: savingKeys.has('ollamaHealth'),
+      vfsReconnect: savingKeys.has('vfsReconnect'),
+      retryFailed: savingKeys.has('retryFailed'),
+      clearQueue: savingKeys.has('clearQueue'),
+      syncBlobsToIndex: savingKeys.has('syncBlobsToIndex'),
+      clearIndex: savingKeys.has('clearIndex'),
+      tags: savingKeys.has('tags'),
+    }),
+    [savingKeys]
+  );
 
   return {
     config,
@@ -233,7 +258,10 @@ export function useOptionsData() {
     saveConfig,
     startClassification: start,
     pauseClassification: pause,
+    retryFailedTasks: retryFailed,
     retryFailed,
     clearQueue: clearClassificationQueue,
+    syncMediaIndex,
+    clearMediaIndex,
   };
 }
