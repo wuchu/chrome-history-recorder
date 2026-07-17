@@ -85,7 +85,8 @@
   gap: 8px;
 }
 
-.closeButton {
+.closeButton,
+.deleteButton {
   width: 34px;
   height: 34px;
   display: inline-flex;
@@ -102,16 +103,28 @@
   transition:
     background 0.15s ease,
     border-color 0.15s ease,
-    opacity 0.15s ease;
+    opacity 0.15s ease,
+    transform 0.15s ease;
 }
 
-.closeButton:hover {
+.closeButton:hover,
+.deleteButton:hover {
   background: rgba(42, 49, 64, 0.9);
   border-color: rgba(255, 255, 255, 0.34);
+  transform: scale(1.05);
 }
 
 .closeButton {
   font-size: 22px;
+}
+
+.deleteButton {
+  font-size: 16px;
+}
+
+.deleteButton:hover {
+  background: rgba(220, 53, 69, 0.85);
+  border-color: rgba(255, 255, 255, 0.4);
 }
 
 @media (max-width: 520px) {

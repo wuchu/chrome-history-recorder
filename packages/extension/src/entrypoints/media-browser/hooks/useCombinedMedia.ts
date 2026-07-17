@@ -116,6 +116,20 @@ function extractClassifyStatus(events: BackgroundEvent[]): Record<string, Classi
 }
 
 /**
+ * Extract deleted file hashes from Background events
+ */
+function extractDeletedHashes(events: BackgroundEvent[]): Set<string> {
+  const deleted = new Set<string>();
+  for (const event of events) {
+    if (event.type === 'file:deleted') {
+      const data = event.data as { hash: string };
+      deleted.add(data.hash);
+    }
+  }
+  return deleted;
+}
+
+/**
  * Hook for combining historical and Background data
  */
 export function useCombinedMedia({
@@ -126,10 +140,12 @@ export function useCombinedMedia({
     // Extract Background data
     const bgCaptured = extractCapturedFiles(backgroundEvents);
     const bgClassifyStatus = extractClassifyStatus(backgroundEvents);
+    const deletedHashes = extractDeletedHashes(backgroundEvents);
 
     // 1. Background new files (insert at top, dedupe by hash)
     const newItems = bgCaptured
       .filter((file) => !historicalItems.some((h) => h.hash === file.hash))
+      .filter((file) => !deletedHashes.has(file.hash))
       .map((file) => ({
         ...file,
         classifyStatus: bgClassifyStatus[file.hash]?.status || 'pending',
@@ -142,16 +158,18 @@ export function useCombinedMedia({
       }));
 
     // 2. Historical data (with classify status updates)
-    const historyWithUpdates = historicalItems.map((item) => ({
-      ...item,
-      classifyStatus: bgClassifyStatus[item.hash]?.status || item.classifyStatus,
-      category: bgClassifyStatus[item.hash]?.category || item.category,
-      confidence: bgClassifyStatus[item.hash]?.confidence || item.confidence,
-      tags: bgClassifyStatus[item.hash]?.tags || item.tags,
-      ai_filename: bgClassifyStatus[item.hash]?.ai_filename || item.ai_filename,
-      classified_at: bgClassifyStatus[item.hash]?.classified_at || item.classified_at,
-      model_used: bgClassifyStatus[item.hash]?.model_used || item.model_used,
-    }));
+    const historyWithUpdates = historicalItems
+      .filter((item) => !deletedHashes.has(item.hash))
+      .map((item) => ({
+        ...item,
+        classifyStatus: bgClassifyStatus[item.hash]?.status || item.classifyStatus,
+        category: bgClassifyStatus[item.hash]?.category || item.category,
+        confidence: bgClassifyStatus[item.hash]?.confidence || item.confidence,
+        tags: bgClassifyStatus[item.hash]?.tags || item.tags,
+        ai_filename: bgClassifyStatus[item.hash]?.ai_filename || item.ai_filename,
+        classified_at: bgClassifyStatus[item.hash]?.classified_at || item.classified_at,
+        model_used: bgClassifyStatus[item.hash]?.model_used || item.model_used,
+      }));
 
     // 3. Combine: new files first, then historical
     const combined = [...newItems, ...historyWithUpdates].filter((item) => {

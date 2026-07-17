@@ -27,3 +27,6 @@ npm-debug.log*
 # Temp files
 *.tmp
 *.temp
+
+# Chrome Dev Profile
+.chrome-dev-profile/

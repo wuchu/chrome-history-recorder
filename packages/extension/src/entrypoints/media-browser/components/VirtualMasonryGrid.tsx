@@ -15,6 +15,7 @@ interface VirtualMasonryGridProps {
   items: CombinedMediaItem[];
   onLoadMore?: () => void;
   onItemClick?: (item: CombinedMediaItem) => void;
+  onItemDelete?: (hash: string) => void;
   hasMore?: boolean;
   loading?: boolean;
 }
@@ -33,9 +34,11 @@ interface VirtuosoItemContentProps {
 const MasonryItemContent = memo(function MasonryItemContent({
   data,
   onItemClick,
+  onItemDelete,
 }: {
   data?: CombinedMediaItem;
   onItemClick?: (item: CombinedMediaItem) => void;
+  onItemDelete?: (hash: string) => void;
 }) {
   if (!data?.hash) {
     console.warn('[VirtualMasonryGrid] Skipping invalid masonry item:', data);
@@ -44,7 +47,7 @@ const MasonryItemContent = memo(function MasonryItemContent({
 
   return (
     <div className={styles.itemWrapper}>
-      <MasonryItem item={data} onClick={() => onItemClick?.(data)} />
+      <MasonryItem item={data} onClick={() => onItemClick?.(data)} onDelete={onItemDelete} />
     </div>
   );
 });
@@ -56,6 +59,7 @@ const VirtualMasonryGrid = memo(function VirtualMasonryGrid({
   items,
   onLoadMore,
   onItemClick,
+  onItemDelete,
   hasMore = false,
   loading = false,
 }: VirtualMasonryGridProps) {
@@ -113,7 +117,9 @@ const VirtualMasonryGrid = memo(function VirtualMasonryGrid({
             props.data ??
             props.item ??
             (typeof props.index === 'number' ? items[props.index] : undefined);
-          return <MasonryItemContent data={item} onItemClick={onItemClick} />;
+          return (
+            <MasonryItemContent data={item} onItemClick={onItemClick} onItemDelete={onItemDelete} />
+          );
         }}
         initialItemCount={50}
       />

@@ -1,4 +1,9 @@
 {
+  "delete": {
+    "confirm": "Delete this item?",
+    "button": "Delete",
+    "title": "Delete"
+  },
   "status": {
     "serviceOnline": "Service Online",
     "serviceOffline": "Service Offline",

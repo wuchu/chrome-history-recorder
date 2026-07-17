@@ -1,8 +1,14 @@
 import { defineConfig } from 'wxt';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 // Fixed public key for consistent Extension ID in development
 // This ensures the Extension ID stays the same across reloads
 const DEV_PUBLIC_KEY = `MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAulHkiBAKBwVAleVP/QKNbEtcuwFqhUtcY5fxhIdhPjk9f4Ty9vXAiobSjNsJeJzRtUEkgZYxHUfBRfjSXTMzD+RC6OJ5EiaB2FNlDCHvKrWDjFBORVVhFyMyv1lZ4Q5riIdPCCwJ8JVVpkYz/t/adfEZv2WfEF41x/7DRIjAtBAavcLK3Vg2nfIi0CuzgxyQXHJVWbFJsq1WlIfQGcDN9TzEyPWgbtcmL2QO9kEe4dEunqtIOp81REeoCyZVOzjShLz8zka2QsDnwxHvJz8rdKcC4P+XAL1Jr9zx6EgVwHTFwAbSZU8qGHdBuvt2PseS/V2+bhTC/D04lhP0sxhyEQIDAQAB`;
+
+// Local Chrome profile for development - persists login state
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const LOCAL_CHROME_PROFILE = path.resolve(__dirname, '../..', '.chrome-dev-profile');
 
 // See https://wxt.dev/api/config.html
 export default defineConfig({
@@ -44,5 +50,7 @@ export default defineConfig({
       }
     : {
         chromiumArgs: ['https://www.baidu.com'],
+        chromiumProfile: process.env.CHROME_PROFILE_PATH || LOCAL_CHROME_PROFILE,
+        keepProfileChanges: true,
       },
 });

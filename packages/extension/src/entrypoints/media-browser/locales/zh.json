@@ -1,4 +1,9 @@
 {
+  "delete": {
+    "confirm": "确定删除这个项目吗？",
+    "button": "删除",
+    "title": "删除"
+  },
   "status": {
     "serviceOnline": "服务已连接",
     "serviceOffline": "服务离线",

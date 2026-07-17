@@ -31,12 +31,13 @@ interface MediaDetailData {
 interface MediaDetailProps {
   item: MediaDetailData | null;
   onClose: () => void;
+  onDelete?: (hash: string) => void;
 }
 
 /**
  * MediaDetail modal component
  */
-const MediaDetail = memo(function MediaDetail({ item, onClose }: MediaDetailProps) {
+const MediaDetail = memo(function MediaDetail({ item, onClose, onDelete }: MediaDetailProps) {
   const { t } = useTranslation();
   const modalRef = useRef<HTMLDivElement>(null);
   const [imageLoaded, setImageLoaded] = useState(false);
@@ -75,6 +76,13 @@ const MediaDetail = memo(function MediaDetail({ item, onClose }: MediaDetailProp
   }, [item?.hash]);
 
   if (!item) return null;
+
+  const handleDelete = () => {
+    if (window.confirm(t('delete.confirm'))) {
+      onDelete?.(item.hash);
+      onClose();
+    }
+  };
 
   const imageUrl = buildVfsFileUrl(item.hash);
   const filename = item.ai_filename || item.hash;
@@ -126,6 +134,16 @@ const MediaDetail = memo(function MediaDetail({ item, onClose }: MediaDetailProp
         </div>
 
         <div className={styles.toolbar}>
+          {onDelete && (
+            <button
+              type="button"
+              className={styles.deleteButton}
+              title={t('delete.title')}
+              onClick={handleDelete}
+            >
+              🗑️
+            </button>
+          )}
           <button
             type="button"
             className={styles.closeButton}

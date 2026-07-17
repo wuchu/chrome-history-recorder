@@ -52,6 +52,7 @@ function App() {
     vfsConnected,
     ollamaAvailable,
     clearEvents: clearBackgroundEvents,
+    sendMessage,
   } = useBackgroundMessaging();
 
   const capture = useSidePanelCapture({ backgroundEvents });
@@ -96,6 +97,22 @@ function App() {
     autoLoad: true,
     tag: activeTab !== 'all' ? activeTab : undefined,
   });
+
+  const handleDeleteItem = useCallback(
+    async (hash: string) => {
+      try {
+        await sendMessage({ type: 'deleteFile', hash });
+        // Close detail if we're deleting the currently selected item
+        if (selectedItem?.hash === hash) {
+          setSelectedItem(null);
+        }
+        // Rely on file:deleted event to update the list (no full refresh)
+      } catch (err) {
+        console.error('[App] Failed to delete item:', err);
+      }
+    },
+    [sendMessage, selectedItem]
+  );
 
   const combinedMedia = useCombinedMedia({
     historicalItems: historicalImages.items,
@@ -222,11 +239,18 @@ function App() {
           items={filteredMedia}
           onLoadMore={historicalImages.loadMore}
           onItemClick={handleItemClick}
+          onItemDelete={handleDeleteItem}
           hasMore={historicalImages.hasMore}
           loading={historicalImages.loading}
         />
 
-        {selectedItem && <MediaDetail item={selectedItem} onClose={handleCloseDetail} />}
+        {selectedItem && (
+          <MediaDetail
+            item={selectedItem}
+            onClose={handleCloseDetail}
+            onDelete={handleDeleteItem}
+          />
+        )}
       </div>
     </div>
   );

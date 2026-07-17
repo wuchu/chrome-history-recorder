@@ -101,7 +101,15 @@ The Side Panel SHALL provide a focused VFS-backed media detail view from the med
 #### Scenario: Detail viewer actions
 - **WHEN** the Side Panel media detail view is shown
 - **THEN** it SHALL provide a close action
+- **AND** it SHALL provide a delete action
 - **AND** it SHALL NOT show download, rotate, or requeue-style toolbar icons in the focused original-image viewer
+
+#### Scenario: Delete media from detail view
+- **WHEN** the user clicks the delete button in the media detail view
+- **THEN** the Side Panel SHALL show a confirmation dialog
+- **AND** upon confirmation, the Side Panel SHALL send a `deleteFile` message to Background
+- **AND** upon successful deletion, the media detail view SHALL close
+- **AND** the deleted item SHALL be removed from the media grid
 
 ### Requirement: Side Panel settings handoff
 The Side Panel SHALL link to the dedicated Options page for program configuration.
@@ -132,3 +140,44 @@ The Side Panel SHALL fix the top bar and all components above it to the viewport
 - **WHEN** the top fixed area's height changes (due to window resize or content visibility changes)
 - **THEN** the main content area's top padding SHALL adjust automatically to match the new height
 - **AND** content SHALL NOT be obscured or have unnecessary extra padding
+
+### Requirement: Media grid item delete button
+The Side Panel SHALL provide a delete button on each media grid item for quick deletion.
+
+#### Scenario: Delete button visibility on hover
+- **WHEN** the user hovers over a media grid item
+- **THEN** a delete button SHALL appear in the top-right corner of the item
+
+#### Scenario: Delete button click prevents opening detail
+- **WHEN** the user clicks the delete button on a media grid item
+- **THEN** the media detail view SHALL NOT open
+- **AND** the Side Panel SHALL show a confirmation dialog
+
+#### Scenario: Delete media from grid
+- **WHEN** the user confirms deletion from the grid item
+- **THEN** the Side Panel SHALL send a `deleteFile` message to Background
+- **AND** upon successful deletion, the deleted item SHALL be removed from the media grid
+- **AND** the scroll position SHALL remain stable
+
+### Requirement: Handle file deletion events
+The Side Panel SHALL listen for `file:deleted` events from Background and update the UI accordingly.
+
+#### Scenario: Remove deleted item from grid
+- **WHEN** the Side Panel receives a `file:deleted` event from Background
+- **THEN** the deleted item SHALL be removed from the media grid
+- **AND** the media detail view SHALL close if it was showing the deleted item
+- **AND** the scroll position SHALL NOT jump
+
+### Requirement: Stable scroll position during deletion
+The Side Panel SHALL maintain scroll position stability when media items are deleted.
+
+#### Scenario: Delete without full refresh
+- **WHEN** the user deletes a media item from the grid or detail view
+- **THEN** the Side Panel SHALL NOT trigger a full refresh of historical images
+- **AND** the Side Panel SHALL rely on `file:deleted` events to update the UI
+- **AND** the scroll position SHALL remain unchanged
+
+#### Scenario: Scroll stability with masonry layout
+- **WHEN** an item is removed from the masonry grid
+- **THEN** the grid SHALL reflow smoothly
+- **AND** the user's current scroll position SHALL be preserved
