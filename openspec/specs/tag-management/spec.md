@@ -2,55 +2,76 @@
 
 ## Purpose
 
-Provide a user-defined tag management interface in the Options page and persist tag definitions in Extension configuration.
+Provide an AI-owned tag vocabulary stored in VFS SQLite, with a curation interface in the Options page for renaming, merging, deleting, and pinning tags.
 
 ## Requirements
 
+### Requirement: AI-owned tag vocabulary storage
+The system SHALL store content tags in the VFS SQLite tag vocabulary rather than in extension configuration.
+
+#### Scenario: Persist vocabulary entries
+- **WHEN** a tag is created or used
+- **THEN** the system SHALL persist it in the VFS `tags` table with name, usage count, creator, and pin state
+
+#### Scenario: Persist aliases
+- **WHEN** Ollama maps a candidate tag to a canonical tag
+- **THEN** the system SHALL persist the mapping in the `tag_aliases` table
+
+#### Scenario: Keep file tag cache
+- **WHEN** a file's tags are updated
+- **THEN** the system SHALL update the canonical tag names in the file's tag list
+- **AND** it SHALL preserve `system:*` tags
+
+### Requirement: Pin tags for tab visibility
+The system SHALL allow users to pin tags so they remain visible in the Side Panel tab bar as the vocabulary grows.
+
+#### Scenario: Pin a tag
+- **WHEN** the user pins a tag
+- **THEN** the system SHALL persist the pinned state and show that tag in the tab bar
+
+#### Scenario: Unpin a tag
+- **WHEN** the user unpins a tag
+- **THEN** the tag SHALL follow the default top-usage visibility rule
+
+### Requirement: Tag curation controls
+The system SHALL provide controls to curate AI-generated tags.
+
+#### Scenario: Rename a tag
+- **WHEN** the user renames a tag
+- **THEN** the system SHALL update its canonical name while preserving file associations and aliases
+
+#### Scenario: Merge tags
+- **WHEN** the user merges one tag into another
+- **THEN** the system SHALL reassign files and aliases to the target tag
+- **AND** it SHALL remove the merged tag
+
+#### Scenario: Delete a tag
+- **WHEN** the user deletes a tag
+- **THEN** the system SHALL remove it from the vocabulary and from file tag lists
+
 ### Requirement: Tag management UI
-The system SHALL provide a tag management interface in the Options page.
+The system SHALL provide a tag curation interface in the Options page for AI-owned tags.
 
 #### Scenario: Display tag list
-- **WHEN** user opens the Options page
-- **THEN** the system SHALL display a list of user-defined tags
-- **AND** each tag SHALL show its label (including emoji)
-- **AND** each tag SHALL have edit, delete, and reorder controls
+- **WHEN** the user opens the Options page
+- **THEN** the system SHALL display tags from the VFS vocabulary with their usage counts and pinned state
+- **AND** each tag SHALL have rename, merge, delete, and pin controls
 
-#### Scenario: Add new tag
-- **WHEN** user clicks "Add Tag" button
-- **THEN** the system SHALL open a dialog for tag creation
-- **AND** user SHALL be able to input tag name and display label
-- **AND** user SHALL be able to save the new tag
-
-#### Scenario: Edit tag
-- **WHEN** user clicks edit button on a tag
-- **THEN** the system SHALL open a dialog for tag editing
-- **AND** user SHALL be able to modify tag label
-- **AND** user SHALL be able to save changes
-
-#### Scenario: Delete tag
-- **WHEN** user clicks delete button on a tag
-- **THEN** the system SHALL show a confirmation dialog
-- **AND** user SHALL be able to confirm deletion
-- **AND** upon confirmation, the system SHALL remove the tag from the tag list
-- **AND** the system SHALL NOT remove the tag from existing files (tags persist as free-form tags)
-
-#### Scenario: Reorder tags
-- **WHEN** user uses up/down buttons or drags tags
-- **THEN** the system SHALL reorder the tags
-- **AND** the new order SHALL be saved persistently
+#### Scenario: Legacy seed tags
+- **WHEN** the system loads a legacy `userDefinedTags` configuration
+- **THEN** it SHALL NOT use those entries as the content tag vocabulary source
+- **AND** it SHALL optionally migrate them into pinned preferences or ignore them
 
 ### Requirement: Tag persistence
-The system SHALL persist user-defined tags in the extension configuration.
+The system SHALL persist tag vocabulary and file associations through VFS Service storage.
 
-#### Scenario: Save tags to config
-- **WHEN** user adds/edits/deletes/reorders tags
-- **THEN** the system SHALL update the ExtensionConfig.userDefinedTags array
-- **AND** the changes SHALL be persisted to chrome.storage
+#### Scenario: Save tags
+- **WHEN** tags are created, updated, merged, deleted, or pinned
+- **THEN** the system SHALL persist the changes in VFS Service storage
 
-#### Scenario: Load tags from config
-- **WHEN** Options page or DevTools Panel initializes
-- **THEN** the system SHALL load tags from ExtensionConfig.userDefinedTags
-- **AND** the system SHALL display tags in the saved order
+#### Scenario: Load tags
+- **WHEN** the Options page or Side Panel initializes
+- **THEN** the system SHALL load tags from the VFS vocabulary
 
 ### Requirement: Tag definition structure
 The system SHALL define tags with structured metadata.
@@ -59,7 +80,9 @@ The system SHALL define tags with structured metadata.
 - **WHEN** a tag is defined
 - **THEN** the tag SHALL have:
   - id: unique identifier
-  - name: internal name (for filtering)
+  - name: canonical name used for file association and filtering
   - label: display name (may contain emoji)
-  - isSystem: boolean indicating system tag
-  - sortOrder: number for ordering
+  - usage count
+  - creator (`ai` or `user`)
+  - pinned state
+  - creation and update timestamps

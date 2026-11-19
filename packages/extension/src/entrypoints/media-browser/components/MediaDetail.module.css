@@ -86,7 +86,8 @@
 }
 
 .closeButton,
-.deleteButton {
+.deleteButton,
+.refreshButton {
   width: 34px;
   height: 34px;
   display: inline-flex;
@@ -108,7 +109,8 @@
 }
 
 .closeButton:hover,
-.deleteButton:hover {
+.deleteButton:hover,
+.refreshButton:hover {
   background: rgba(42, 49, 64, 0.9);
   border-color: rgba(255, 255, 255, 0.34);
   transform: scale(1.05);
@@ -119,6 +121,10 @@
 }
 
 .deleteButton {
+  font-size: 16px;
+}
+
+.refreshButton {
   font-size: 16px;
 }
 

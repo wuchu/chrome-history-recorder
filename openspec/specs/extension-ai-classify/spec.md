@@ -2,62 +2,93 @@
 
 ## Purpose
 
-Extension 内置的 AI 分类逻辑，直接调用 Ollama API，通过 VFS 更新元数据
+Extension 内置的 AI 任务逻辑，直接调用 Ollama API，通过 VFS 更新元数据
 
 ## Requirements
 
+### Requirement: Paired automatic task enqueue
+The system SHALL enqueue independent `classify` and `rename` tasks when a new media file is captured, without coupling their lifecycle.
+
+#### Scenario: Enqueue both task types on capture
+- **WHEN** a non-duplicate media file is captured and saved to VFS
+- **THEN** Background SHALL enqueue a `classify` task and a `rename` task for its hash
+- **AND** each enqueue SHALL be idempotent per `(task_type, target_hash)`
+
+#### Scenario: Failure isolation
+- **WHEN** a `classify` task fails for a hash
+- **THEN** the `rename` task for the same hash SHALL remain independently scheduled
+- **AND** vice versa
+
+#### Scenario: Independent requeue
+- **WHEN** the user requeues one task type for a hash
+- **THEN** the other task type SHALL NOT be reset
+
+### Requirement: Classification does not write category
+The system SHALL NOT write the legacy `category` field when classification completes.
+
+#### Scenario: Complete classification
+- **WHEN** a classification task succeeds
+- **THEN** Background SHALL update tags, confidence, `classified_at`, and `model_used`
+- **AND** it SHALL NOT set `category`
 
 ### Requirement: Extension Background manages AI classification
-
-The Extension Background Service Worker SHALL coordinate AI classification tasks by calling Ollama API and updating VFS metadata.
+The Extension Background Service Worker SHALL coordinate typed AI tasks by calling the Ollama API and updating VFS metadata through type-specific handlers.
 
 #### Scenario: Enqueue file for classification
-- **WHEN** File is captured and saved to VFS
-- **THEN** Background checks if file MIME type is image or video, and if so, calls VFS.enqueueClassification with hash
+- **WHEN** a file is captured and saved to VFS
+- **THEN** Background SHALL enqueue `classify` and `rename` tasks for image and video files according to configuration
 
 #### Scenario: Process classification task
-- **WHEN** Classification scheduler finds pending task in queue
-- **THEN** Background calls VFS.getFile to get buffer, calls Ollama API with image buffer and prompt, parses classification result, and calls VFS.updateMetadata with category, aiFilename, tags, confidence
+- **WHEN** the engine claims a `classify` task
+- **THEN** Background SHALL obtain a representative image, call the Ollama vision API with the tag vocabulary prompt, parse generated tags, canonicalize near-synonyms, and update VFS tags
+
+#### Scenario: Process rename task
+- **WHEN** the engine claims a `rename` task
+- **THEN** Background SHALL obtain a representative image, call the Ollama vision API with the naming prompt, and update the VFS display filename
 
 #### Scenario: Handle classification failure
-- **WHEN** Ollama API returns error or timeout
-- **THEN** Background updates task status to 'failed', logs error message, and optionally retries after delay
+- **WHEN** the Ollama API returns an error or times out
+- **THEN** Background SHALL record the failure, increment attempts, and retry according to the task retry policy
 
-#### Scenario: Classification result overwrites metadata
-- **WHEN** AI classification completes for a file that already has metadata
-- **THEN** Background overwrites category, aiFilename, tags, confidence fields (user-designed fields like is_starred, user_notes are preserved)
+#### Scenario: Preserve user-owned metadata
+- **WHEN** an AI task completes for a file that already has user metadata
+- **THEN** Background SHALL overwrite only the task-type-owned AI fields
+- **AND** it SHALL preserve `is_starred`, `user_notes`, and deletion state
 
 ### Requirement: Extension Background provides classification queue management
+The Extension Background Service Worker SHALL manage typed task queue status and provide retry, refresh, pause, and clear operations through the unified task engine.
 
-The Extension Background Service Worker SHALL manage classification queue status and provide retry/clear operations.
-
-#### Scenario: Get classification queue status
-- **WHEN** DevTools Panel requests queue status
-- **THEN** Background calls VFS.getQueueStatus and returns { pending, processing, completed, failed }
+#### Scenario: Get queue status
+- **WHEN** the UI requests queue status
+- **THEN** Background SHALL return overall and per-task-type counts plus engine state
 
 #### Scenario: Retry failed tasks
-- **WHEN** User clicks "Retry Failed" in DevTools Panel
-- **THEN** Background queries VFS for failed tasks, resets their status to 'pending', and triggers scheduler to process
+- **WHEN** the user retries failed tasks
+- **THEN** Background SHALL reset failed tasks to `pending` and trigger the engine
+
+#### Scenario: Refresh tasks
+- **WHEN** the user refreshes a single file or triggers a full rescan
+- **THEN** Background SHALL requeue the targeted tasks as `pending`
 
 #### Scenario: Clear queue
-- **WHEN** User clicks "Clear Queue" in DevTools Panel
-- **THEN** Background calls VFS to delete all queue entries
+- **WHEN** the user clears the queue
+- **THEN** Background SHALL remove queue entries without deleting media or user metadata
 
 ### Requirement: Extension Background calls Ollama directly
-
-The Extension Background Service Worker SHALL call Ollama HTTP API directly for image/video classification.
+The Extension Background Service Worker SHALL call the Ollama HTTP API directly for image and video task processing.
 
 #### Scenario: Call Ollama chat API with image
-- **WHEN** Background processes classification task for image
-- **THEN** Background POSTs to {ollamaEndpoint}/api/chat with { model, messages: [{ role: 'user', content: prompt, images: [base64] }], stream: false }
+- **WHEN** Background processes a `classify` or `rename` task for an image
+- **THEN** Background SHALL POST to `{ollamaEndpoint}/api/chat` with the configured model, user message content, and base64 image, with `stream: false`
 
 #### Scenario: Call Ollama chat API with video frame
-- **WHEN** Background processes classification task for video
-- **THEN** Background extracts first frame (calls VFS.getThumbnail for video), then calls Ollama API with frame image
+- **WHEN** Background processes a task for a video
+- **THEN** Background SHALL use a representative frame obtained through VFS thumbnails before calling Ollama
 
 #### Scenario: Parse classification result
-- **WHEN** Ollama returns response with message.content
-- **THEN** Background parses content in format "CATEGORY | FILENAME" or falls back to space-separated or JSON format
+- **WHEN** Ollama returns a response for a classification task
+- **THEN** Background SHALL parse generated tags, including new-tag markers and canonical vocabulary names
+- **AND** it SHALL fall back to conservative parsing when the response is malformed
 
 ### Requirement: Extension Background checks Ollama health
 

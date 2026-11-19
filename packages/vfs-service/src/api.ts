@@ -5,7 +5,19 @@
  */
 
 import fs from 'fs';
-import { SQLiteDatabase, FileMetadata, MetadataUpdate, ListQuery } from './sqlite';
+import {
+  SQLiteDatabase,
+  FileMetadata,
+  MetadataUpdate,
+  ListQuery,
+  EnqueueTaskParams,
+  TaskType,
+  TaskStatus,
+  TaskItem,
+  QueueStatus,
+  TagRecord,
+  ApplyClassificationParams,
+} from './sqlite';
 import {
   BlobStorage,
   calculateHash,
@@ -329,7 +341,7 @@ export class VFSAPI {
   }
 
   /**
-   * Enqueue classification API
+   * Enqueue classification API (legacy, requeues).
    */
   enqueueClassification(params: { hash: string; priority?: number }): { success: boolean } {
     const { hash, priority = 5 } = params;
@@ -338,15 +350,55 @@ export class VFSAPI {
   }
 
   /**
+   * Enqueue a typed task. Idempotent unless `requeue` is requested.
+   */
+  enqueueTask(params: EnqueueTaskParams): { success: boolean } {
+    const success = this.db.enqueueTask(params);
+    return { success };
+  }
+
+  /**
+   * Atomically claim due tasks for the extension engine.
+   */
+  claimTasks(limit: number = 1): TaskItem[] {
+    return this.db.claimTasks(limit);
+  }
+
+  /**
+   * Requeue a single typed task.
+   */
+  requeueTask(params: { taskType: TaskType; hash: string }): { success: boolean } {
+    const success = this.db.requeueTask(params.taskType, params.hash);
+    return { success };
+  }
+
+  /**
+   * Requeue all tasks of a type (full rescan).
+   */
+  requeueAll(params: { taskType?: TaskType } = {}): { count: number } {
+    const count = this.db.requeueAll(params.taskType);
+    return { count };
+  }
+
+  /**
+   * Recover tasks left processing by a terminated worker.
+   */
+  recoverStaleProcessingTasks(): { count: number } {
+    const count = this.db.recoverStaleProcessingTasks();
+    return { count };
+  }
+
+  /**
+   * Get all tasks for a hash.
+   */
+  getTasksByHash(hash: string): TaskItem[] {
+    return this.db.getTasksByHash(hash);
+  }
+
+  /**
    * Get queue status API
    */
-  getQueueStatus(): {
-    pending: number;
-    processing: number;
-    completed: number;
-    failed: number;
-    total: number;
-  } {
+  getQueueStatus(): QueueStatus {
     return this.db.getQueueStatus();
   }
 
@@ -363,32 +415,98 @@ export class VFSAPI {
   }
 
   /**
-   * Update task status API
+   * Update task status API. Accepts either a typed task reference or the
+   * legacy classification-only shape.
    */
-  updateTaskStatus(params: {
-    hash: string;
-    status: 'pending' | 'processing' | 'completed' | 'failed';
-    error?: string;
-  }): { success: boolean } {
-    const { hash, status, error } = params;
-    this.db.updateTaskStatus(hash, status, error);
+  updateTaskStatus(
+    params:
+      | {
+          taskType: TaskType;
+          hash: string;
+          status: TaskStatus;
+          error?: string;
+          retryDelayMs?: number;
+        }
+      | { hash: string; status: TaskStatus; error?: string }
+  ): { success: boolean } {
+    if ('taskType' in params) {
+      this.db.updateTaskStatus(params);
+    } else {
+      this.db.updateTaskStatus(params.hash, params.status, params.error);
+    }
     return { success: true };
   }
 
   /**
    * Retry failed tasks API
    */
-  retryFailedTasks(): { count: number } {
-    const count = this.db.retryFailedTasks();
+  retryFailedTasks(params: { taskType?: TaskType } = {}): { count: number } {
+    const count = this.db.retryFailedTasks(params.taskType);
     return { count };
   }
 
   /**
    * Clear queue API
    */
-  clearQueue(): { success: boolean } {
-    this.db.clearQueue();
+  clearQueue(params: { taskType?: TaskType } = {}): { success: boolean } {
+    this.db.clearQueue(params.taskType);
     return { success: true };
+  }
+
+  /**
+   * Apply an AI classification result, updating the tag vocabulary and file.
+   */
+  applyClassification(params: ApplyClassificationParams): { tags: string[] } {
+    return this.db.applyClassification(params);
+  }
+
+  /**
+   * Get the bounded tag vocabulary for the classification prompt.
+   */
+  getTagVocabulary(params: { limit?: number } = {}): string[] {
+    return this.db.getTagVocabulary(params.limit);
+  }
+
+  /**
+   * Resolve a candidate tag against the alias cache and vocabulary.
+   */
+  resolveTagName(params: { candidate: string }): { name: string | null } {
+    return { name: this.db.resolveTagName(params.candidate) };
+  }
+
+  /**
+   * List vocabulary tags.
+   */
+  listTags(params: { limit?: number; pinnedOnly?: boolean } = {}): TagRecord[] {
+    return this.db.listTags(params);
+  }
+
+  /**
+   * Rename a tag.
+   */
+  renameTag(params: { id: number; name: string; label?: string }): TagRecord {
+    return this.db.renameTag(params);
+  }
+
+  /**
+   * Merge one tag into another.
+   */
+  mergeTags(params: { sourceId: number; targetId: number }): TagRecord {
+    return this.db.mergeTags(params.sourceId, params.targetId);
+  }
+
+  /**
+   * Delete a tag.
+   */
+  deleteTag(params: { id: number }): { success: boolean } {
+    return { success: this.db.deleteTag(params.id) };
+  }
+
+  /**
+   * Pin or unpin a tag.
+   */
+  setTagPinned(params: { id: number; pinned: boolean }): TagRecord | null {
+    return this.db.setTagPinned(params.id, params.pinned);
   }
 
   /**

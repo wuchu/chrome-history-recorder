@@ -6,6 +6,7 @@
 
 import { memo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
+import { getPrimaryTag } from '../../../shared/tag-utils';
 import { buildVfsThumbnailUrl } from '../utils/media';
 import styles from './MediaGrid.module.css';
 
@@ -85,6 +86,7 @@ const GridItem = memo(function GridItem({
   onClick: () => void;
 }) {
   const thumbnailSrc = item.thumbnailUrl || buildVfsThumbnailUrl(item.hash);
+  const primaryTag = getPrimaryTag(item.tags);
 
   return (
     <div className={styles.gridItem} onClick={onClick}>
@@ -94,7 +96,7 @@ const GridItem = memo(function GridItem({
       </div>
 
       <div className={styles.itemInfo}>
-        {item.category && <div className={styles.category}>{item.category}</div>}
+        {primaryTag && <div className={styles.category}>#{primaryTag}</div>}
         <ConfidenceBar confidence={item.confidence} />
         {item.tags && item.tags.length > 0 && (
           <div className={styles.tags}>

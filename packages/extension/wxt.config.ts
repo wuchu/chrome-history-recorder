@@ -1,14 +1,8 @@
 import { defineConfig } from 'wxt';
-import path from 'path';
-import { fileURLToPath } from 'url';
 
 // Fixed public key for consistent Extension ID in development
 // This ensures the Extension ID stays the same across reloads
 const DEV_PUBLIC_KEY = `MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAulHkiBAKBwVAleVP/QKNbEtcuwFqhUtcY5fxhIdhPjk9f4Ty9vXAiobSjNsJeJzRtUEkgZYxHUfBRfjSXTMzD+RC6OJ5EiaB2FNlDCHvKrWDjFBORVVhFyMyv1lZ4Q5riIdPCCwJ8JVVpkYz/t/adfEZv2WfEF41x/7DRIjAtBAavcLK3Vg2nfIi0CuzgxyQXHJVWbFJsq1WlIfQGcDN9TzEyPWgbtcmL2QO9kEe4dEunqtIOp81REeoCyZVOzjShLz8zka2QsDnwxHvJz8rdKcC4P+XAL1Jr9zx6EgVwHTFwAbSZU8qGHdBuvt2PseS/V2+bhTC/D04lhP0sxhyEQIDAQAB`;
-
-// Local Chrome profile for development - persists login state
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const LOCAL_CHROME_PROFILE = path.resolve(__dirname, '../..', '.chrome-dev-profile');
 
 // See https://wxt.dev/api/config.html
 export default defineConfig({
@@ -26,6 +20,7 @@ export default defineConfig({
       'declarativeNetRequest',
       'sidePanel',
       'debugger',
+      'alarms',
     ],
     host_permissions: [
       '<all_urls>', // 允许访问所有域名，用于拦截所有网站的媒体
@@ -44,13 +39,16 @@ export default defineConfig({
   },
   // 浏览器启动配置 - 根据环境变量控制
   // NO_BROWSER=1 时禁用自动启动
+  // CHROME_PROFILE_PATH 可指定自定义 Chrome profile（可选）
   webExt: process.env.NO_BROWSER
     ? {
         disabled: true,
       }
     : {
         chromiumArgs: ['https://www.baidu.com'],
-        chromiumProfile: process.env.CHROME_PROFILE_PATH || LOCAL_CHROME_PROFILE,
-        keepProfileChanges: true,
+        ...(process.env.CHROME_PROFILE_PATH && {
+          chromiumProfile: process.env.CHROME_PROFILE_PATH,
+          keepProfileChanges: true,
+        }),
       },
 });

@@ -19,14 +19,16 @@ import {
   type CombinedMediaItem,
 } from '../media-browser/hooks';
 import {
-  getConfig,
   getTagCounts,
+  listTags,
+  refreshAllTasks,
+  refreshTask,
   type TagCounts,
-  type TagDefinition,
+  type VFSTagRecord,
 } from '../../shared/extension-runtime';
 import {
   getSystemTagsForFile,
-  getVisibleTabs,
+  getVisibleTabsFromVocabulary,
   isUncategorized,
   parseTags,
 } from '../../shared/tag-utils';
@@ -41,7 +43,7 @@ type CaptureClassifyData = { category: string; confidence: number; tags: string[
 function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('all');
   const [selectedItem, setSelectedItem] = useState<CombinedMediaItem | null>(null);
-  const [userDefinedTags, setUserDefinedTags] = useState<TagDefinition[]>([]);
+  const [tagVocabulary, setTagVocabulary] = useState<VFSTagRecord[]>([]);
   const [tagCounts, setTagCounts] = useState<TagCounts>({ all: 0 });
   const [topContainerHeight, setTopContainerHeight] = useState(260);
   const theme = useTheme();
@@ -62,30 +64,26 @@ function App() {
 
   const loadTagCounts = useCallback(async () => {
     try {
-      const counts = await getTagCounts();
+      const [counts, tags] = await Promise.all([getTagCounts(), listTags({ limit: 200 })]);
       setTagCounts(counts);
+      setTagVocabulary(tags);
     } catch (error) {
-      console.error('Failed to load tag counts:', error);
+      console.error('Failed to load tag vocabulary:', error);
     }
   }, []);
 
   useEffect(() => {
-    const loadData = async () => {
-      try {
-        const config = await getConfig();
-        setUserDefinedTags(config.userDefinedTags || []);
-      } catch (error) {
-        console.error('Failed to load config:', error);
-      }
-      await loadTagCounts();
-    };
-
-    loadData();
+    loadTagCounts();
   }, [loadTagCounts]);
 
   useEffect(() => {
     const shouldRefreshTags = backgroundEvents.some(
-      (event) => event.type === 'classify:complete' || event.type === 'file:classified'
+      (event) =>
+        event.type === 'classify:complete' ||
+        event.type === 'file:classified' ||
+        event.type === 'task:completed' ||
+        event.type === 'tags:updated' ||
+        event.type === 'queue:updated'
     );
     if (shouldRefreshTags) {
       loadTagCounts();
@@ -122,8 +120,8 @@ function App() {
   const themeClass = useMemo(() => theme.themeClass(styles.lightTheme, styles.darkTheme), [theme]);
 
   const visibleTabs = useMemo((): Tab[] => {
-    return getVisibleTabs(userDefinedTags, tagCounts);
-  }, [userDefinedTags, tagCounts]);
+    return getVisibleTabsFromVocabulary(tagVocabulary, tagCounts);
+  }, [tagVocabulary, tagCounts]);
 
   const filteredMedia = useMemo(() => {
     if (activeTab === 'all') {
@@ -155,6 +153,16 @@ function App() {
 
   const handleCloseDetail = useCallback(() => {
     setSelectedItem(null);
+  }, []);
+
+  const handleRefreshTask = useCallback((taskType: 'classify' | 'rename', hash: string) => {
+    refreshTask(taskType, hash).catch((err) => {
+      console.error(`[App] Failed to requeue ${taskType} for ${hash}:`, err);
+    });
+  }, []);
+
+  const handleRefreshAll = useCallback(async () => {
+    await refreshAllTasks(['classify', 'rename']);
   }, []);
 
   const handleOpenOptions = useCallback(() => {
@@ -229,6 +237,7 @@ function App() {
           onPause={classifyQueue.pauseClassification}
           onRetryFailed={classifyQueue.retryFailed}
           onClearQueue={classifyQueue.clearQueue}
+          onRefreshAll={handleRefreshAll}
         />
 
         <ScrollableTabBar tabs={visibleTabs} activeTabId={activeTab} onTabChange={setActiveTab} />
@@ -249,6 +258,7 @@ function App() {
             item={selectedItem}
             onClose={handleCloseDetail}
             onDelete={handleDeleteItem}
+            onRefreshTask={handleRefreshTask}
           />
         )}
       </div>

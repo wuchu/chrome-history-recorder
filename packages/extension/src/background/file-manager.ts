@@ -26,6 +26,16 @@ export type FileEventType =
   | 'classify:complete'
   | 'classify:failed'
   | 'classify:scheduler'
+  | 'task:queued'
+  | 'task:started'
+  | 'task:completed'
+  | 'task:retrying'
+  | 'task:failed'
+  | 'task:scheduler'
+  | 'rename:started'
+  | 'rename:complete'
+  | 'rename:failed'
+  | 'tags:updated'
   | 'queue:updated';
 
 /**

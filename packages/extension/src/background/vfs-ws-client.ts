@@ -62,14 +62,52 @@ export interface VFSListQuery {
 }
 
 /**
- * VFS Queue status
+ * Task type for the unified AI task engine.
  */
-export interface VFSQueueStatus {
+export type VFSTaskType = 'classify' | 'rename' | (string & {});
+
+export type VFSTaskStatus = 'pending' | 'processing' | 'completed' | 'failed';
+
+export interface VFSTask {
+  id: number;
+  task_type: VFSTaskType;
+  target_hash: string;
+  status: VFSTaskStatus;
+  priority: number;
+  attempts: number;
+  max_attempts: number;
+  next_run_at: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VFSTaskSummary {
   pending: number;
   processing: number;
   completed: number;
   failed: number;
   total: number;
+}
+
+export interface VFSTagRecord {
+  id: number;
+  name: string;
+  label: string | null;
+  usage_count: number;
+  created_by: string;
+  is_pinned: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * VFS Queue status
+ */
+export interface VFSQueueStatus extends VFSTaskSummary {
+  byType?: Record<string, VFSTaskSummary>;
 }
 
 export interface SyncBlobsToIndexResult {
@@ -518,15 +556,139 @@ export class VFSWebSocketClient {
   /**
    * Retry failed tasks
    */
-  async retryFailedTasks(): Promise<{ count: number }> {
-    return this.send('retryFailedTasks');
+  async retryFailedTasks(taskType?: VFSTaskType): Promise<{ count: number }> {
+    return this.send('retryFailedTasks', { taskType });
   }
 
   /**
    * Clear queue
    */
-  async clearQueue(): Promise<{ success: boolean }> {
-    return this.send('clearQueue');
+  async clearQueue(taskType?: VFSTaskType): Promise<{ success: boolean }> {
+    return this.send('clearQueue', { taskType });
+  }
+
+  /**
+   * Enqueue a typed task (idempotent unless requeue is set).
+   */
+  async enqueueTask(params: {
+    taskType: VFSTaskType;
+    hash: string;
+    priority?: number;
+    maxAttempts?: number;
+    requeue?: boolean;
+  }): Promise<{ success: boolean }> {
+    return this.send('enqueueTask', params);
+  }
+
+  /**
+   * Atomically claim due tasks.
+   */
+  async claimTasks(limit: number): Promise<VFSTask[]> {
+    return this.send('claimTasks', { limit });
+  }
+
+  /**
+   * Update a typed task status (supports failure backoff).
+   */
+  async updateTypedTaskStatus(params: {
+    taskType: VFSTaskType;
+    hash: string;
+    status: VFSTaskStatus;
+    error?: string;
+    retryDelayMs?: number;
+  }): Promise<{ success: boolean }> {
+    return this.send('updateTaskStatus', params);
+  }
+
+  /**
+   * Requeue a single typed task.
+   */
+  async requeueTask(taskType: VFSTaskType, hash: string): Promise<{ success: boolean }> {
+    return this.send('requeueTask', { taskType, hash });
+  }
+
+  /**
+   * Requeue all tasks (full rescan), optionally for a single type.
+   */
+  async requeueAll(taskType?: VFSTaskType): Promise<{ count: number }> {
+    return this.send('requeueAll', { taskType });
+  }
+
+  /**
+   * Recover tasks left processing by a terminated worker.
+   */
+  async recoverStaleProcessingTasks(): Promise<{ count: number }> {
+    return this.send('recoverStaleProcessingTasks');
+  }
+
+  /**
+   * Get all task rows for a hash.
+   */
+  async getTasksByHash(hash: string): Promise<VFSTask[]> {
+    return this.send('getTasksByHash', { hash });
+  }
+
+  /**
+   * Apply a classification result (tag vocabulary + file tags + metadata).
+   */
+  async applyClassification(params: {
+    hash: string;
+    tags: string[];
+    aliases?: Record<string, string>;
+    confidence?: number;
+    modelUsed?: string;
+    classifiedAt?: string;
+  }): Promise<{ tags: string[] }> {
+    return this.send('applyClassification', params);
+  }
+
+  /**
+   * Get the bounded tag vocabulary for prompts.
+   */
+  async getTagVocabulary(limit?: number): Promise<string[]> {
+    return this.send('getTagVocabulary', { limit });
+  }
+
+  /**
+   * Resolve a candidate tag against the alias cache.
+   */
+  async resolveTagName(candidate: string): Promise<{ name: string | null }> {
+    return this.send('resolveTagName', { candidate });
+  }
+
+  /**
+   * List vocabulary tags.
+   */
+  async listTags(params: { limit?: number; pinnedOnly?: boolean } = {}): Promise<VFSTagRecord[]> {
+    return this.send('listTags', params);
+  }
+
+  /**
+   * Rename a tag.
+   */
+  async renameTag(id: number, name: string, label?: string): Promise<VFSTagRecord> {
+    return this.send('renameTag', { id, name, label });
+  }
+
+  /**
+   * Merge one tag into another.
+   */
+  async mergeTags(sourceId: number, targetId: number): Promise<VFSTagRecord> {
+    return this.send('mergeTags', { sourceId, targetId });
+  }
+
+  /**
+   * Delete a tag.
+   */
+  async deleteTag(id: number): Promise<{ success: boolean }> {
+    return this.send('deleteTag', { id });
+  }
+
+  /**
+   * Pin or unpin a tag.
+   */
+  async setTagPinned(id: number, pinned: boolean): Promise<VFSTagRecord | null> {
+    return this.send('setTagPinned', { id, pinned });
   }
 
   /**

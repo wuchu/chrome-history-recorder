@@ -5,16 +5,34 @@
  */
 
 import { getVFSWebSocketClient } from '../vfs-ws-client';
-import type { FilenameStyle, TagDefinition } from '../../shared/extension-runtime';
+import type { FilenameStyle } from '../../shared/extension-runtime';
 
 /**
- * Classification result
+ * Classification result (legacy shape kept for compatibility).
  */
 export interface ClassificationResult {
   category: string;
   suggestedName: string;
   tags: string[];
   confidence: number;
+}
+
+/**
+ * Tag-focused classification result produced by a single vision call.
+ */
+export interface TagClassificationResult {
+  tags: string[];
+  aliases: Record<string, string>;
+  confidence: number;
+  model: string;
+}
+
+/**
+ * Rename result produced by a single vision call.
+ */
+export interface RenameResult {
+  suggestedName: string;
+  model: string;
 }
 
 /**
@@ -51,7 +69,6 @@ export interface OllamaClientConfig {
   language?: string;
   filenameStyle?: FilenameStyle;
   filenameStylePrompt?: string;
-  userDefinedTags?: TagDefinition[];
   timeout?: number;
 }
 
@@ -84,54 +101,62 @@ const STYLE_PROMPTS_EN: Record<FilenameStyle, string> = {
 };
 
 /**
- * Build classification prompt
+ * Build the tag classification prompt. The vocabulary is a bounded top-N
+ * window; the model may reuse an existing canonical tag or declare a new one.
  */
-function buildPrompt(config: OllamaClientConfig): string {
+function buildTagsPrompt(vocabulary: string[], language?: string): string {
+  const isZh = language?.startsWith('zh-');
+  const vocab = vocabulary.map((tag) => tag.trim()).filter(Boolean);
+
+  if (isZh) {
+    const vocabBlock =
+      vocab.length > 0
+        ? `已有标签（含义相同或相近时，直接复用已有标签名，不要创造近义词）：\n${vocab.join('、')}`
+        : '当前词表为空，可以自由创建标签。';
+    return `识别这张图片，生成 3 到 8 个描述图片内容的标签。
+${vocabBlock}
+
+输出要求：
+- 每行一个标签，不要编号、不要解释、不要标点。
+- 复用已有标签时直接输出标签名。
+- 词表中没有的新概念，输出 NEW:标签名。
+- 标签使用小写，2-6 个字。`.trim();
+  }
+
+  const vocabBlock =
+    vocab.length > 0
+      ? `Existing tags (reuse the exact name when the meaning matches or is close; do not invent near-synonyms):\n${vocab.join(', ')}`
+      : 'The vocabulary is empty; feel free to create tags.';
+  return `Identify this image and produce 3 to 8 tags describing its content.
+${vocabBlock}
+
+Output rules:
+- One tag per line. No numbering, explanations, or punctuation.
+- Reuse an existing tag name directly when it fits.
+- For concepts not in the vocabulary, output NEW:<tag>.
+- Use lowercase tags of 1-3 words.`.trim();
+}
+
+/**
+ * Build the independent rename prompt. Rename does not receive or produce tags.
+ */
+function buildRenamePrompt(config: OllamaClientConfig): string {
   const isZh = config.language?.startsWith('zh-');
   const style = config.filenameStyle ?? 'auto';
   const stylePrompt =
     config.filenameStylePrompt ?? (isZh ? STYLE_PROMPTS_ZH[style] : STYLE_PROMPTS_EN[style]);
-  const availableTags = config.userDefinedTags?.map((t) => t.name).join(', ') ?? '';
 
   if (isZh) {
-    if (availableTags) {
-      return `识别这张图片。
-可用标签: ${availableTags}
-
-输出格式: 标签1,标签2 | 文件名
-
-从"可用标签"中选择1-3个最合适的标签，用逗号分隔。
-文件名用中文（不含扩展名），15-25个字以内，简洁生动。
-风格要求: ${stylePrompt}
-示例: 猫咪,截图 | 慵懒的黑白猫咪在窗台晒太阳`.trim();
-    }
-    return `识别这张图片。
-输出格式: 分类 | 文件名
-分类用一个词，文件名用中文（不含扩展名）。
-文件名控制在15-25个字以内，简洁生动。
-风格要求: ${stylePrompt}
-示例: 猫咪 | 慵懒的黑白猫咪在窗台晒太阳`.trim();
+    return `观察这张图片，为它生成一个简洁生动的文件名（不含扩展名）。
+风格要求：${stylePrompt}
+文件名控制在 15-25 个字以内。
+只输出文件名本身，不要引号、扩展名或任何解释。`.trim();
   }
 
-  if (availableTags) {
-    return `Identify this image.
-Available tags: ${availableTags}
-
-Output format: TAG1,TAG2 | FILENAME
-
-Choose 1-3 most suitable tags from "Available tags", separated by commas.
-Filename in English (no extension).
-Filename should be 3-8 words, concise and descriptive.
+  return `Look at this image and generate a concise, descriptive filename (without extension).
 Style: ${stylePrompt}
-Example: cat,screenshot | lazy_cat_sunbathing_on_window`.trim();
-  }
-
-  return `Identify this image.
-Output format: CATEGORY | FILENAME
-One word category. Filename in English (no extension).
-Filename should be 3-8 words, concise and descriptive.
-Style: ${stylePrompt}
-Example: cat | lazy_cat_sunbathing_on_window`.trim();
+Filename should be 3-8 words.
+Output only the filename itself, without quotes, extension, or explanation.`.trim();
 }
 
 /**
@@ -145,13 +170,6 @@ function sanitizeFilename(name: string): string {
       .trim()
       .slice(0, 50) || 'unnamed'
   );
-}
-
-/**
- * Sanitize category
- */
-function sanitizeCategory(cat: string): string {
-  return cat.trim().toLowerCase() || 'unknown';
 }
 
 /**
@@ -248,108 +266,88 @@ function normalizeFileBuffer(buffer: number[] | { type?: string; data?: number[]
 }
 
 /**
- * Parse classification result
+ * Parse an AI tag response. Accepts newline-, comma-, or JSON-formatted tags,
+ * with or without the `NEW:` marker. Returns de-duplicated candidates; the VFS
+ * resolves them against the vocabulary and alias cache.
  */
-function parseClassificationResult(
-  content: string,
-  originalHash: string,
-  userDefinedTags?: TagDefinition[]
-): ClassificationResult {
-  const cleanContent = content.trim();
+function parseTagsResult(content: string): string[] {
+  const tags: string[] = [];
+  const seen = new Set<string>();
 
-  // 1. Try pipe-separated format with tags
-  if (cleanContent.includes('|')) {
-    const parts = cleanContent.split('|').map((s) => s.trim());
-    if (parts.length >= 2 && parts[0] && parts[1]) {
-      // Parse tags from first part (comma-separated)
-      let tags: string[] = [];
-      let category = sanitizeCategory(parts[0]);
-
-      if (parts[0].includes(',')) {
-        const tagStrings = parts[0]
-          .split(',')
-          .map((t) => t.trim().toLowerCase())
-          .filter(Boolean);
-        if (userDefinedTags) {
-          const validTagNames = new Set(userDefinedTags.map((t) => t.name.toLowerCase()));
-          tags = tagStrings.filter((t) => validTagNames.has(t)).slice(0, 3);
-        } else {
-          tags = tagStrings.slice(0, 3);
-        }
-        if (tags.length > 0) {
-          category = tags[0]; // Use first tag as category for compatibility
-        }
-      } else if (userDefinedTags) {
-        const validTagNames = new Set(userDefinedTags.map((t) => t.name.toLowerCase()));
-        const tag = parts[0].toLowerCase();
-        if (validTagNames.has(tag)) {
-          tags = [tag];
-          category = tag;
-        }
-      }
-
-      return {
-        category,
-        suggestedName: sanitizeFilename(parts[1]),
-        tags,
-        confidence: 0.8,
-      };
-    }
-  }
-
-  // 2. Try space-separated (first line)
-  const firstLine = cleanContent.split('\n')[0].trim();
-  const words = firstLine.split(/\s+/).filter((w) => w.length > 0);
-  if (words.length >= 2) {
-    let tags: string[] = [];
-    let category = sanitizeCategory(words[0]);
-
-    if (userDefinedTags) {
-      const validTagNames = new Set(userDefinedTags.map((t) => t.name.toLowerCase()));
-      tags = words.filter((w) => validTagNames.has(w.toLowerCase())).slice(0, 3);
-      if (tags.length > 0) {
-        category = tags[0];
-      }
-    }
-
-    return {
-      category,
-      suggestedName: sanitizeFilename(words.slice(tags.length || 1).join('_')),
-      tags,
-      confidence: 0.6,
-    };
-  }
-
-  // 3. Try JSON format
-  const jsonMatch = cleanContent.match(/\{[\s\S]*\}/);
-  if (jsonMatch) {
-    try {
-      const parsed = JSON.parse(jsonMatch[0]);
-      let tags: string[] = parsed.tags ?? [];
-
-      if (userDefinedTags && tags.length > 0) {
-        const validTagNames = new Set(userDefinedTags.map((t) => t.name.toLowerCase()));
-        tags = tags.filter((t: string) => validTagNames.has(t.toLowerCase())).slice(0, 3);
-      }
-
-      return {
-        category: sanitizeCategory(parsed.category ?? tags[0] ?? 'unknown'),
-        suggestedName: sanitizeFilename(parsed.suggestedName ?? originalHash),
-        tags,
-        confidence: parsed.confidence ?? 0.5,
-      };
-    } catch {
-      // JSON parse failed, continue to fallback
-    }
-  }
-
-  // 4. Fallback
-  return {
-    category: 'unknown',
-    suggestedName: originalHash,
-    tags: [],
-    confidence: 0.1,
+  const push = (raw: string) => {
+    let value = raw.trim();
+    value = value.replace(/^[-*•\d.)\s]+/, '').trim();
+    value = value.replace(/^tags?\s*[:：]\s*/i, '').trim();
+    value = value.replace(/^new\s*[:：]\s*/i, '').trim();
+    value = value.replace(/^["'`]+|["'`]+$/g, '').trim();
+    value = value.replace(/[。.;；,，]+$/g, '').trim();
+    if (!value || value.length > 40) return;
+    if (/^(输出|格式|要求|示例|标签|note|output|format|rules?)/i.test(value)) return;
+    const key = value.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    tags.push(value);
   };
+
+  const jsonArray = content.match(/\[[\s\S]*\]/);
+  if (jsonArray) {
+    try {
+      const parsed = JSON.parse(jsonArray[0]);
+      if (Array.isArray(parsed)) {
+        parsed.filter((tag): tag is string => typeof tag === 'string').forEach(push);
+        if (tags.length > 0) return tags.slice(0, 12);
+      }
+    } catch {
+      // fall through to line parsing
+    }
+  }
+
+  const jsonObject = content.match(/\{[\s\S]*\}/);
+  if (jsonObject) {
+    try {
+      const parsed = JSON.parse(jsonObject[0]);
+      if (Array.isArray(parsed.tags)) {
+        parsed.tags.filter((tag: unknown): tag is string => typeof tag === 'string').forEach(push);
+        if (tags.length > 0) return tags.slice(0, 12);
+      }
+    } catch {
+      // fall through to line parsing
+    }
+  }
+
+  for (const line of content.split('\n')) {
+    const cleaned = line.trim();
+    if (!cleaned) continue;
+    const parts = cleaned.split(/[,，、|]/);
+    if (parts.length > 1) {
+      parts.forEach(push);
+    } else {
+      push(cleaned);
+    }
+  }
+
+  return tags.slice(0, 12);
+}
+
+/**
+ * Parse an AI rename response into a sanitized display filename.
+ */
+function parseRenameResult(content: string, hash: string): string {
+  const firstLine = content
+    .split('\n')
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+  if (!firstLine) return hash;
+
+  const cleaned = firstLine
+    .replace(/^文件名\s*[:：]\s*/i, '')
+    .replace(/^filename\s*[:：]\s*/i, '')
+    .replace(/^["'`]+|["'`]+$/g, '')
+    .replace(/\.(jpe?g|png|gif|webp|avif|mp4|webm|mov)$/i, '')
+    .trim();
+
+  const sanitized = sanitizeFilename(cleaned);
+  return sanitized === 'unnamed' ? hash : sanitized;
 }
 
 /**
@@ -520,109 +518,144 @@ export class OllamaClient {
   }
 
   /**
-   * Classify image buffer
+   * Obtain a representative image for a media hash (large thumbnail when
+   * available, otherwise the original blob).
    */
-  async classifyImage(buffer: ArrayBuffer, _mimeType: string): Promise<ClassificationResult> {
-    if (!this.available) {
-      throw new Error('Ollama service not available');
-    }
-
-    // Convert buffer to base64
-    const base64Image = btoa(
-      new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
-    );
-
-    const prompt = buildPrompt(this.config);
-
-    try {
-      const response = await fetch(`${this.config.endpoint}/api/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: this.config.model,
-          messages: [
-            {
-              role: 'user',
-              content: prompt,
-              images: [base64Image],
-            },
-          ],
-          stream: false,
-        }),
-        signal: AbortSignal.timeout(this.config.timeout!),
-      });
-
-      if (!response.ok) {
-        const responseText = await response.text().catch(() => '');
-        const detail = responseText ? `: ${responseText}` : '';
-        if (response.status === 404) {
-          throw new Error(
-            `Ollama model not found or chat endpoint unavailable for model "${this.config.model}"${detail}. ` +
-              `Select an installed vision model from the model dropdown or run: ollama pull ${this.config.model}`
-          );
-        }
-        if (response.status === 400) {
-          throw new Error(
-            `Ollama rejected the image request for model "${this.config.model}"${detail}. ` +
-              'This usually means the selected model does not support images. Select a vision model such as llava:7b.'
-          );
-        }
-        throw new Error(`Ollama API error: ${response.status}${detail}`);
-      }
-
-      const data = await response.json();
-      const content = data.message?.content ?? '';
-      return parseClassificationResult(content, 'unknown', this.config.userDefinedTags);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      throw new Error(`Classification failed: ${message}`);
-    }
-  }
-
-  /**
-   * Classify file by hash (get from VFS, classify, update metadata)
-   */
-  async classifyByHash(hash: string): Promise<ClassificationResult> {
+  async getRepresentativeImage(hash: string): Promise<{ buffer: ArrayBuffer; mimeType: string }> {
     const vfsWsClient = getVFSWebSocketClient();
     const file = await vfsWsClient.getFile(hash);
-
     if (!file) {
       throw new Error(`File not found: ${hash}`);
     }
 
-    let classifyBuffer: ArrayBuffer;
-    let classifyMimeType = file.mimeType;
-
     try {
       const thumbnail = await vfsWsClient.getThumbnail(hash, 'large');
       if (thumbnail) {
-        classifyBuffer = normalizeFileBuffer(thumbnail.buffer);
-        classifyMimeType = thumbnail.mimeType;
-        console.log(`[OllamaClient] Using large thumbnail for classification: ${hash}`);
-      } else {
-        classifyBuffer = normalizeFileBuffer(file.buffer);
-        console.log(
-          `[OllamaClient] Thumbnail unavailable, using original file for classification: ${hash}`
-        );
+        return {
+          buffer: normalizeFileBuffer(thumbnail.buffer),
+          mimeType: thumbnail.mimeType,
+        };
       }
     } catch (error) {
-      console.warn('[OllamaClient] Failed to get thumbnail, falling back to original file:', error);
-      classifyBuffer = normalizeFileBuffer(file.buffer);
+      console.warn('[OllamaClient] Failed to get thumbnail, using original file:', error);
     }
 
-    const result = await this.classifyImage(classifyBuffer, classifyMimeType);
+    return {
+      buffer: normalizeFileBuffer(file.buffer),
+      mimeType: file.mimeType,
+    };
+  }
 
-    // Update metadata in VFS
-    await vfsWsClient.updateMetadata(hash, {
-      category: result.category,
-      ai_filename: result.suggestedName,
-      tags: JSON.stringify(result.tags),
-      confidence: result.confidence,
-      classified_at: new Date().toISOString(),
-      model_used: this.config.model,
+  /**
+   * Send a single vision request to Ollama and return the text content.
+   */
+  private async callVision(prompt: string, buffer: ArrayBuffer): Promise<string> {
+    if (!this.available) {
+      throw new Error('Ollama service not available');
+    }
+
+    const base64Image = btoa(
+      new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
+    );
+
+    const response = await fetch(`${this.config.endpoint}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: this.config.model,
+        messages: [
+          {
+            role: 'user',
+            content: prompt,
+            images: [base64Image],
+          },
+        ],
+        stream: false,
+      }),
+      signal: AbortSignal.timeout(this.config.timeout ?? 60000),
     });
 
-    return result;
+    if (!response.ok) {
+      const responseText = await response.text().catch(() => '');
+      const detail = responseText ? `: ${responseText}` : '';
+      if (response.status === 404) {
+        throw new Error(
+          `Ollama model not found or chat endpoint unavailable for model "${this.config.model}"${detail}. ` +
+            `Select an installed vision model from the model dropdown or run: ollama pull ${this.config.model}`
+        );
+      }
+      if (response.status === 400) {
+        throw new Error(
+          `Ollama rejected the image request for model "${this.config.model}"${detail}. ` +
+            'This usually means the selected model does not support images. Select a vision model such as llava:7b.'
+        );
+      }
+      throw new Error(`Ollama API error: ${response.status}${detail}`);
+    }
+
+    const data = await response.json();
+    return data.message?.content ?? '';
+  }
+
+  /**
+   * Classification task: one vision call that generates tags and
+   * canonicalizes them against the top-N vocabulary.
+   */
+  async classifyTagsByHash(hash: string): Promise<TagClassificationResult> {
+    const vfsWsClient = getVFSWebSocketClient();
+    let vocabulary: string[] = [];
+    try {
+      vocabulary = await vfsWsClient.getTagVocabulary(40);
+    } catch (error) {
+      console.warn('[OllamaClient] Failed to load tag vocabulary, using empty window:', error);
+    }
+
+    const { buffer } = await this.getRepresentativeImage(hash);
+    const content = await this.callVision(
+      buildTagsPrompt(vocabulary, this.config.language),
+      buffer
+    );
+    const tags = parseTagsResult(content);
+
+    return {
+      tags,
+      aliases: {},
+      confidence: tags.length > 0 ? 0.8 : 0.1,
+      model: this.config.model ?? '',
+    };
+  }
+
+  /**
+   * Rename task: one vision call that produces a display filename only.
+   */
+  async renameByHash(hash: string): Promise<RenameResult> {
+    const { buffer } = await this.getRepresentativeImage(hash);
+    const content = await this.callVision(buildRenamePrompt(this.config), buffer);
+    return {
+      suggestedName: parseRenameResult(content, hash),
+      model: this.config.model ?? '',
+    };
+  }
+
+  /**
+   * Legacy combined classification entry point (kept for compatibility).
+   * Classification no longer writes `category`.
+   */
+  async classifyByHash(hash: string): Promise<ClassificationResult> {
+    const result = await this.classifyTagsByHash(hash);
+    const applied = await getVFSWebSocketClient().applyClassification({
+      hash,
+      tags: result.tags,
+      aliases: result.aliases,
+      confidence: result.confidence,
+      modelUsed: result.model,
+    });
+    return {
+      category: '',
+      suggestedName: '',
+      tags: applied.tags,
+      confidence: result.confidence,
+    };
   }
 
   /**

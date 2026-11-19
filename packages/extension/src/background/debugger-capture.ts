@@ -1,5 +1,5 @@
 import type { FileManager } from './file-manager';
-import type { ClassifyScheduler } from './classify/scheduler';
+import type { TaskEngine } from './tasks/engine';
 
 type CaptureStatus = 'idle' | 'capturing' | 'error';
 
@@ -37,7 +37,7 @@ interface CdpEventParams {
 
 interface CaptureDependencies {
   getFileManager: () => FileManager;
-  getScheduler: () => ClassifyScheduler;
+  getScheduler: () => TaskEngine;
 }
 
 const DEBUGGER_PROTOCOL_VERSION = '1.3';
@@ -274,7 +274,7 @@ export class DebuggerCaptureController {
       });
 
       if (!result.duplicate) {
-        await scheduler.enqueue(result.hash);
+        await scheduler.enqueuePair(result.hash);
       }
 
       const state = this.ensureState(tabId);

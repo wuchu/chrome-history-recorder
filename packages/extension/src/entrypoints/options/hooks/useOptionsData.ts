@@ -3,21 +3,27 @@ import {
   clearQueue,
   checkOllamaHealth,
   clearIndex,
+  deleteTag,
   ExtensionConfig,
   getConfig,
   getQueueStatus,
   listOllamaModels,
+  listTags,
   loadServiceStatus,
+  mergeTags,
   OllamaModel,
   pauseClassification,
   QueueStatus,
   reconnectVFS,
+  renameTag,
   retryFailedTasks,
   ServiceStatus,
+  setTagPinned,
   startClassification,
   syncBlobsToIndex,
   SyncBlobsToIndexResult,
   updateConfig,
+  VFSTagRecord,
 } from '../../../shared/extension-runtime';
 
 const DEFAULT_CONFIG: ExtensionConfig = {
@@ -28,12 +34,6 @@ const DEFAULT_CONFIG: ExtensionConfig = {
   classificationConcurrency: 1,
   classificationPaused: true,
   maxFileSize: 50 * 1024 * 1024,
-  userDefinedTags: [
-    { id: 'user:cat', name: 'cat', label: '🐱 猫咪', isSystem: false, sortOrder: 1 },
-    { id: 'user:game', name: 'game', label: '🎮 游戏', isSystem: false, sortOrder: 2 },
-    { id: 'user:screenshot', name: 'screenshot', label: '📸 截图', isSystem: false, sortOrder: 3 },
-    { id: 'user:memo', name: 'memo', label: '📝 笔记', isSystem: false, sortOrder: 4 },
-  ],
 };
 
 const DEFAULT_QUEUE: QueueStatus = {
@@ -54,6 +54,7 @@ export function useOptionsData() {
   const [queueStatus, setQueueStatus] = useState<QueueStatus>(DEFAULT_QUEUE);
   const [serviceStatus, setServiceStatus] = useState<ServiceStatus>(DEFAULT_SERVICE_STATUS);
   const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([]);
+  const [tags, setTags] = useState<VFSTagRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingKeys, setSavingKeys] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
@@ -94,6 +95,12 @@ export function useOptionsData() {
     return result.models ?? [];
   }, []);
 
+  const refreshTags = useCallback(async () => {
+    const nextTags = await listTags({ limit: 500 });
+    setTags(nextTags);
+    return nextTags;
+  }, []);
+
   const initialize = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -104,13 +111,18 @@ export function useOptionsData() {
       } catch (modelsError) {
         console.warn('[Options] Failed to load Ollama models:', modelsError);
       }
+      try {
+        await refreshTags();
+      } catch (tagsError) {
+        console.warn('[Options] Failed to load tag vocabulary:', tagsError);
+      }
     } catch (loadError) {
       const message = loadError instanceof Error ? loadError.message : '加载配置失败';
       setError(message);
     } finally {
       setLoading(false);
     }
-  }, [refreshConfig, refreshOllamaModels, refreshQueue, refreshServiceStatus]);
+  }, [refreshConfig, refreshOllamaModels, refreshQueue, refreshServiceStatus, refreshTags]);
 
   const saveConfig = useCallback(
     async (updates: Partial<ExtensionConfig>, key = 'config') => {
@@ -216,6 +228,60 @@ export function useOptionsData() {
     }
   }, [setSaving]);
 
+  const renameTagAction = useCallback(
+    async (id: number, name: string, label?: string): Promise<VFSTagRecord> => {
+      setSaving('tags', true);
+      try {
+        const updated = await renameTag(id, name, label);
+        await refreshTags();
+        return updated;
+      } finally {
+        setSaving('tags', false);
+      }
+    },
+    [refreshTags, setSaving]
+  );
+
+  const mergeTagAction = useCallback(
+    async (sourceId: number, targetId: number): Promise<VFSTagRecord> => {
+      setSaving('tags', true);
+      try {
+        const merged = await mergeTags(sourceId, targetId);
+        await refreshTags();
+        return merged;
+      } finally {
+        setSaving('tags', false);
+      }
+    },
+    [refreshTags, setSaving]
+  );
+
+  const deleteTagAction = useCallback(
+    async (id: number): Promise<void> => {
+      setSaving('tags', true);
+      try {
+        await deleteTag(id);
+        await refreshTags();
+      } finally {
+        setSaving('tags', false);
+      }
+    },
+    [refreshTags, setSaving]
+  );
+
+  const setTagPinnedAction = useCallback(
+    async (id: number, pinned: boolean): Promise<void> => {
+      setSaving('tags', true);
+      try {
+        await setTagPinned(id, pinned);
+        await refreshTags();
+      } finally {
+        setSaving('tags', false);
+      }
+    },
+    [refreshTags, setSaving]
+  );
+
   useEffect(() => {
     initialize();
   }, [initialize]);
@@ -245,6 +311,7 @@ export function useOptionsData() {
     queueStatus,
     serviceStatus,
     ollamaModels,
+    tags,
     loading,
     saving,
     error,
@@ -254,6 +321,7 @@ export function useOptionsData() {
     refreshServiceStatus,
     refreshOllamaModels,
     refreshOllamaHealth,
+    refreshTags,
     reconnectVfsService,
     saveConfig,
     startClassification: start,
@@ -263,5 +331,9 @@ export function useOptionsData() {
     clearQueue: clearClassificationQueue,
     syncMediaIndex,
     clearMediaIndex,
+    renameTag: renameTagAction,
+    mergeTags: mergeTagAction,
+    deleteTag: deleteTagAction,
+    setTagPinned: setTagPinnedAction,
   };
 }

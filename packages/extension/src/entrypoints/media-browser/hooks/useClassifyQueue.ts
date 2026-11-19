@@ -6,6 +6,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { BackgroundEvent } from './useBackgroundMessaging';
+import type { TaskTypeSummary } from '../../../shared/extension-runtime';
 
 /**
  * Classification queue status
@@ -24,6 +25,7 @@ export interface ClassifyQueueStatus {
   failed: number;
   total: number;
   scheduler?: SchedulerStatus;
+  byType?: Record<string, TaskTypeSummary>;
 }
 
 /**
@@ -70,6 +72,29 @@ const DEFAULT_STATUS: ClassifyQueueStatus = {
   total: 0,
 };
 
+const EMPTY_TYPE_SUMMARY: TaskTypeSummary = {
+  pending: 0,
+  processing: 0,
+  completed: 0,
+  failed: 0,
+  total: 0,
+};
+
+/**
+ * Apply an incremental update to one task type's counters.
+ */
+function bumpByType(
+  byType: Record<string, TaskTypeSummary> | undefined,
+  taskType: string,
+  updater: (summary: TaskTypeSummary) => TaskTypeSummary
+): Record<string, TaskTypeSummary> | undefined {
+  if (!byType) return byType;
+  return {
+    ...byType,
+    [taskType]: updater(byType[taskType] ?? EMPTY_TYPE_SUMMARY),
+  };
+}
+
 /**
  * Hook for classification queue status from Background
  */
@@ -104,6 +129,7 @@ export function useClassifyQueue({
           failed: queueData?.failed || 0,
           total: queueData?.total || 0,
           scheduler: queueData?.scheduler,
+          byType: queueData?.byType,
         });
       }
 
@@ -198,7 +224,7 @@ export function useClassifyQueue({
    */
   useEffect(() => {
     for (const event of backgroundEvents) {
-      if (event.type === 'classify:scheduler') {
+      if (event.type === 'classify:scheduler' || event.type === 'task:scheduler') {
         const scheduler = event.data as SchedulerStatus;
         setStatus((prev) => ({ ...prev, scheduler }));
       } else if (event.type === 'queue:updated') {
@@ -211,7 +237,73 @@ export function useClassifyQueue({
           failed: data.failed ?? prev.failed,
           total: data.total ?? prev.total,
           scheduler: data.scheduler ?? prev.scheduler,
+          byType: data.byType ?? prev.byType,
         }));
+      } else if (event.type === 'task:queued') {
+        const data = event.data as { task_type?: string };
+        const taskType = data.task_type;
+        if (taskType) {
+          setStatus((prev) => ({
+            ...prev,
+            byType: bumpByType(prev.byType, taskType, (type) => ({
+              ...type,
+              pending: type.pending + 1,
+              total: type.total + 1,
+            })),
+          }));
+        }
+      } else if (event.type === 'task:started') {
+        const data = event.data as { task_type?: string };
+        const taskType = data.task_type;
+        if (taskType) {
+          setStatus((prev) => ({
+            ...prev,
+            byType: bumpByType(prev.byType, taskType, (type) => ({
+              ...type,
+              pending: Math.max(0, type.pending - 1),
+              processing: type.processing + 1,
+            })),
+          }));
+        }
+      } else if (event.type === 'task:completed') {
+        const data = event.data as { task_type?: string };
+        const taskType = data.task_type;
+        if (taskType) {
+          setStatus((prev) => ({
+            ...prev,
+            byType: bumpByType(prev.byType, taskType, (type) => ({
+              ...type,
+              processing: Math.max(0, type.processing - 1),
+              completed: type.completed + 1,
+            })),
+          }));
+        }
+      } else if (event.type === 'task:retrying') {
+        const data = event.data as { task_type?: string };
+        const taskType = data.task_type;
+        if (taskType) {
+          setStatus((prev) => ({
+            ...prev,
+            byType: bumpByType(prev.byType, taskType, (type) => ({
+              ...type,
+              processing: Math.max(0, type.processing - 1),
+              pending: type.pending + 1,
+            })),
+          }));
+        }
+      } else if (event.type === 'task:failed') {
+        const data = event.data as { task_type?: string };
+        const taskType = data.task_type;
+        if (taskType) {
+          setStatus((prev) => ({
+            ...prev,
+            byType: bumpByType(prev.byType, taskType, (type) => ({
+              ...type,
+              processing: Math.max(0, type.processing - 1),
+              failed: type.failed + 1,
+            })),
+          }));
+        }
       } else if (event.type === 'classify:queued') {
         setStatus((prev) => ({
           ...prev,

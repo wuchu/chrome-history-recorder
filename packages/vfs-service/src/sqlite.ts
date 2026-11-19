@@ -9,6 +9,36 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 
+const MAX_TAG_NAME_LENGTH = 40;
+
+/**
+ * Normalize a tag candidate into a canonical vocabulary key.
+ * Lowercases, strips a leading `NEW:` marker, collapses whitespace and
+ * truncates overly long names.
+ */
+export function normalizeTagName(raw: string): string {
+  return raw
+    .trim()
+    .replace(/^new\s*[:：]\s*/i, '')
+    .replace(/^#+/, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+    .slice(0, MAX_TAG_NAME_LENGTH);
+}
+
+function parseTagList(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.filter((tag): tag is string => typeof tag === 'string')
+      : [];
+  } catch {
+    return [];
+  }
+}
+
 // SQLite schema constants
 const FILES_TABLE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS files (
@@ -45,21 +75,50 @@ CREATE INDEX IF NOT EXISTS idx_files_classified ON files(classified_at) WHERE cl
 CREATE INDEX IF NOT EXISTS idx_files_starred ON files(is_starred) WHERE is_starred = 1;
 `;
 
-const QUEUE_TABLE_SCHEMA = `
-CREATE TABLE IF NOT EXISTS classify_queue (
+const TASKS_TABLE_SCHEMA = `
+CREATE TABLE IF NOT EXISTS tasks (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    hash            TEXT NOT NULL UNIQUE REFERENCES files(hash),
-    status          TEXT DEFAULT 'pending',
-    priority        INTEGER DEFAULT 5,
-    added_at        TEXT NOT NULL,
+    task_type       TEXT NOT NULL,
+    target_hash     TEXT NOT NULL REFERENCES files(hash) ON DELETE CASCADE,
+    status          TEXT NOT NULL DEFAULT 'pending',
+    priority        INTEGER NOT NULL DEFAULT 5,
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    max_attempts    INTEGER NOT NULL DEFAULT 3,
+    next_run_at     TEXT,
     started_at      TEXT,
     completed_at    TEXT,
     error           TEXT,
-    retries         INTEGER DEFAULT 0
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    UNIQUE(task_type, target_hash)
 );
 
-CREATE INDEX IF NOT EXISTS idx_queue_status ON classify_queue(status);
-CREATE INDEX IF NOT EXISTS idx_queue_priority ON classify_queue(priority DESC, added_at ASC);
+CREATE INDEX IF NOT EXISTS idx_tasks_claim ON tasks(status, next_run_at, priority DESC, created_at ASC);
+CREATE INDEX IF NOT EXISTS idx_tasks_hash ON tasks(target_hash);
+`;
+
+const TAGS_TABLE_SCHEMA = `
+CREATE TABLE IF NOT EXISTS tags (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    name            TEXT NOT NULL UNIQUE,
+    label           TEXT,
+    usage_count     INTEGER NOT NULL DEFAULT 0,
+    created_by      TEXT NOT NULL DEFAULT 'ai',
+    is_pinned       INTEGER NOT NULL DEFAULT 0,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_tags_usage ON tags(usage_count DESC);
+CREATE INDEX IF NOT EXISTS idx_tags_pinned ON tags(is_pinned) WHERE is_pinned = 1;
+
+CREATE TABLE IF NOT EXISTS tag_aliases (
+    alias           TEXT PRIMARY KEY,
+    tag_id          INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    created_at      TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_tag_aliases_tag ON tag_aliases(tag_id);
 `;
 
 /**
@@ -87,7 +146,7 @@ export interface FileMetadata {
 }
 
 /**
- * Classification queue item type
+ * Classification queue item type (legacy shape, backed by `tasks`).
  */
 export interface QueueItem {
   id: number;
@@ -99,6 +158,82 @@ export interface QueueItem {
   completed_at: string | null;
   error: string | null;
   retries: number;
+}
+
+/**
+ * Task types supported by the unified engine. Extensible by design.
+ */
+export type TaskType = 'classify' | 'rename' | (string & {});
+
+export type TaskStatus = 'pending' | 'processing' | 'completed' | 'failed';
+
+export interface TaskItem {
+  id: number;
+  task_type: TaskType;
+  target_hash: string;
+  status: TaskStatus;
+  priority: number;
+  attempts: number;
+  max_attempts: number;
+  next_run_at: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TaskStatusSummary {
+  pending: number;
+  processing: number;
+  completed: number;
+  failed: number;
+  total: number;
+}
+
+export interface QueueStatus extends TaskStatusSummary {
+  byType: Record<string, TaskStatusSummary>;
+}
+
+export interface EnqueueTaskParams {
+  taskType: TaskType;
+  hash: string;
+  priority?: number;
+  maxAttempts?: number;
+  /**
+   * When true an existing task row is reset to pending. When false (default)
+   * enqueueing is idempotent and never resurrects a completed/failed task.
+   */
+  requeue?: boolean;
+}
+
+export interface UpdateTaskStatusParams {
+  taskType: TaskType;
+  hash: string;
+  status: TaskStatus;
+  error?: string;
+  /** Delay before a failed task becomes claimable again. */
+  retryDelayMs?: number;
+}
+
+export interface TagRecord {
+  id: number;
+  name: string;
+  label: string | null;
+  usage_count: number;
+  created_by: 'ai' | 'user' | string;
+  is_pinned: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ApplyClassificationParams {
+  hash: string;
+  tags: string[];
+  aliases?: Record<string, string>;
+  confidence?: number;
+  modelUsed?: string;
+  classifiedAt?: string;
 }
 
 /**
@@ -126,17 +261,6 @@ export interface MetadataUpdate {
   model_used?: string;
   is_starred?: boolean;
   user_notes?: string;
-}
-
-/**
- * Queue status summary
- */
-export interface QueueStatus {
-  pending: number;
-  processing: number;
-  completed: number;
-  failed: number;
-  total: number;
 }
 
 /**
@@ -169,7 +293,78 @@ export class SQLiteDatabase {
    */
   private initializeSchema(): void {
     this.db.exec(FILES_TABLE_SCHEMA);
-    this.db.exec(QUEUE_TABLE_SCHEMA);
+    this.db.exec(TASKS_TABLE_SCHEMA);
+    this.db.exec(TAGS_TABLE_SCHEMA);
+    this.migrateClassifyQueue();
+    this.backfillTagVocabulary();
+  }
+
+  /**
+   * Seed the vocabulary from tags already present on files (legacy user tags).
+   * Runs once, when the vocabulary is still empty.
+   */
+  private backfillTagVocabulary(): void {
+    const count = this.db.prepare('SELECT COUNT(*) as count FROM tags').get() as {
+      count: number;
+    };
+    if (count.count > 0) return;
+
+    const rows = this.db.prepare('SELECT tags FROM files WHERE tags IS NOT NULL').all() as Array<{
+      tags: string | null;
+    }>;
+    const seen = new Set<string>();
+    const transaction = this.db.transaction(() => {
+      for (const row of rows) {
+        for (const tag of parseTagList(row.tags)) {
+          if (tag.startsWith('system:')) continue;
+          const normalized = normalizeTagName(tag);
+          if (!normalized || seen.has(normalized)) continue;
+          seen.add(normalized);
+          this.ensureTag(normalized, 'user');
+        }
+      }
+      if (seen.size > 0) this.recomputeTagUsage();
+    });
+    transaction();
+  }
+
+  /**
+   * Migrate the legacy `classify_queue` table into the unified `tasks` table.
+   * The old table is dropped once its rows have been copied.
+   */
+  private migrateClassifyQueue(): void {
+    const table = this.db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'classify_queue'")
+      .get() as { name: string } | undefined;
+    if (!table) return;
+
+    const columns = this.db.prepare('PRAGMA table_info(classify_queue)').all() as Array<{
+      name: string;
+    }>;
+    const has = (column: string) => columns.some((c) => c.name === column);
+    const retriesExpr = has('retries') ? 'COALESCE(retries, 0)' : '0';
+    const addedAtExpr = has('added_at') ? 'added_at' : "strftime('%Y-%m-%dT%H:%M:%fZ','now')";
+
+    const migrate = this.db.transaction(() => {
+      this.db
+        .prepare(
+          `
+          INSERT OR IGNORE INTO tasks (
+            task_type, target_hash, status, priority, attempts, max_attempts,
+            next_run_at, started_at, completed_at, error, created_at, updated_at
+          )
+          SELECT
+            'classify', hash, COALESCE(status, 'pending'), COALESCE(priority, 5),
+            ${retriesExpr}, 3, NULL, started_at, completed_at, error,
+            ${addedAtExpr}, ${addedAtExpr}
+          FROM classify_queue
+          WHERE hash IN (SELECT hash FROM files)
+        `
+        )
+        .run();
+      this.db.exec('DROP TABLE classify_queue');
+    });
+    migrate();
   }
 
   /**
@@ -320,9 +515,9 @@ export class SQLiteDatabase {
    * Hard delete file (remove record)
    */
   hardDeleteFile(hash: string): boolean {
-    // First remove from queue if exists
-    const queueStmt = this.db.prepare('DELETE FROM classify_queue WHERE hash = ?');
-    queueStmt.run(hash);
+    // First remove any tasks for this hash
+    const taskStmt = this.db.prepare('DELETE FROM tasks WHERE target_hash = ?');
+    taskStmt.run(hash);
 
     const stmt = this.db.prepare('DELETE FROM files WHERE hash = ?');
     const result = stmt.run(hash);
@@ -524,103 +719,314 @@ export class SQLiteDatabase {
   }
 
   /**
-   * Enqueue classification task
+   * Enqueue a typed task for a hash.
+   *
+   * By default enqueueing is idempotent: an existing row for the same
+   * `(task_type, target_hash)` is left untouched, so captured media never
+   * resurrects a task the user already refreshed or the engine already ran.
    */
-  enqueueClassification(hash: string, priority: number = 5): boolean {
+  enqueueTask(params: EnqueueTaskParams): boolean {
+    const { taskType, hash, priority = 5, maxAttempts = 3, requeue = false } = params;
     if (!this.fileExists(hash)) return false;
 
     const now = new Date().toISOString();
-    const existingStmt = this.db.prepare('SELECT 1 FROM classify_queue WHERE hash = ?');
-    const exists = existingStmt.get(hash) !== undefined;
-
-    if (exists) {
-      const updateStmt = this.db.prepare(`
-        UPDATE classify_queue
-        SET status = 'pending', priority = ?, added_at = ?, started_at = NULL,
-            completed_at = NULL, error = NULL, retries = 0
-        WHERE hash = ?
+    if (requeue) {
+      const stmt = this.db.prepare(`
+        INSERT INTO tasks (
+          task_type, target_hash, status, priority, attempts, max_attempts,
+          next_run_at, started_at, completed_at, error, created_at, updated_at
+        ) VALUES (?, ?, 'pending', ?, 0, ?, NULL, NULL, NULL, NULL, ?, ?)
+        ON CONFLICT(task_type, target_hash) DO UPDATE SET
+          status = 'pending',
+          priority = excluded.priority,
+          max_attempts = excluded.max_attempts,
+          attempts = 0,
+          next_run_at = NULL,
+          started_at = NULL,
+          completed_at = NULL,
+          error = NULL,
+          updated_at = excluded.updated_at
       `);
-      updateStmt.run(priority, now, hash);
+      stmt.run(taskType, hash, priority, maxAttempts, now, now);
       return true;
     }
 
-    const insertStmt = this.db.prepare(`
-      INSERT INTO classify_queue (hash, status, priority, added_at, retries)
-      VALUES (?, 'pending', ?, ?, 0)
+    const stmt = this.db.prepare(`
+      INSERT INTO tasks (
+        task_type, target_hash, status, priority, attempts, max_attempts,
+        next_run_at, started_at, completed_at, error, created_at, updated_at
+      ) VALUES (?, ?, 'pending', ?, 0, ?, NULL, NULL, NULL, NULL, ?, ?)
+      ON CONFLICT(task_type, target_hash) DO NOTHING
     `);
-    insertStmt.run(hash, priority, now);
+    stmt.run(taskType, hash, priority, maxAttempts, now, now);
     return true;
   }
 
   /**
-   * Get next pending task
+   * Legacy classification enqueue (requeues an existing row).
    */
-  getNextPendingTask(): QueueItem | null {
-    const stmt = this.db.prepare(`
-      SELECT * FROM classify_queue
-      WHERE status = 'pending'
-      ORDER BY priority DESC, added_at ASC
-      LIMIT 1
-    `);
-    const row = stmt.get() as QueueItem | undefined;
-    return row || null;
+  enqueueClassification(hash: string, priority: number = 5): boolean {
+    return this.enqueueTask({ taskType: 'classify', hash, priority, requeue: true });
   }
 
   /**
-   * Update task status
+   * Atomically claim up to `limit` due tasks for processing.
    */
+  claimTasks(limit: number): TaskItem[] {
+    if (limit <= 0) return [];
+    const now = new Date().toISOString();
+    const selectStmt = this.db.prepare(`
+      SELECT * FROM tasks
+      WHERE status = 'pending' AND (next_run_at IS NULL OR next_run_at <= ?)
+      ORDER BY priority DESC, created_at ASC
+      LIMIT ?
+    `);
+    const updateStmt = this.db.prepare(`
+      UPDATE tasks
+      SET status = 'processing', started_at = ?, updated_at = ?, error = NULL
+      WHERE id = ? AND status = 'pending'
+    `);
+
+    const claimed: TaskItem[] = [];
+    const transaction = this.db.transaction(() => {
+      const rows = selectStmt.all(now, limit) as TaskItem[];
+      for (const row of rows) {
+        const result = updateStmt.run(now, now, row.id);
+        if (result.changes > 0) {
+          claimed.push({ ...row, status: 'processing', started_at: now, updated_at: now });
+        }
+      }
+    });
+    transaction();
+    return claimed;
+  }
+
+  /**
+   * Update a typed task's status, applying failure backoff.
+   */
+  updateTaskStatus(params: UpdateTaskStatusParams): boolean;
+  updateTaskStatus(hash: string, status: TaskStatus, error?: string): boolean;
   updateTaskStatus(
-    hash: string,
-    status: 'pending' | 'processing' | 'completed' | 'failed',
+    paramsOrHash: UpdateTaskStatusParams | string,
+    status?: TaskStatus,
     error?: string
   ): boolean {
     const now = new Date().toISOString();
-    let stmt: Database.Statement;
 
-    if (status === 'processing') {
-      stmt = this.db.prepare(`
-        UPDATE classify_queue SET status = ?, started_at = ? WHERE hash = ?
-      `);
-      stmt.run(status, now, hash);
-    } else if (status === 'completed') {
-      stmt = this.db.prepare(`
-        UPDATE classify_queue SET status = ?, completed_at = ? WHERE hash = ?
-      `);
-      stmt.run(status, now, hash);
-    } else if (status === 'failed') {
-      stmt = this.db.prepare(`
-        UPDATE classify_queue SET status = ?, error = ?, retries = retries + 1 WHERE hash = ?
-      `);
-      stmt.run(status, error ?? 'Unknown error', hash);
-    } else {
-      stmt = this.db.prepare(`
-        UPDATE classify_queue SET status = ?, error = NULL WHERE hash = ?
-      `);
-      stmt.run(status, hash);
+    // Legacy classification-only signature: `failed` is terminal, no backoff.
+    if (typeof paramsOrHash === 'string') {
+      const nextStatus = status ?? 'pending';
+      if (nextStatus === 'processing') {
+        this.db
+          .prepare(
+            `UPDATE tasks SET status = 'processing', started_at = ?, updated_at = ?, error = NULL
+             WHERE task_type = 'classify' AND target_hash = ?`
+          )
+          .run(now, now, paramsOrHash);
+      } else if (nextStatus === 'completed') {
+        this.db
+          .prepare(
+            `UPDATE tasks SET status = 'completed', completed_at = ?, updated_at = ?, error = NULL
+             WHERE task_type = 'classify' AND target_hash = ?`
+          )
+          .run(now, now, paramsOrHash);
+      } else if (nextStatus === 'failed') {
+        this.db
+          .prepare(
+            `UPDATE tasks SET status = 'failed', error = ?, attempts = attempts + 1, updated_at = ?
+             WHERE task_type = 'classify' AND target_hash = ?`
+          )
+          .run(error ?? 'Unknown error', now, paramsOrHash);
+      } else {
+        this.db
+          .prepare(
+            `UPDATE tasks SET status = 'pending', next_run_at = NULL, started_at = NULL,
+               error = NULL, updated_at = ?
+             WHERE task_type = 'classify' AND target_hash = ?`
+          )
+          .run(now, paramsOrHash);
+      }
+      return true;
     }
 
+    const { taskType, hash, status: nextStatus, error: taskError, retryDelayMs } = paramsOrHash;
+
+    if (nextStatus === 'processing') {
+      const stmt = this.db.prepare(`
+        UPDATE tasks SET status = 'processing', started_at = ?, updated_at = ?, error = NULL
+        WHERE task_type = ? AND target_hash = ?
+      `);
+      stmt.run(now, now, taskType, hash);
+      return true;
+    }
+
+    if (nextStatus === 'completed') {
+      const stmt = this.db.prepare(`
+        UPDATE tasks SET status = 'completed', completed_at = ?, updated_at = ?, error = NULL
+        WHERE task_type = ? AND target_hash = ?
+      `);
+      stmt.run(now, now, taskType, hash);
+      return true;
+    }
+
+    if (nextStatus === 'failed') {
+      const nextRunAt = retryDelayMs ? new Date(Date.now() + retryDelayMs).toISOString() : null;
+      const stmt = this.db.prepare(`
+        UPDATE tasks
+        SET attempts = attempts + 1,
+            status = CASE WHEN attempts + 1 >= max_attempts THEN 'failed' ELSE 'pending' END,
+            next_run_at = CASE WHEN attempts + 1 >= max_attempts THEN NULL ELSE ? END,
+            started_at = NULL,
+            error = ?,
+            updated_at = ?
+        WHERE task_type = ? AND target_hash = ?
+      `);
+      stmt.run(nextRunAt, taskError ?? 'Unknown error', now, taskType, hash);
+      return true;
+    }
+
+    const stmt = this.db.prepare(`
+      UPDATE tasks SET status = 'pending', next_run_at = NULL, started_at = NULL, error = NULL,
+        updated_at = ? WHERE task_type = ? AND target_hash = ?
+    `);
+    stmt.run(now, taskType, hash);
     return true;
   }
 
   /**
-   * Get queue status summary
+   * Requeue a single typed task, resetting attempts and backoff.
+   *
+   * Files indexed before the typed task engine may have no row for this type
+   * yet, so a manual single-file refresh falls back to creating one.
+   */
+  requeueTask(taskType: TaskType, hash: string): boolean {
+    const now = new Date().toISOString();
+    const stmt = this.db.prepare(`
+      UPDATE tasks
+      SET status = 'pending', attempts = 0, next_run_at = NULL, started_at = NULL,
+          completed_at = NULL, error = NULL, updated_at = ?
+      WHERE task_type = ? AND target_hash = ?
+    `);
+    if (stmt.run(now, taskType, hash).changes > 0) return true;
+    return this.enqueueTask({ taskType, hash, requeue: true });
+  }
+
+  /**
+   * Requeue every task of a type (full rescan), creating rows for files that
+   * never had that task type. When `taskType` is omitted all existing task
+   * types are requeued.
+   */
+  requeueAll(taskType?: TaskType): number {
+    const now = new Date().toISOString();
+    if (taskType) {
+      const transaction = this.db.transaction(() => {
+        this.db
+          .prepare(
+            `INSERT INTO tasks (
+               task_type, target_hash, status, priority, attempts, max_attempts,
+               next_run_at, started_at, completed_at, error, created_at, updated_at
+             )
+             SELECT ?, hash, 'pending', 5, 0, 3, NULL, NULL, NULL, NULL, ?, ?
+             FROM files WHERE is_deleted = 0
+             ON CONFLICT(task_type, target_hash) DO NOTHING`
+          )
+          .run(taskType, now, now);
+        return this.db
+          .prepare(
+            `UPDATE tasks
+             SET status = 'pending', attempts = 0, next_run_at = NULL, started_at = NULL,
+                 completed_at = NULL, error = NULL, updated_at = ?
+             WHERE task_type = ?`
+          )
+          .run(now, taskType).changes;
+      });
+      return transaction();
+    }
+    const stmt = this.db.prepare(`
+      UPDATE tasks
+      SET status = 'pending', attempts = 0, next_run_at = NULL, started_at = NULL,
+          completed_at = NULL, error = NULL, updated_at = ?
+    `);
+    return stmt.run(now).changes;
+  }
+
+  /**
+   * Recover tasks left in `processing` by a terminated service worker.
+   */
+  recoverStaleProcessingTasks(): number {
+    const now = new Date().toISOString();
+    const stmt = this.db.prepare(`
+      UPDATE tasks
+      SET status = 'pending', started_at = NULL, next_run_at = NULL, updated_at = ?
+      WHERE status = 'processing'
+    `);
+    return stmt.run(now).changes;
+  }
+
+  /**
+   * Get all task rows for a hash.
+   */
+  getTasksByHash(hash: string): TaskItem[] {
+    const stmt = this.db.prepare('SELECT * FROM tasks WHERE target_hash = ? ORDER BY task_type');
+    return stmt.all(hash) as TaskItem[];
+  }
+
+  /**
+   * Get next pending classification task (legacy).
+   */
+  getNextPendingTask(): QueueItem | null {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM tasks WHERE task_type = 'classify' AND status = 'pending'
+         ORDER BY priority DESC, created_at ASC LIMIT 1`
+      )
+      .get() as TaskItem | undefined;
+    return row ? this.toQueueItem(row) : null;
+  }
+
+  private toQueueItem(task: TaskItem): QueueItem {
+    return {
+      id: task.id,
+      hash: task.target_hash,
+      status: task.status,
+      priority: task.priority,
+      added_at: task.created_at,
+      started_at: task.started_at,
+      completed_at: task.completed_at,
+      error: task.error,
+      retries: task.attempts,
+    };
+  }
+
+  /**
+   * Get queue status summary, overall and per task type.
    */
   getQueueStatus(): QueueStatus {
     const stmt = this.db.prepare(`
-      SELECT status, COUNT(*) as count FROM classify_queue GROUP BY status
+      SELECT task_type, status, COUNT(*) as count FROM tasks GROUP BY task_type, status
     `);
-    const rows = stmt.all() as { status: string; count: number }[];
+    const rows = stmt.all() as { task_type: string; status: string; count: number }[];
 
-    const status: QueueStatus = {
+    const emptySummary = (): TaskStatusSummary => ({
       pending: 0,
       processing: 0,
       completed: 0,
       failed: 0,
       total: 0,
-    };
+    });
 
+    const status: QueueStatus = { ...emptySummary(), byType: {} };
     for (const row of rows) {
-      status[row.status as keyof QueueStatus] = row.count;
+      const summary = status.byType[row.task_type] ?? emptySummary();
+      if (row.status in summary && row.status !== 'total') {
+        summary[row.status as keyof TaskStatusSummary] = row.count;
+      }
+      summary.total += row.count;
+      status.byType[row.task_type] = summary;
+
+      if (row.status in status && row.status !== 'total' && row.status !== 'byType') {
+        status[row.status as keyof TaskStatusSummary] = row.count;
+      }
       status.total += row.count;
     }
 
@@ -628,56 +1034,396 @@ export class SQLiteDatabase {
   }
 
   /**
-   * Get pending tasks (for scheduler)
+   * Get pending classification tasks (legacy).
    */
   getPendingTasks(limit: number = 10): QueueItem[] {
-    const stmt = this.db.prepare(`
-      SELECT * FROM classify_queue
-      WHERE status = 'pending'
-      ORDER BY priority DESC, added_at ASC
-      LIMIT ?
-    `);
-    return stmt.all(limit) as QueueItem[];
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM tasks WHERE task_type = 'classify' AND status = 'pending'
+         ORDER BY priority DESC, created_at ASC LIMIT ?`
+      )
+      .all(limit) as TaskItem[];
+    return rows.map((row) => this.toQueueItem(row));
   }
 
   /**
-   * Get failed tasks
+   * Get failed tasks, optionally filtered by type.
    */
-  getFailedTasks(): QueueItem[] {
-    const stmt = this.db.prepare(`
-      SELECT * FROM classify_queue WHERE status = 'failed' ORDER BY added_at ASC
-    `);
-    return stmt.all() as QueueItem[];
+  getFailedTasks(taskType?: TaskType): QueueItem[] {
+    const rows = taskType
+      ? (this.db
+          .prepare(
+            `SELECT * FROM tasks WHERE status = 'failed' AND task_type = ?
+             ORDER BY created_at ASC`
+          )
+          .all(taskType) as TaskItem[])
+      : (this.db
+          .prepare(`SELECT * FROM tasks WHERE status = 'failed' ORDER BY created_at ASC`)
+          .all() as TaskItem[]);
+    return rows.map((row) => this.toQueueItem(row));
   }
 
   /**
-   * Retry failed tasks
+   * Retry failed tasks, optionally filtered by type.
    */
-  retryFailedTasks(): number {
+  retryFailedTasks(taskType?: TaskType): number {
+    const now = new Date().toISOString();
+    if (taskType) {
+      const stmt = this.db.prepare(`
+        UPDATE tasks SET status = 'pending', attempts = 0, next_run_at = NULL, error = NULL,
+          started_at = NULL, updated_at = ? WHERE status = 'failed' AND task_type = ?
+      `);
+      return stmt.run(now, taskType).changes;
+    }
     const stmt = this.db.prepare(`
-      UPDATE classify_queue SET status = 'pending', error = NULL WHERE status = 'failed'
+      UPDATE tasks SET status = 'pending', attempts = 0, next_run_at = NULL, error = NULL,
+        started_at = NULL, updated_at = ? WHERE status = 'failed'
     `);
-    const result = stmt.run();
-    return result.changes;
+    return stmt.run(now).changes;
   }
 
   /**
-   * Clear queue
+   * Clear tasks, optionally filtered by type.
    */
-  clearQueue(): void {
-    this.db.exec('DELETE FROM classify_queue');
+  clearQueue(taskType?: TaskType): void {
+    if (taskType) {
+      this.db.prepare('DELETE FROM tasks WHERE task_type = ?').run(taskType);
+    } else {
+      this.db.exec('DELETE FROM tasks');
+    }
   }
 
   /**
-   * Clear index: delete all rows from files and classify_queue tables
+   * Clear index: delete all tasks, files, and the tag vocabulary.
    */
   clearIndex(): { success: boolean } {
     const transaction = this.db.transaction(() => {
-      this.db.exec('DELETE FROM classify_queue');
+      this.db.exec('DELETE FROM tasks');
+      this.db.exec('DELETE FROM tag_aliases');
+      this.db.exec('DELETE FROM tags');
       this.db.exec('DELETE FROM files');
     });
     transaction();
     return { success: true };
+  }
+
+  /* ----------------------------------------------------------------------- */
+  /* Tag vocabulary                                                           */
+  /* ----------------------------------------------------------------------- */
+
+  /**
+   * List vocabulary tags ordered by pinned state and usage.
+   */
+  listTags(options: { limit?: number; pinnedOnly?: boolean } = {}): TagRecord[] {
+    const clauses: string[] = [];
+    if (options.pinnedOnly) clauses.push('is_pinned = 1');
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const limit = options.limit ?? 500;
+    return this.db
+      .prepare(
+        `SELECT * FROM tags ${where}
+         ORDER BY is_pinned DESC, usage_count DESC, name ASC LIMIT ?`
+      )
+      .all(limit) as TagRecord[];
+  }
+
+  /**
+   * Get a single tag by id.
+   */
+  getTag(id: number): TagRecord | null {
+    const row = this.db.prepare('SELECT * FROM tags WHERE id = ?').get(id) as TagRecord | undefined;
+    return row ?? null;
+  }
+
+  /**
+   * Get a tag by canonical name (case-insensitive).
+   */
+  getTagByName(name: string): TagRecord | null {
+    const row = this.db.prepare('SELECT * FROM tags WHERE name = ? COLLATE NOCASE').get(name) as
+      | TagRecord
+      | undefined;
+    return row ?? null;
+  }
+
+  /**
+   * Names of the most relevant tags for the classification prompt window.
+   */
+  getTagVocabulary(limit: number = 40): string[] {
+    const rows = this.db
+      .prepare(
+        `SELECT name FROM tags
+         ORDER BY is_pinned DESC, usage_count DESC, name ASC LIMIT ?`
+      )
+      .all(limit) as Array<{ name: string }>;
+    return rows.map((row) => row.name);
+  }
+
+  /**
+   * Resolve a candidate tag through the alias cache and existing vocabulary.
+   * Returns the canonical tag name, or null when the candidate is unknown.
+   */
+  resolveTagName(candidate: string): string | null {
+    const normalized = normalizeTagName(candidate);
+    if (!normalized) return null;
+
+    const alias = this.db
+      .prepare('SELECT tag_id FROM tag_aliases WHERE alias = ?')
+      .get(normalized) as { tag_id: number } | undefined;
+    if (alias) {
+      const tag = this.getTag(alias.tag_id);
+      if (tag) return tag.name;
+    }
+
+    const existing = this.getTagByName(normalized);
+    return existing ? existing.name : null;
+  }
+
+  /**
+   * Apply a classification result: resolve/create canonical tags, record
+   * aliases, replace content tags on the file (preserving `system:*`), and
+   * write classification metadata. Category is intentionally never written.
+   */
+  applyClassification(params: ApplyClassificationParams): { tags: string[] } {
+    const file = this.getFile(params.hash);
+    if (!file) {
+      throw new Error(`File not found: ${params.hash}`);
+    }
+
+    const now = params.classifiedAt ?? new Date().toISOString();
+    const systemTags = parseTagList(file.tags).filter((tag) => tag.startsWith('system:'));
+    const canonical: string[] = [];
+
+    const transaction = this.db.transaction(() => {
+      if (params.aliases) {
+        for (const [aliasRaw, canonicalRaw] of Object.entries(params.aliases)) {
+          const alias = normalizeTagName(aliasRaw);
+          const canonicalName = normalizeTagName(canonicalRaw);
+          if (!alias || !canonicalName) continue;
+          const tag = this.ensureTag(canonicalName, 'ai');
+          this.db
+            .prepare(
+              `INSERT INTO tag_aliases (alias, tag_id, created_at) VALUES (?, ?, ?)
+               ON CONFLICT(alias) DO UPDATE SET tag_id = excluded.tag_id`
+            )
+            .run(alias, tag.id, now);
+        }
+      }
+
+      for (const raw of params.tags) {
+        const normalized = normalizeTagName(raw);
+        if (!normalized) continue;
+        const tag = this.resolveOrCreateTag(normalized);
+        if (!canonical.includes(tag.name)) {
+          canonical.push(tag.name);
+        }
+      }
+
+      const merged = [...new Set([...systemTags, ...canonical])];
+      const fields: string[] = ['tags = ?', 'updated_at = ?'];
+      const values: unknown[] = [merged.length > 0 ? JSON.stringify(merged) : null, now];
+      if (params.confidence !== undefined) {
+        fields.push('confidence = ?');
+        values.push(params.confidence);
+      }
+      if (params.modelUsed !== undefined) {
+        fields.push('model_used = ?');
+        values.push(params.modelUsed);
+      }
+      fields.push('classified_at = ?');
+      values.push(now);
+      values.push(params.hash);
+
+      this.db.prepare(`UPDATE files SET ${fields.join(', ')} WHERE hash = ?`).run(...values);
+
+      this.recomputeTagUsage();
+    });
+    transaction();
+
+    return { tags: canonical };
+  }
+
+  /**
+   * Rename a tag, rewriting file associations and preserving the old name as
+   * an alias.
+   */
+  renameTag(params: { id: number; name: string; label?: string }): TagRecord {
+    const tag = this.getTag(params.id);
+    if (!tag) throw new Error(`Tag not found: ${params.id}`);
+
+    const nextName = normalizeTagName(params.name);
+    if (!nextName) throw new Error('Tag name cannot be empty');
+
+    const conflict = this.getTagByName(nextName);
+    if (conflict && conflict.id !== tag.id) {
+      throw new Error(`Tag already exists: ${nextName}`);
+    }
+
+    const now = new Date().toISOString();
+    const label = params.label ?? nextName;
+    const transaction = this.db.transaction(() => {
+      this.db
+        .prepare('UPDATE tags SET name = ?, label = ?, updated_at = ? WHERE id = ?')
+        .run(nextName, label, now, tag.id);
+      this.replaceFileTagName(tag.name, nextName, now);
+      this.db
+        .prepare(
+          `INSERT INTO tag_aliases (alias, tag_id, created_at) VALUES (?, ?, ?)
+           ON CONFLICT(alias) DO NOTHING`
+        )
+        .run(normalizeTagName(tag.name), tag.id, now);
+      this.recomputeTagUsage();
+    });
+    transaction();
+
+    return this.getTag(tag.id)!;
+  }
+
+  /**
+   * Merge `sourceId` into `targetId`, reassigning files and aliases.
+   */
+  mergeTags(sourceId: number, targetId: number): TagRecord {
+    if (sourceId === targetId) throw new Error('Cannot merge a tag into itself');
+    const source = this.getTag(sourceId);
+    const target = this.getTag(targetId);
+    if (!source) throw new Error(`Tag not found: ${sourceId}`);
+    if (!target) throw new Error(`Tag not found: ${targetId}`);
+
+    const now = new Date().toISOString();
+    const transaction = this.db.transaction(() => {
+      this.replaceFileTagName(source.name, target.name, now);
+      this.db
+        .prepare('UPDATE OR REPLACE tag_aliases SET tag_id = ? WHERE tag_id = ?')
+        .run(target.id, source.id);
+      this.db
+        .prepare(
+          `INSERT INTO tag_aliases (alias, tag_id, created_at) VALUES (?, ?, ?)
+           ON CONFLICT(alias) DO UPDATE SET tag_id = excluded.tag_id`
+        )
+        .run(normalizeTagName(source.name), target.id, now);
+      this.db.prepare('DELETE FROM tags WHERE id = ?').run(source.id);
+      this.recomputeTagUsage();
+    });
+    transaction();
+
+    return this.getTag(target.id)!;
+  }
+
+  /**
+   * Delete a tag and remove it from all file tag lists.
+   */
+  deleteTag(id: number): boolean {
+    const tag = this.getTag(id);
+    if (!tag) return false;
+
+    const now = new Date().toISOString();
+    const transaction = this.db.transaction(() => {
+      const rows = this.db
+        .prepare('SELECT hash, tags FROM files WHERE tags IS NOT NULL')
+        .all() as Array<{ hash: string; tags: string | null }>;
+      const update = this.db.prepare('UPDATE files SET tags = ?, updated_at = ? WHERE hash = ?');
+      for (const row of rows) {
+        const tags = parseTagList(row.tags);
+        const next = tags.filter((t) => t.toLowerCase() !== tag.name.toLowerCase());
+        if (next.length !== tags.length) {
+          update.run(next.length > 0 ? JSON.stringify(next) : null, now, row.hash);
+        }
+      }
+      this.db.prepare('DELETE FROM tags WHERE id = ?').run(id);
+      this.recomputeTagUsage();
+    });
+    transaction();
+    return true;
+  }
+
+  /**
+   * Toggle a tag's pinned state for Side Panel tab visibility.
+   */
+  setTagPinned(id: number, pinned: boolean): TagRecord | null {
+    const now = new Date().toISOString();
+    const result = this.db
+      .prepare('UPDATE tags SET is_pinned = ?, updated_at = ? WHERE id = ?')
+      .run(pinned ? 1 : 0, now, id);
+    if (result.changes === 0) return null;
+    return this.getTag(id);
+  }
+
+  /**
+   * Ensure a tag row exists, creating it with `createdBy` when missing.
+   */
+  private ensureTag(name: string, createdBy: 'ai' | 'user'): TagRecord {
+    const normalized = normalizeTagName(name);
+    const existing = this.getTagByName(normalized);
+    if (existing) return existing;
+
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO tags (name, label, usage_count, created_by, is_pinned, created_at, updated_at)
+         VALUES (?, ?, 0, ?, 0, ?, ?)
+         ON CONFLICT(name) DO NOTHING`
+      )
+      .run(normalized, normalized, createdBy, now, now);
+    return this.getTagByName(normalized)!;
+  }
+
+  private resolveOrCreateTag(normalized: string): TagRecord {
+    const alias = this.db
+      .prepare('SELECT tag_id FROM tag_aliases WHERE alias = ?')
+      .get(normalized) as { tag_id: number } | undefined;
+    if (alias) {
+      const tag = this.getTag(alias.tag_id);
+      if (tag) return tag;
+    }
+    return this.ensureTag(normalized, 'ai');
+  }
+
+  private replaceFileTagName(oldName: string, newName: string, now: string): void {
+    const oldKey = oldName.toLowerCase();
+    const rows = this.db
+      .prepare('SELECT hash, tags FROM files WHERE tags IS NOT NULL')
+      .all() as Array<{ hash: string; tags: string | null }>;
+    const update = this.db.prepare('UPDATE files SET tags = ?, updated_at = ? WHERE hash = ?');
+
+    for (const row of rows) {
+      const tags = parseTagList(row.tags);
+      let changed = false;
+      const next = tags.map((tag) => {
+        if (tag.toLowerCase() === oldKey) {
+          changed = true;
+          return newName;
+        }
+        return tag;
+      });
+      if (!changed) continue;
+      update.run(JSON.stringify([...new Set(next)]), now, row.hash);
+    }
+  }
+
+  /**
+   * Recompute `usage_count` for every vocabulary tag from file tag lists.
+   */
+  recomputeTagUsage(): void {
+    const rows = this.db
+      .prepare('SELECT tags FROM files WHERE is_deleted = 0 AND tags IS NOT NULL')
+      .all() as Array<{ tags: string | null }>;
+
+    const counts = new Map<string, number>();
+    for (const row of rows) {
+      for (const tag of parseTagList(row.tags)) {
+        if (tag.startsWith('system:')) continue;
+        const key = tag.toLowerCase();
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+    }
+
+    const tags = this.db.prepare('SELECT id, name FROM tags').all() as Array<{
+      id: number;
+      name: string;
+    }>;
+    const update = this.db.prepare('UPDATE tags SET usage_count = ? WHERE id = ?');
+    for (const tag of tags) {
+      update.run(counts.get(tag.name.toLowerCase()) ?? 0, tag.id);
+    }
   }
 
   /**

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Integrate the Extension Background classifier with the local Ollama API to analyze captured media and produce structured classification results that update VFS metadata.
+Integrate the Extension Background classifier with the local Ollama API to analyze captured media and produce structured, tag-focused classification results that update VFS metadata and the AI-owned tag vocabulary.
 
 ## Requirements
 
@@ -22,19 +22,19 @@ The system SHALL integrate with local Ollama API from the Extension Background c
 - **THEN** the system SHALL keep queue controls usable where possible and report Ollama unavailable status to DevTools
 
 ### Requirement: Content analysis
-The system SHALL analyze captured media content using Ollama vision models.
+The system SHALL analyze captured media content using Ollama vision models and produce tag-focused results in a single call.
 
-#### Scenario: Image classification
-- **WHEN** an image file stored in VFS is processed
-- **THEN** the system SHALL use the configured vision model to analyze the image content
+#### Scenario: Image analysis
+- **WHEN** an image file stored in VFS is processed for classification
+- **THEN** the system SHALL use the configured vision model to generate tags and canonicalize them against the vocabulary in one call
 
-#### Scenario: Video classification
+#### Scenario: Video analysis
 - **WHEN** a video file stored in VFS is processed and a representative frame is available
-- **THEN** the system SHALL use the configured vision model to analyze the visual content
+- **THEN** the system SHALL use the configured vision model on the frame
 
-#### Scenario: Generate classification result
-- **WHEN** content analysis is complete
-- **THEN** the system SHALL return category, suggested filename, tags, and confidence score
+#### Scenario: Generate rename result
+- **WHEN** a rename task is processed
+- **THEN** the system SHALL return a suggested display filename from the vision model
 
 ### Requirement: Model configuration
 The system SHALL allow users to configure the Extension Background vision model, including selecting from models discovered from the configured local Ollama endpoint, through DevTools or Options UI and stored Extension configuration.
@@ -78,38 +78,63 @@ The system SHALL allow users to configure the Extension Background vision model,
 - **AND** the UI SHALL indicate that the configured model is not currently installed or available
 
 ### Requirement: Classification output
-The system SHALL produce structured classification results.
+The system SHALL produce structured classification results focused on tags.
 
 #### Scenario: Return classification data
 - **WHEN** classification is complete
-- **THEN** the system SHALL return JSON with tags (array), suggestedName, and confidence
-- **AND** the category field SHALL be deprecated but still returned for backward compatibility
+- **THEN** the system SHALL return generated tags, resolved canonical tags, and a confidence score
+- **AND** it SHALL NOT require a category field
+
+### Requirement: AI-generated tag vocabulary
+The system SHALL allow the Ollama classifier to create new tags beyond a predefined list and persist them in the VFS tag vocabulary.
+
+#### Scenario: Generate new tags
+- **WHEN** classification identifies content concepts not present in the current vocabulary
+- **THEN** the classifier SHALL be allowed to output new tags
+- **AND** the system SHALL persist them as vocabulary entries with `created_by = 'ai'`
+
+#### Scenario: Reuse existing tags
+- **WHEN** classification identifies a concept that matches an existing vocabulary tag
+- **THEN** the classifier SHALL output the existing canonical tag name
+- **AND** the system SHALL link the file to that canonical tag
+
+### Requirement: Near-synonym canonicalization
+The system SHALL use Ollama to judge whether newly generated candidate tags are near-synonyms of existing vocabulary tags, and merge them when appropriate.
+
+#### Scenario: Merge near-synonym candidate
+- **WHEN** a candidate tag is judged to be a near-synonym of an existing tag
+- **THEN** the system SHALL associate the file with the existing canonical tag
+- **AND** it SHALL record the candidate as an alias of the canonical tag
+
+#### Scenario: Create tag when no synonym exists
+- **WHEN** a candidate tag is judged to have no suitable existing synonym
+- **THEN** the system SHALL create a new canonical tag
+
+#### Scenario: Alias cache hit
+- **WHEN** a candidate tag has been previously mapped to a canonical tag
+- **THEN** the system SHALL reuse the cached mapping without asking the model again
+
+### Requirement: Vocabulary prompt window
+The system SHALL limit the tag vocabulary injected into the classification prompt to a bounded top-N set so the prompt stays effective as the vocabulary grows.
+
+#### Scenario: Bound prompt vocabulary
+- **WHEN** building the classification prompt
+- **THEN** the system SHALL include at most N existing tags, ordered by usage
+- **AND** N SHALL be configurable with a safe default
+
+#### Scenario: Candidate outside prompt window
+- **WHEN** a candidate matches a vocabulary tag that was not included in the prompt window
+- **THEN** the system SHALL still resolve it through normalization and the alias cache where possible
 
 ### Requirement: Tag-aware classification prompt
-The system SHALL use user-defined tags in the classification prompt.
+The system SHALL use the AI-owned tag vocabulary in the classification prompt.
 
 #### Scenario: Include available tags in prompt
 - **WHEN** building the classification prompt
-- **THEN** the system SHALL include the list of user-defined tags as "Available tags"
-- **AND** the prompt SHALL instruct the AI to select 1-3 tags from the list
+- **THEN** the system SHALL include a bounded top-N list of existing vocabulary tags
+- **AND** the prompt SHALL instruct the model to reuse an existing tag when it is a near-synonym and to mark genuinely new concepts as new tags
 
 #### Scenario: Prompt format with tags
-- **WHEN** the prompt is generated for Chinese
-- **THEN** the format SHALL be: "标签1,标签2 | 文件名"
-- **WHEN** the prompt is generated for English
-- **THEN** the format SHALL be: "TAG1,TAG2 | FILENAME"
-
-### Requirement: Multi-tag selection from predefined set
-The system SHALL select tags from the user-defined tag set.
-
-#### Scenario: Parse comma-separated tags
-- **WHEN** parsing the AI classification result
-- **THEN** the system SHALL split the tag portion by commas
-- **AND** the system SHALL trim whitespace from each tag
-- **AND** the system SHALL filter out tags not in the user-defined set
-- **AND** the system SHALL limit to maximum 3 tags
-
-#### Scenario: Fallback for invalid tags
-- **WHEN** AI returns tags not in the user-defined set
-- **THEN** the system SHALL ignore invalid tags
-- **AND** if no valid tags remain, the system MAY leave user_tags empty
+- **WHEN** the prompt is generated
+- **THEN** it SHALL define an unambiguous output format for tags, including a marker for new tags
+- **AND** it SHALL NOT restrict the model to only predefined tags

@@ -22,7 +22,12 @@ import {
   Tag,
   Typography,
 } from 'antd';
-import type { ExtensionConfig, FilenameStyle, TagDefinition } from '../../shared/extension-runtime';
+import type {
+  ExtensionConfig,
+  FilenameStyle,
+  TagDefinition,
+  VFSTagRecord,
+} from '../../shared/extension-runtime';
 import { useOptionsData } from './hooks/useOptionsData';
 
 const { Content } = Layout;
@@ -88,16 +93,20 @@ function App() {
     clearQueue,
     syncMediaIndex,
     clearMediaIndex,
+    tags,
+    refreshTags,
+    renameTag,
+    mergeTags,
+    deleteTag,
+    setTagPinned,
   } = useOptionsData();
 
   const [endpointDraft, setEndpointDraft] = useState(config.ollamaEndpoint);
   const [stylePromptDraft, setStylePromptDraft] = useState(config.filenameStylePrompt ?? '');
-  const [isTagModalVisible, setIsTagModalVisible] = useState(false);
-  const [isBatchImportVisible, setIsBatchImportVisible] = useState(false);
-  const [editingTag, setEditingTag] = useState<TagDefinition | null>(null);
-  const [isTranslating, setIsTranslating] = useState(false);
+  const [renamingTag, setRenamingTag] = useState<VFSTagRecord | null>(null);
+  const [mergingTag, setMergingTag] = useState<VFSTagRecord | null>(null);
   const [tagForm] = Form.useForm();
-  const [batchForm] = Form.useForm();
+  const [mergeForm] = Form.useForm();
 
   useEffect(() => {
     setEndpointDraft(config.ollamaEndpoint);
@@ -202,167 +211,71 @@ function App() {
     }
   };
 
-  // 标签管理功能
-  const openAddTagModal = () => {
-    setEditingTag(null);
-    tagForm.resetFields();
-    setIsTagModalVisible(true);
+  // AI 标签治理：重命名 / 合并 / 删除 / 置顶
+  const openRenameTagModal = (tag: VFSTagRecord) => {
+    setRenamingTag(tag);
+    tagForm.setFieldsValue({ name: tag.name, label: tag.label ?? '' });
   };
 
-  const openEditTagModal = (tag: TagDefinition) => {
-    setEditingTag(tag);
-    tagForm.setFieldsValue({
-      name: tag.name,
-      label: tag.label,
-    });
-    setIsTagModalVisible(true);
-  };
-
-  const handleTagModalOk = async () => {
+  const handleRenameTagOk = async () => {
+    if (!renamingTag) return;
     try {
       const values = await tagForm.validateFields();
-      let nextTags = [...config.userDefinedTags];
-
-      if (editingTag) {
-        // 编辑现有标签
-        nextTags = nextTags.map((tag) => {
-          if (tag.id === editingTag.id) {
-            return { ...tag, name: values.name, label: values.label };
-          }
-          return tag;
-        });
-      } else {
-        // 添加新标签
-        const newTag: TagDefinition = {
-          id: `user:${Date.now()}`,
-          name: values.name,
-          label: values.label,
-          isSystem: false,
-          sortOrder: nextTags.length + 1,
-        };
-        nextTags = [...nextTags, newTag];
-      }
-
-      await saveSetting(
-        { userDefinedTags: nextTags },
-        'tags',
-        editingTag ? '标签已更新' : '标签已添加'
-      );
-      setIsTagModalVisible(false);
+      await renameTag(renamingTag.id, values.name.trim(), values.label?.trim() || undefined);
+      messageApi.success('标签已重命名');
+      setRenamingTag(null);
     } catch (formError) {
-      console.error('标签表单验证失败:', formError);
+      console.error('标签重命名失败:', formError);
     }
   };
 
-  const handleDeleteTag = async (tagId: string) => {
-    const nextTags = config.userDefinedTags.filter((tag) => tag.id !== tagId);
-    await saveSetting({ userDefinedTags: nextTags }, 'tags', '标签已删除');
+  const openMergeTagModal = (tag: VFSTagRecord) => {
+    setMergingTag(tag);
+    mergeForm.resetFields();
   };
 
-  const handleMoveTag = async (tagId: string, direction: 'up' | 'down') => {
-    const currentIndex = config.userDefinedTags.findIndex((tag) => tag.id === tagId);
-    if (currentIndex === -1) return;
-
-    const nextTags = [...config.userDefinedTags];
-    if (direction === 'up' && currentIndex > 0) {
-      const temp = nextTags[currentIndex];
-      nextTags[currentIndex] = nextTags[currentIndex - 1];
-      nextTags[currentIndex - 1] = temp;
-    } else if (direction === 'down' && currentIndex < nextTags.length - 1) {
-      const temp = nextTags[currentIndex];
-      nextTags[currentIndex] = nextTags[currentIndex + 1];
-      nextTags[currentIndex + 1] = temp;
-    }
-
-    // 更新 sortOrder
-    const sortedTags = nextTags.map((tag, index) => ({ ...tag, sortOrder: index + 1 }));
-    await saveSetting({ userDefinedTags: sortedTags }, 'tags', '标签顺序已更新');
-  };
-
-  // 批量导入功能
-  const openBatchImportModal = () => {
-    batchForm.resetFields();
-    setIsBatchImportVisible(true);
-  };
-
-  const handleBatchImportOk = async () => {
+  const handleMergeTagOk = async () => {
+    if (!mergingTag) return;
     try {
-      const values = await batchForm.validateFields();
-      const text = values.tags.trim();
-
-      if (!text) {
-        messageApi.warning('请输入标签内容');
+      const values = await mergeForm.validateFields();
+      if (values.targetId === mergingTag.id) {
+        messageApi.warning('请选择不同的目标标签');
         return;
       }
-
-      // 解析标签
-      const lines = text.split('\n').filter((line: string) => line.trim());
-      const newTags: TagDefinition[] = [];
-      const currentMaxOrder = config.userDefinedTags.length;
-
-      lines.forEach((line: string, index: number) => {
-        const parts = line.split(',');
-        const name = parts[0]?.trim().toLowerCase().replace(/\s+/g, '_');
-        const label = parts[1]?.trim() || parts[0]?.trim();
-
-        if (name && label) {
-          newTags.push({
-            id: `user:${Date.now()}-${index}`,
-            name,
-            label,
-            isSystem: false,
-            sortOrder: currentMaxOrder + index + 1,
-          });
-        }
-      });
-
-      if (newTags.length === 0) {
-        messageApi.warning('没有解析到有效标签');
-        return;
-      }
-
-      const nextTags = [...config.userDefinedTags, ...newTags];
-      await saveSetting({ userDefinedTags: nextTags }, 'tags', `成功导入 ${newTags.length} 个标签`);
-      setIsBatchImportVisible(false);
+      await mergeTags(mergingTag.id, values.targetId);
+      messageApi.success('标签已合并');
+      setMergingTag(null);
     } catch (formError) {
-      console.error('批量导入失败:', formError);
+      console.error('标签合并失败:', formError);
     }
   };
 
-  const handleTranslate = async () => {
-    if (!serviceStatus.ollamaAvailable) {
-      messageApi.error('Ollama 不可用，无法翻译');
-      return;
-    }
-
-    setIsTranslating(true);
+  const handleDeleteTag = async (tag: VFSTagRecord) => {
     try {
-      const values = batchForm.getFieldsValue();
-      const text = values.tags || '';
+      await deleteTag(tag.id);
+      messageApi.success('标签已删除');
+    } catch (deleteError) {
+      const text = deleteError instanceof Error ? deleteError.message : '删除标签失败';
+      messageApi.error(text);
+    }
+  };
 
-      if (!text.trim()) {
-        messageApi.warning('请先输入标签内容');
-        setIsTranslating(false);
-        return;
-      }
+  const handleTogglePinned = async (tag: VFSTagRecord, pinned: boolean) => {
+    try {
+      await setTagPinned(tag.id, pinned);
+    } catch (pinError) {
+      const text = pinError instanceof Error ? pinError.message : '置顶标签失败';
+      messageApi.error(text);
+    }
+  };
 
-      // 使用 chrome.runtime 发送翻译请求到 background
-      const response = await chrome.runtime.sendMessage({
-        type: 'translate-tags',
-        text,
-      });
-
-      if (response && response.translated) {
-        batchForm.setFieldsValue({ tags: response.translated });
-        messageApi.success('翻译完成');
-      } else {
-        messageApi.error('翻译失败');
-      }
-    } catch (error) {
-      console.error('翻译失败:', error);
-      messageApi.error('翻译失败');
-    } finally {
-      setIsTranslating(false);
+  const handleRefreshTags = async () => {
+    try {
+      await refreshTags();
+      messageApi.success('标签词表已刷新');
+    } catch (refreshError) {
+      const text = refreshError instanceof Error ? refreshError.message : '刷新标签失败';
+      messageApi.error(text);
     }
   };
 
@@ -547,15 +460,8 @@ function App() {
 
               <Card
                 className="options-card"
-                title="标签管理"
-                extra={
-                  <Space>
-                    <Button onClick={openBatchImportModal}>批量导入</Button>
-                    <Button type="primary" onClick={openAddTagModal}>
-                      新增标签
-                    </Button>
-                  </Space>
-                }
+                title="AI 标签治理"
+                extra={<Button onClick={handleRefreshTags}>刷新标签</Button>}
               >
                 <div style={{ marginBottom: 16 }}>
                   <Title level={5} style={{ marginBottom: 8 }}>
@@ -572,15 +478,16 @@ function App() {
 
                 <div>
                   <Title level={5} style={{ marginBottom: 8 }}>
-                    用户定义标签
+                    AI 标签词表
                   </Title>
-                  {config.userDefinedTags.length === 0 ? (
-                    <Text type="secondary">
-                      暂无用户定义标签，点击"新增标签"添加，或使用"批量导入"一次导入多个标签。
-                    </Text>
+                  <Paragraph type="secondary" style={{ marginBottom: 8 }}>
+                    标签由 AI 分类时自动创建和归并。这里可以修正名称、合并近义标签、删除或置顶。
+                  </Paragraph>
+                  {tags.length === 0 ? (
+                    <Text type="secondary">暂无标签。运行 AI 分类后，标签会自动出现在这里。</Text>
                   ) : (
                     <Space direction="vertical" style={{ width: '100%' }}>
-                      {config.userDefinedTags.map((tag, index) => (
+                      {tags.map((tag) => (
                         <div
                           key={tag.id}
                           style={{
@@ -593,39 +500,46 @@ function App() {
                           }}
                         >
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <Tag color="cyan">{tag.label}</Tag>
+                            <Tag color={tag.is_pinned ? 'gold' : 'cyan'}>
+                              {tag.label || tag.name}
+                            </Tag>
                             <Text type="secondary" style={{ fontSize: 12 }}>
-                              ({tag.name})
+                              ({tag.name}) · 使用 {tag.usage_count} 次
                             </Text>
                           </div>
                           <Space>
                             <Button
                               type="text"
                               size="small"
-                              disabled={index === 0}
-                              onClick={() => handleMoveTag(tag.id, 'up')}
+                              disabled={saving.tags}
+                              onClick={() => handleTogglePinned(tag, tag.is_pinned !== 1)}
                             >
-                              ↑
+                              {tag.is_pinned ? '取消置顶' : '置顶'}
                             </Button>
                             <Button
                               type="text"
                               size="small"
-                              disabled={index === config.userDefinedTags.length - 1}
-                              onClick={() => handleMoveTag(tag.id, 'down')}
+                              disabled={saving.tags}
+                              onClick={() => openRenameTagModal(tag)}
                             >
-                              ↓
+                              重命名
                             </Button>
-                            <Button type="text" size="small" onClick={() => openEditTagModal(tag)}>
-                              编辑
+                            <Button
+                              type="text"
+                              size="small"
+                              disabled={saving.tags || tags.length < 2}
+                              onClick={() => openMergeTagModal(tag)}
+                            >
+                              合并
                             </Button>
                             <Popconfirm
                               title="删除标签"
-                              description="确定要删除这个标签吗？这不会影响已分类文件的标签。"
+                              description="确定要删除这个标签吗？已分类文件上的同名标签会被移除。"
                               okText="删除"
                               cancelText="取消"
-                              onConfirm={() => handleDeleteTag(tag.id)}
+                              onConfirm={() => handleDeleteTag(tag)}
                             >
-                              <Button type="text" danger size="small">
+                              <Button type="text" danger size="small" disabled={saving.tags}>
                                 删除
                               </Button>
                             </Popconfirm>
@@ -758,73 +672,60 @@ function App() {
       </Layout>
 
       <Modal
-        title={editingTag ? '编辑标签' : '新增标签'}
-        open={isTagModalVisible}
-        onOk={handleTagModalOk}
-        onCancel={() => setIsTagModalVisible(false)}
+        title="重命名标签"
+        open={renamingTag !== null}
+        onOk={handleRenameTagOk}
+        onCancel={() => setRenamingTag(null)}
         okText="保存"
         cancelText="取消"
+        confirmLoading={saving.tags}
       >
         <Form form={tagForm} layout="vertical">
           <Form.Item
             name="name"
-            label="标签英文名称"
-            rules={[{ required: true, message: '请输入标签英文名称' }]}
-            extra="用于 AI 分类时的标签识别，使用英文或拼音，不要有空格"
+            label="标签名"
+            rules={[{ required: true, message: '请输入标签名' }]}
+            extra="用于 AI 分类匹配与入库，建议使用小写英文或拼音"
           >
             <Input placeholder="例如：cat, game, screenshot" />
           </Form.Item>
-          <Form.Item
-            name="label"
-            label="显示名称"
-            rules={[{ required: true, message: '请输入显示名称' }]}
-            extra="在界面上显示的标签名称，可以使用 emoji 和中文"
-          >
-            <Input placeholder="例如：🐱 猫咪, 🎮 游戏, 📸 截图" />
+          <Form.Item name="label" label="显示名称">
+            <Input placeholder="例如：🐱 猫咪, 🎮 游戏" />
           </Form.Item>
         </Form>
       </Modal>
 
       <Modal
-        title="批量导入标签"
-        open={isBatchImportVisible}
-        onOk={handleBatchImportOk}
-        onCancel={() => setIsBatchImportVisible(false)}
-        okText="导入"
+        title={mergingTag ? `合并「${mergingTag.label || mergingTag.name}」` : '合并标签'}
+        open={mergingTag !== null}
+        onOk={handleMergeTagOk}
+        onCancel={() => setMergingTag(null)}
+        okText="合并"
         cancelText="取消"
-        width={600}
+        confirmLoading={saving.tags}
       >
-        <Form form={batchForm} layout="vertical">
+        <Paragraph type="secondary">
+          源标签的别名与使用记录会合并到目标标签，源标签随后删除。
+        </Paragraph>
+        <Form form={mergeForm} layout="vertical">
           <Form.Item
-            name="tags"
-            label="标签列表"
-            extra="每行一个标签。格式：英文名称, 显示名称（可选）。如果只提供一个值，会同时作为名称和显示名称。"
+            name="targetId"
+            label="合并到"
+            rules={[{ required: true, message: '请选择目标标签' }]}
           >
-            <TextArea
-              rows={10}
-              placeholder={`cat, 🐱 猫咪
-game, 🎮 游戏
-screenshot, 📸 截图
-work
-memo`}
+            <Select
+              placeholder="选择目标标签"
+              showSearch
+              optionFilterProp="label"
+              options={tags
+                .filter((tag) => tag.id !== mergingTag?.id)
+                .map((tag) => ({
+                  value: tag.id,
+                  label: `${tag.label || tag.name} (${tag.name})`,
+                }))}
             />
           </Form.Item>
         </Form>
-        <div style={{ marginTop: 16 }}>
-          <Button
-            type="default"
-            loading={isTranslating}
-            onClick={handleTranslate}
-            disabled={!serviceStatus.ollamaAvailable}
-          >
-            使用 Ollama 翻译为中文
-          </Button>
-          {!serviceStatus.ollamaAvailable && (
-            <Text type="secondary" style={{ marginLeft: 8 }}>
-              需要 Ollama 可用才能翻译
-            </Text>
-          )}
-        </div>
       </Modal>
     </ConfigProvider>
   );

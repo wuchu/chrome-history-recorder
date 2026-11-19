@@ -7,6 +7,7 @@
 import { memo, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { CombinedMediaItem } from '../hooks/useCombinedMedia';
+import { getPrimaryTag } from '../../../shared/tag-utils';
 import { buildVfsThumbnailUrl } from '../utils/media';
 import styles from './MasonryItem.module.css';
 
@@ -39,6 +40,7 @@ const MasonryItem = memo(function MasonryItem({ item, onClick, onDelete }: Mason
 
   const thumbnailSrc = buildVfsThumbnailUrl(item.hash, GRID_THUMBNAIL_SIZE);
   const isVideo = item.mimeType.startsWith('video/');
+  const primaryTag = getPrimaryTag(item.tags);
 
   const handleImageLoad = () => {
     setImageLoaded(true);
@@ -74,6 +76,7 @@ const MasonryItem = memo(function MasonryItem({ item, onClick, onDelete }: Mason
             onError={handleImageError}
           />
         )}
+        {primaryTag && <span className={styles.tagBadge}>#{primaryTag}</span>}
         {onDelete && (
           <button
             type="button"

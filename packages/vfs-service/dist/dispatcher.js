@@ -76,7 +76,20 @@ async function dispatchMethod(api, method, params) {
             return api.syncBlobsToIndex();
         case 'setWorkspaceConfig':
             return api.setWorkspaceConfig();
-        // Classification queue operations
+        // Unified task engine operations
+        case 'enqueueTask':
+            return api.enqueueTask(params);
+        case 'claimTasks':
+            return api.claimTasks(params.limit);
+        case 'requeueTask':
+            return api.requeueTask(params);
+        case 'requeueAll':
+            return api.requeueAll(params);
+        case 'recoverStaleProcessingTasks':
+            return api.recoverStaleProcessingTasks();
+        case 'getTasksByHash':
+            return api.getTasksByHash(params.hash);
+        // Classification queue operations (legacy)
         case 'enqueueClassification':
             return api.enqueueClassification(params);
         case 'getQueueStatus':
@@ -86,9 +99,26 @@ async function dispatchMethod(api, method, params) {
         case 'updateTaskStatus':
             return api.updateTaskStatus(params);
         case 'retryFailedTasks':
-            return api.retryFailedTasks();
+            return api.retryFailedTasks(params);
         case 'clearQueue':
-            return api.clearQueue();
+            return api.clearQueue(params);
+        // Tag vocabulary operations
+        case 'applyClassification':
+            return api.applyClassification(params);
+        case 'getTagVocabulary':
+            return api.getTagVocabulary(params);
+        case 'resolveTagName':
+            return api.resolveTagName(params);
+        case 'listTags':
+            return api.listTags(params);
+        case 'renameTag':
+            return api.renameTag(params);
+        case 'mergeTags':
+            return api.mergeTags(params);
+        case 'deleteTag':
+            return api.deleteTag(params);
+        case 'setTagPinned':
+            return api.setTagPinned(params);
         case 'getTagCounts':
             return api.getTagCounts();
         case 'clearIndex':

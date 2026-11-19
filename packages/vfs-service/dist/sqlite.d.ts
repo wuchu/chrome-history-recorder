@@ -4,6 +4,12 @@
  * Manages the SQLite index for file metadata and classification queue.
  */
 /**
+ * Normalize a tag candidate into a canonical vocabulary key.
+ * Lowercases, strips a leading `NEW:` marker, collapses whitespace and
+ * truncates overly long names.
+ */
+export declare function normalizeTagName(raw: string): string;
+/**
  * File metadata type
  */
 export interface FileMetadata {
@@ -27,7 +33,7 @@ export interface FileMetadata {
     updated_at: string;
 }
 /**
- * Classification queue item type
+ * Classification queue item type (legacy shape, backed by `tasks`).
  */
 export interface QueueItem {
     id: number;
@@ -39,6 +45,73 @@ export interface QueueItem {
     completed_at: string | null;
     error: string | null;
     retries: number;
+}
+/**
+ * Task types supported by the unified engine. Extensible by design.
+ */
+export type TaskType = 'classify' | 'rename' | (string & {});
+export type TaskStatus = 'pending' | 'processing' | 'completed' | 'failed';
+export interface TaskItem {
+    id: number;
+    task_type: TaskType;
+    target_hash: string;
+    status: TaskStatus;
+    priority: number;
+    attempts: number;
+    max_attempts: number;
+    next_run_at: string | null;
+    started_at: string | null;
+    completed_at: string | null;
+    error: string | null;
+    created_at: string;
+    updated_at: string;
+}
+export interface TaskStatusSummary {
+    pending: number;
+    processing: number;
+    completed: number;
+    failed: number;
+    total: number;
+}
+export interface QueueStatus extends TaskStatusSummary {
+    byType: Record<string, TaskStatusSummary>;
+}
+export interface EnqueueTaskParams {
+    taskType: TaskType;
+    hash: string;
+    priority?: number;
+    maxAttempts?: number;
+    /**
+     * When true an existing task row is reset to pending. When false (default)
+     * enqueueing is idempotent and never resurrects a completed/failed task.
+     */
+    requeue?: boolean;
+}
+export interface UpdateTaskStatusParams {
+    taskType: TaskType;
+    hash: string;
+    status: TaskStatus;
+    error?: string;
+    /** Delay before a failed task becomes claimable again. */
+    retryDelayMs?: number;
+}
+export interface TagRecord {
+    id: number;
+    name: string;
+    label: string | null;
+    usage_count: number;
+    created_by: 'ai' | 'user' | string;
+    is_pinned: number;
+    created_at: string;
+    updated_at: string;
+}
+export interface ApplyClassificationParams {
+    hash: string;
+    tags: string[];
+    aliases?: Record<string, string>;
+    confidence?: number;
+    modelUsed?: string;
+    classifiedAt?: string;
 }
 /**
  * List query parameters
@@ -66,16 +139,6 @@ export interface MetadataUpdate {
     user_notes?: string;
 }
 /**
- * Queue status summary
- */
-export interface QueueStatus {
-    pending: number;
-    processing: number;
-    completed: number;
-    failed: number;
-    total: number;
-}
-/**
  * Stats result
  */
 export interface StatsResult {
@@ -96,6 +159,16 @@ export declare class SQLiteDatabase {
      * Initialize database schema
      */
     private initializeSchema;
+    /**
+     * Seed the vocabulary from tags already present on files (legacy user tags).
+     * Runs once, when the vocabulary is still empty.
+     */
+    private backfillTagVocabulary;
+    /**
+     * Migrate the legacy `classify_queue` table into the unified `tasks` table.
+     * The old table is dropped once its rows have been copied.
+     */
+    private migrateClassifyQueue;
     /**
      * Insert a new file record
      */
@@ -141,43 +214,141 @@ export declare class SQLiteDatabase {
      */
     getStats(): StatsResult;
     /**
-     * Enqueue classification task
+     * Enqueue a typed task for a hash.
+     *
+     * By default enqueueing is idempotent: an existing row for the same
+     * `(task_type, target_hash)` is left untouched, so captured media never
+     * resurrects a task the user already refreshed or the engine already ran.
+     */
+    enqueueTask(params: EnqueueTaskParams): boolean;
+    /**
+     * Legacy classification enqueue (requeues an existing row).
      */
     enqueueClassification(hash: string, priority?: number): boolean;
     /**
-     * Get next pending task
+     * Atomically claim up to `limit` due tasks for processing.
+     */
+    claimTasks(limit: number): TaskItem[];
+    /**
+     * Update a typed task's status, applying failure backoff.
+     */
+    updateTaskStatus(params: UpdateTaskStatusParams): boolean;
+    updateTaskStatus(hash: string, status: TaskStatus, error?: string): boolean;
+    /**
+     * Requeue a single typed task, resetting attempts and backoff.
+     *
+     * Files indexed before the typed task engine may have no row for this type
+     * yet, so a manual single-file refresh falls back to creating one.
+     */
+    requeueTask(taskType: TaskType, hash: string): boolean;
+    /**
+     * Requeue every task of a type (full rescan), creating rows for files that
+     * never had that task type. When `taskType` is omitted all existing task
+     * types are requeued.
+     */
+    requeueAll(taskType?: TaskType): number;
+    /**
+     * Recover tasks left in `processing` by a terminated service worker.
+     */
+    recoverStaleProcessingTasks(): number;
+    /**
+     * Get all task rows for a hash.
+     */
+    getTasksByHash(hash: string): TaskItem[];
+    /**
+     * Get next pending classification task (legacy).
      */
     getNextPendingTask(): QueueItem | null;
+    private toQueueItem;
     /**
-     * Update task status
-     */
-    updateTaskStatus(hash: string, status: 'pending' | 'processing' | 'completed' | 'failed', error?: string): boolean;
-    /**
-     * Get queue status summary
+     * Get queue status summary, overall and per task type.
      */
     getQueueStatus(): QueueStatus;
     /**
-     * Get pending tasks (for scheduler)
+     * Get pending classification tasks (legacy).
      */
     getPendingTasks(limit?: number): QueueItem[];
     /**
-     * Get failed tasks
+     * Get failed tasks, optionally filtered by type.
      */
-    getFailedTasks(): QueueItem[];
+    getFailedTasks(taskType?: TaskType): QueueItem[];
     /**
-     * Retry failed tasks
+     * Retry failed tasks, optionally filtered by type.
      */
-    retryFailedTasks(): number;
+    retryFailedTasks(taskType?: TaskType): number;
     /**
-     * Clear queue
+     * Clear tasks, optionally filtered by type.
      */
-    clearQueue(): void;
+    clearQueue(taskType?: TaskType): void;
     /**
-     * Clear index: delete all rows from files and classify_queue tables
+     * Clear index: delete all tasks, files, and the tag vocabulary.
      */
     clearIndex(): {
         success: boolean;
     };
+    /**
+     * List vocabulary tags ordered by pinned state and usage.
+     */
+    listTags(options?: {
+        limit?: number;
+        pinnedOnly?: boolean;
+    }): TagRecord[];
+    /**
+     * Get a single tag by id.
+     */
+    getTag(id: number): TagRecord | null;
+    /**
+     * Get a tag by canonical name (case-insensitive).
+     */
+    getTagByName(name: string): TagRecord | null;
+    /**
+     * Names of the most relevant tags for the classification prompt window.
+     */
+    getTagVocabulary(limit?: number): string[];
+    /**
+     * Resolve a candidate tag through the alias cache and existing vocabulary.
+     * Returns the canonical tag name, or null when the candidate is unknown.
+     */
+    resolveTagName(candidate: string): string | null;
+    /**
+     * Apply a classification result: resolve/create canonical tags, record
+     * aliases, replace content tags on the file (preserving `system:*`), and
+     * write classification metadata. Category is intentionally never written.
+     */
+    applyClassification(params: ApplyClassificationParams): {
+        tags: string[];
+    };
+    /**
+     * Rename a tag, rewriting file associations and preserving the old name as
+     * an alias.
+     */
+    renameTag(params: {
+        id: number;
+        name: string;
+        label?: string;
+    }): TagRecord;
+    /**
+     * Merge `sourceId` into `targetId`, reassigning files and aliases.
+     */
+    mergeTags(sourceId: number, targetId: number): TagRecord;
+    /**
+     * Delete a tag and remove it from all file tag lists.
+     */
+    deleteTag(id: number): boolean;
+    /**
+     * Toggle a tag's pinned state for Side Panel tab visibility.
+     */
+    setTagPinned(id: number, pinned: boolean): TagRecord | null;
+    /**
+     * Ensure a tag row exists, creating it with `createdBy` when missing.
+     */
+    private ensureTag;
+    private resolveOrCreateTag;
+    private replaceFileTagName;
+    /**
+     * Recompute `usage_count` for every vocabulary tag from file tag lists.
+     */
+    recomputeTagUsage(): void;
     /**
      * Close database connection
      */

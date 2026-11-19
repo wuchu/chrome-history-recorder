@@ -1,7 +1,7 @@
 /**
  * Tag utilities
  */
-import type { TagDefinition } from './extension-runtime';
+import type { TagDefinition, VFSTagRecord } from './extension-runtime';
 
 /**
  * System tag definitions
@@ -75,6 +75,14 @@ export function parseTags(tagsStr: string | string[] | null | undefined): string
 }
 
 /**
+ * Get the primary content tag (first non-system tag) of a media item.
+ */
+export function getPrimaryTag(tags: string[] | string | null | undefined): string | null {
+  const parsed = Array.isArray(tags) ? tags : parseTags(tags);
+  return parsed.find((tag) => !tag.startsWith('system:')) ?? null;
+}
+
+/**
  * Split tags into system and user tags
  */
 export function splitTags(tags: string[]): { systemTags: string[]; userTags: string[] } {
@@ -98,26 +106,6 @@ export function combineTags(systemTags: string[], userTags: string[]): string[] 
 }
 
 /**
- * Get tag definition by id
- */
-export function getTagById(
-  id: string,
-  userDefinedTags: TagDefinition[]
-): TagDefinition | undefined {
-  return [...SYSTEM_TAGS, ...userDefinedTags].find((t) => t.id === id);
-}
-
-/**
- * Get tag definition by name
- */
-export function getTagByName(
-  name: string,
-  userDefinedTags: TagDefinition[]
-): TagDefinition | undefined {
-  return [...SYSTEM_TAGS, ...userDefinedTags].find((t) => t.name === name);
-}
-
-/**
  * Check if a tag is a system tag
  */
 export function isSystemTag(tagIdOrName: string): boolean {
@@ -125,40 +113,48 @@ export function isSystemTag(tagIdOrName: string): boolean {
 }
 
 /**
- * Get visible tabs (only tags that have files)
+ * Maximum number of unpinned vocabulary tags shown as tabs.
  */
-export function getVisibleTabs(
-  userDefinedTags: TagDefinition[],
+const MAX_VOCAB_TABS = 12;
+
+/**
+ * Build Side Panel tabs from the VFS tag vocabulary.
+ *
+ * System tabs are always present. Pinned vocabulary tags are always shown;
+ * unpinned tags follow the top-usage rule, bounded by MAX_VOCAB_TABS.
+ */
+export function getVisibleTabsFromVocabulary(
+  vocabulary: VFSTagRecord[],
   tagCounts: Record<string, number>
 ): (TagDefinition & { count: number })[] {
   const tabs: (TagDefinition & { count: number })[] = [
     { ...ALL_TAG, count: tagCounts['all'] || 0 },
+    ...SYSTEM_TAGS.map((tag) => ({ ...tag, count: tagCounts[tag.name] || 0 })),
   ];
 
-  // Add all system tags (always show, even if count is 0)
-  for (const systemTag of SYSTEM_TAGS) {
-    const count = tagCounts[systemTag.name] || 0;
-    tabs.push({ ...systemTag, count });
+  const systemNames = new Set(SYSTEM_TAGS.map((tag) => tag.name));
+  const countFor = (tag: VFSTagRecord) => tagCounts[tag.name] ?? tag.usage_count ?? 0;
+
+  const pinned = vocabulary.filter((tag) => tag.is_pinned === 1 && !systemNames.has(tag.name));
+  const topUsage = vocabulary
+    .filter((tag) => tag.is_pinned !== 1 && !systemNames.has(tag.name) && countFor(tag) > 0)
+    .sort((a, b) => countFor(b) - countFor(a))
+    .slice(0, MAX_VOCAB_TABS);
+
+  const seen = new Set<string>();
+  for (const tag of [...pinned, ...topUsage]) {
+    if (seen.has(tag.name)) continue;
+    seen.add(tag.name);
+    tabs.push({
+      id: tag.name,
+      name: tag.name,
+      label: `#${tag.label || tag.name}`,
+      isSystem: false,
+      sortOrder: 200 + tabs.length,
+      count: countFor(tag),
+    });
   }
 
-  // Add user tags with files
-  for (const userTag of userDefinedTags) {
-    const count = tagCounts[userTag.name] || 0;
-    if (count > 0) {
-      tabs.push({ ...userTag, count });
-    }
-  }
-
-  // Sort
   tabs.sort((a, b) => a.sortOrder - b.sortOrder);
-
   return tabs;
-}
-
-/**
- * Validate and filter tags against user-defined set
- */
-export function filterValidTags(tags: string[], userDefinedTags: TagDefinition[]): string[] {
-  const validNames = new Set(userDefinedTags.map((t) => t.name));
-  return tags.filter((tag) => validNames.has(tag)).slice(0, 3);
 }

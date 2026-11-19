@@ -30,6 +30,32 @@
   flex-shrink: 0;
 }
 
+.typeList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.typeRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.typeRow .label {
+  min-width: 62px;
+}
+
+.counts {
+  font-size: 10px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 .progressWrapper {
   flex: 1;
   min-width: 0;

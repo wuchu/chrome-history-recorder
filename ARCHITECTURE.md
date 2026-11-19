@@ -56,7 +56,7 @@ Extension 是用户交互和捕获流程的核心。
 - **主要功能**:
   - 媒体网格展示
   - 实时捕获流预览
-  - VFS / Ollama / 分类队列状态展示
+  - VFS / Ollama / AI 任务队列状态展示
   - 通过 HTTP URL 加载文件和缩略图
   - 通过 `chrome.runtime` messaging 接收 Background 事件
 
@@ -66,14 +66,14 @@ DevTools Panel 在迁移期仍保留为 fallback 和调试入口，但不再是�
 
 #### Background Service Worker (Business Logic Layer)
 
-- **职责**: 业务逻辑协调、VFS 连接、AI 分类调度、事件广播
+- **职责**: 业务逻辑协调、VFS 连接、异步 AI 任务调度、事件广播
 - **技术**: Manifest V3 Service Worker
 - **主要模块**:
   - `VFSWebSocketClient`: WebSocket 客户端，封装所有 VFS API 调用和连接状态
   - `FileManager`: 文件捕获流程管理（接收媒体数据 → VFS 保存 → 广播事件）
-  - `ClassifyScheduler`: 分类队列调度器（从 VFS 获取任务 → Ollama 分类 → 更新元数据）
-  - `OllamaClient`: Ollama HTTP API 客户端（健康检查、模型查询、分类调用）
-  - `ConfigManager`: 配置管理（Ollama endpoint、模型、并发数等）
+  - `TaskEngine`: 统一异步 AI 任务引擎（全局并发上限，按 `task_type` 分派 `classify` / `rename`）
+  - `OllamaClient`: Ollama HTTP API 客户端（健康检查、模型查询、融合分类与重命名调用）
+  - `ConfigManager`: 配置管理（Ollama endpoint、模型、并发数、运行意图等）
   - `DebuggerCaptureController`: 管理 tab-scoped debugger/CDP 捕获状态和图片响应体提取
   - `EventBroadcaster`: 向 Side Panel / DevTools Panel 广播事件
 
@@ -92,7 +92,7 @@ DevTools Panel 在迁移期仍保留为 fallback 和调试入口，但不再是�
 
 ### 2. VFS Service
 
-VFS Service 是本地 Node.js 服务，负责文件系统、元数据、缩略图和分类队列操作。
+VFS Service 是本地 Node.js 服务，负责文件系统、元数据、缩略图和异步任务队列操作。
 
 #### WebSocket Server
 
@@ -100,7 +100,7 @@ VFS Service 是本地 Node.js 服务，负责文件系统、元数据、缩略�
 - **职责**:
   - 接收 RPC-style API 请求：`{ id, method, params }`
   - 返回统一响应：`{ id, success, data?, error? }`
-  - 广播实时事件，如文件捕获、删除、分类完成、队列变化
+  - 广播实时事件，如文件捕获、删除、任务状态变化、标签词表变化
   - 维护连接状态和心跳
 
 #### HTTP Server
@@ -125,6 +125,7 @@ CREATE TABLE files (
     source_url      TEXT,
     captured_at     TEXT NOT NULL,
 
+    -- category 列保留但不再写入（标签是唯一的内容分类来源）
     category        TEXT DEFAULT 'uncategorized',
     ai_filename     TEXT,
     tags            TEXT,
@@ -141,14 +142,38 @@ CREATE TABLE files (
     updated_at      TEXT NOT NULL
 );
 
-CREATE TABLE classify_queue (
-    hash            TEXT PRIMARY KEY,
-    priority        INTEGER DEFAULT 5,
-    status          TEXT DEFAULT 'pending',
-    retry_count     INTEGER DEFAULT 0,
-    error_message   TEXT,
+CREATE TABLE tasks (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_type       TEXT NOT NULL,          -- 'classify' | 'rename' | ...
+    target_hash     TEXT NOT NULL REFERENCES files(hash) ON DELETE CASCADE,
+    status          TEXT NOT NULL DEFAULT 'pending',
+    priority        INTEGER NOT NULL DEFAULT 5,
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    max_attempts    INTEGER NOT NULL DEFAULT 3,
+    next_run_at     TEXT,                   -- 失败退避的重试时间
+    started_at      TEXT,
+    completed_at    TEXT,
+    error           TEXT,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    UNIQUE(task_type, target_hash)          -- 幂等入队
+);
+
+CREATE TABLE tags (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    name            TEXT NOT NULL UNIQUE,   -- 规范化标签名
+    label           TEXT,
+    usage_count     INTEGER NOT NULL DEFAULT 0,
+    created_by      TEXT NOT NULL DEFAULT 'ai',
+    is_pinned       INTEGER NOT NULL DEFAULT 0,
     created_at      TEXT NOT NULL,
     updated_at      TEXT NOT NULL
+);
+
+CREATE TABLE tag_aliases (
+    alias           TEXT PRIMARY KEY,       -- 已判定的近义/旧名
+    tag_id          INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    created_at      TEXT NOT NULL
 );
 ```
 
@@ -167,7 +192,7 @@ CREATE TABLE classify_queue (
 
 ### 3. Ollama Service
 
-Ollama 提供本地视觉模型 API，用于 AI 分类：
+Ollama 提供本地视觉模型 API，用于 AI 分类与 AI 重命名：
 
 ```typescript
 POST http://localhost:11434/api/chat
@@ -175,18 +200,16 @@ POST http://localhost:11434/api/chat
   "model": "llava:7b",
   "messages": [{
     "role": "user",
-    "content": "Classify this image into: screenshot, photo, meme...",
+    "content": "...",
     "images": ["<base64_image>"]
   }],
   "stream": false
 }
 ```
 
-分类结果解析支持多种格式：
-
-1. **Pipe-separated**: `CATEGORY | FILENAME`
-2. **Space-separated**: `CATEGORY FILENAME`
-3. **JSON**: `{ "category": "...", "filename": "...", "tags": [...] }`
+- **分类（省调用模式）**：一次视觉调用同时生成标签并完成词表归并。Prompt 注入 top-N 高频标签，允许以 `NEW:` 标记新标签；响应为 JSON，如 `{ "tags": [...], "aliases": { "kitten": "cat" }, "confidence": 0.9 }`。
+- **重命名**：独立的视觉调用，只返回展示用文件名；写入 `files.ai_filename`，不重命名物理 blob。
+- **标签归并**：AI 返回的规范化标签经 `tag_aliases` 命中已有词表；未命中的标签创建为新词条，`system:*` 标签始终保留。
 
 ## 设计决策
 
@@ -209,14 +232,15 @@ POST http://localhost:11434/api/chat
 
 ### Decision 2: SQLite Schema Design
 
-**选择**: 单表 `files` + 辅助表 `classify_queue`。
+**选择**: 核心表 `files` + `tasks`（统一任务队列）+ `tags` / `tag_aliases`（AI 自生长词表）。
 
 **理由**:
 
 - Hash 作为主键，实现内容寻址存储（Content-addressable）。
 - Immutable/Mutable 字段分离，明确数据所有权。
-- 分类队列独立表，便于调度和重试。
-- 软删除设计，避免误删数据丢失。
+- `tasks` 以 `(task_type, target_hash)` 唯一约束实现幂等入队；`classify` 与 `rename` 可针对同一文件并存。
+- 失败任务通过 `attempts` / `next_run_at` / `max_attempts` 退避，并由扩展在唤醒时恢复残留 `processing`。
+- 标签词表独立于文件存在，支持 pinned、usage、别名缓存与合并治理；`files.tags` 作为展示与筛选的兼容缓存。
 
 ### Decision 3: Workspace Configuration
 
@@ -257,12 +281,18 @@ POST http://localhost:11434/api/chat
 - `getStats()` → `{ totalFiles, totalSize, byCategory }`
 - `getWorkspaceConfig()` → `{ path }`
 - `setWorkspaceConfig(config)` → `{ success }`
-- `enqueueClassification(hash, priority)` → `{ success }`
-- `getQueueStatus()` → `{ pending, processing, completed, failed }`
-- `getPendingTasks(limit)` → `[ { hash, priority, status } ]`
-- `updateTaskStatus(hash, status, error?)` → `{ success }`
-- `retryFailedTasks()` → `{ count }`
-- `clearQueue()` → `{ success }`
+- `enqueueTask({ taskType, hash, priority?, maxAttempts?, requeue? })` → `{ success }`
+- `claimTasks(limit)` → `[ { id, task_type, target_hash, status, attempts, ... } ]`
+- `updateTaskStatus({ taskType, hash, status, error?, retryDelayMs? })` → `{ success }`
+- `requeueTask(taskType, hash)` / `requeueAll(taskType?)` → `{ count }`
+- `recoverStaleProcessingTasks()` → `{ count }`
+- `getTasksByHash(hash)` → `[ task ]`
+- `getQueueStatus()` → `{ pending, processing, completed, failed, total, byType }`
+- `retryFailedTasks(taskType?)` → `{ count }`
+- `clearQueue(taskType?)` → `{ success }`
+- `applyClassification({ hash, tags, aliases?, confidence?, modelUsed? })` → `{ tags }`
+- `getTagVocabulary(limit?)` / `resolveTagName(name)` / `listTags(options)` → 标签词表
+- `renameTag({ id, name, label? })` / `mergeTags(sourceId, targetId)` / `deleteTag(id)` / `setTagPinned(id, pinned)` → 标签治理
 
 **理由**:
 
@@ -280,7 +310,7 @@ Extension Background Service Worker:
 ├── FileManager          # 捕获媒体保存流程
 ├── DebuggerCaptureController # Side Panel 触发的 tab-scoped CDP 捕获
 ├── OllamaClient         # HTTP 客户端（调用本地 Ollama）
-├── ClassifyScheduler    # 分类任务调度器
+├── TaskEngine           # 统一异步任务引擎（classify / rename 共享并发上限）
 ├── EventBroadcaster     # 向 Side Panel / DevTools Panel 广播事件
 └── ConfigManager        # 配置管理
 
@@ -327,27 +357,37 @@ Side Panel:
 12. Side Panel receives event and renders file/thumbnail HTTP URLs
 ```
 
-### 分类流程
+### AI 任务流程
 
 ```
 1. FileManager 检测新文件（image/video）
    ↓
-2. VFSWebSocketClient.enqueueClassification(hash)
+2. VFSWebSocketClient.enqueueTask(classify) + enqueueTask(rename)
    ↓
-3. VFS Service: insert classify_queue (status: pending)
+3. VFS Service: insert tasks (UNIQUE(task_type, target_hash), ON CONFLICT DO NOTHING)
    ↓
-4. ClassifyScheduler 按配置检查队列
+4. TaskEngine 每 5s tick（或由事件 kick）：
+   a. 若引擎暂停 / VFS 未连接 / Ollama 不可用 → 跳过
+   b. claimTasks(可用并发) —— 条件 UPDATE 保证原子认领
    ↓
-5. VFSWebSocketClient.getPendingTasks(concurrency)
+5. classify handler:
+   a. 读取大缩略图（回退原图）
+   b. Ollama 融合调用 → tags + aliases + confidence
+   c. VFS applyClassification()：事务解析/创建标签、写别名、保留 system:*、停写 category
    ↓
-6. For each task:
-   a. VFSWebSocketClient.getFile(hash) → buffer
-   b. OllamaClient.classify(buffer, prompt)
-   c. Parse result: category, filename, tags
-   d. VFSWebSocketClient.updateMetadata(hash, { category, ai_filename, tags })
-   e. VFSWebSocketClient.updateTaskStatus(hash, 'completed')
-   f. EventBroadcaster broadcasts classification events
+6. rename handler:
+   a. Ollama 视觉调用 → 展示名
+   b. VFS updateMetadata({ ai_filename })
+   ↓
+7. 成功：updateTaskStatus(completed)，广播 task:completed + 类型事件
+   失败：updateTaskStatus(failed, retryDelayMs) —— attempts 未达上限则回到 pending 退避
+   ↓
+8. MV3 恢复：runtime.onStartup / 每分钟 alarm / VFS 重连 →
+   recoverStaleProcessingTasks() 后 kick 引擎，按持久化运行意图决定是否继续
 ```
+
+两种任务只共享全局并发与队列，状态、重试与手动刷新彼此独立；单文件刷新调用
+`requeueTask(taskType, hash)`，全量重扫调用 `requeueAll(taskType)`。
 
 ### 文件展示流程
 

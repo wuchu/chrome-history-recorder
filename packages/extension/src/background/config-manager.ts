@@ -5,20 +5,10 @@
  */
 
 import { getOllamaClient } from './classify/ollama-client';
-import { getExistingClassifyScheduler } from './classify/scheduler';
+import { getExistingTaskEngine } from './tasks/engine';
 import { getFileManager } from './file-manager';
 import { syncOllamaDnrRule } from './ollama-dnr';
-import type { ExtensionConfig, TagDefinition } from '../shared/extension-runtime';
-
-/**
- * Default user-defined tags
- */
-const DEFAULT_USER_TAGS: TagDefinition[] = [
-  { id: 'user:cat', name: 'cat', label: '🐱 猫咪', isSystem: false, sortOrder: 1 },
-  { id: 'user:game', name: 'game', label: '🎮 游戏', isSystem: false, sortOrder: 2 },
-  { id: 'user:screenshot', name: 'screenshot', label: '📸 截图', isSystem: false, sortOrder: 3 },
-  { id: 'user:memo', name: 'memo', label: '📝 笔记', isSystem: false, sortOrder: 4 },
-];
+import type { ExtensionConfig } from '../shared/extension-runtime';
 
 /**
  * Default configuration
@@ -31,7 +21,6 @@ const DEFAULT_CONFIG: ExtensionConfig = {
   classificationConcurrency: 1,
   classificationPaused: true,
   maxFileSize: 50 * 1024 * 1024, // 50MB
-  userDefinedTags: DEFAULT_USER_TAGS,
 };
 
 /**
@@ -113,12 +102,11 @@ export class ConfigManager {
       language: this.config.language,
       filenameStyle: this.config.filenameStyle,
       filenameStylePrompt: this.config.filenameStylePrompt,
-      userDefinedTags: this.config.userDefinedTags,
     });
 
-    // Update scheduler if it has already been initialized.
-    const scheduler = getExistingClassifyScheduler();
-    scheduler?.updateConcurrency(this.config.classificationConcurrency);
+    // Update the unified task engine if it has already been initialized.
+    const engine = getExistingTaskEngine();
+    engine?.updateConcurrency(this.config.classificationConcurrency);
   }
 
   /**

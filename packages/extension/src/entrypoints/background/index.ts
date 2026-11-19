@@ -8,7 +8,11 @@ import { initVFSWebSocketClient, getVFSWebSocketClient } from '../../background/
 import { defineBackground } from 'wxt/utils/define-background';
 import { initFileManager, getFileManager } from '../../background/file-manager';
 import { initOllamaClient, getOllamaClient } from '../../background/classify/ollama-client';
-import { initClassifyScheduler, getClassifyScheduler } from '../../background/classify/scheduler';
+import {
+  initTaskEngine,
+  getTaskEngine,
+  getExistingTaskEngine,
+} from '../../background/tasks/engine';
 import { initConfigManager, getConfigManager } from '../../background/config-manager';
 import {
   initDebuggerCaptureController,
@@ -17,6 +21,9 @@ import {
 
 export default defineBackground(() => {
   console.log('[VFS Extension] Background service worker starting...');
+
+  const WAKE_ALARM_NAME = 'task-engine-wake';
+  let initializationPromise: Promise<void> | null = null;
 
   if (chrome.sidePanel?.setPanelBehavior) {
     chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((error) => {
@@ -99,6 +106,15 @@ export default defineBackground(() => {
         getFileManager().broadcastEvent(event, data);
       });
 
+      // On reconnect, recover stranded tasks and resume the engine.
+      vfsWsClient.onConnect(() => {
+        const engine = getExistingTaskEngine();
+        if (!engine) return;
+        void engine.recoverStale().then(() => {
+          if (engine.isRunning()) engine.kick();
+        });
+      });
+
       // Initialize Ollama Client
       console.log('[VFS Extension] Step 6: Initializing Ollama Client...');
       const ollamaClient = await initOllamaClient({
@@ -107,7 +123,6 @@ export default defineBackground(() => {
         language: config.language,
         filenameStyle: config.filenameStyle,
         filenameStylePrompt: config.filenameStylePrompt,
-        userDefinedTags: config.userDefinedTags,
       });
       console.log('[VFS Extension] Ollama Client created, endpoint:', config.ollamaEndpoint);
 
@@ -155,17 +170,23 @@ export default defineBackground(() => {
       console.log('[VFS Extension] Step 9: Starting Ollama periodic health check (30s interval)');
       ollamaClient.startPeriodicHealthCheck(30000);
 
-      // Initialize Classification Scheduler
-      console.log('[VFS Extension] Step 10: Initializing Classification Scheduler...');
-      initClassifyScheduler({
+      // Initialize unified task engine
+      console.log('[VFS Extension] Step 10: Initializing AI Task Engine...');
+      const engine = initTaskEngine({
         concurrency: config.classificationConcurrency,
-        autoStart: !config.classificationPaused,
+        autoStart: false,
       });
+
+      // Any task left processing by a terminated worker is safe to retry.
+      await engine.recoverStale();
+      if (!config.classificationPaused) {
+        engine.start();
+      }
 
       console.log('[VFS Extension] Step 11: Initializing Debugger Capture Controller...');
       initDebuggerCaptureController({
         getFileManager,
-        getScheduler: getClassifyScheduler,
+        getScheduler: getTaskEngine,
       });
 
       console.log('[VFS Extension] ========== INITIALIZATION COMPLETE ==========');
@@ -176,13 +197,57 @@ export default defineBackground(() => {
     }
   }
 
-  // Start initialization
-  initialize();
+  function ensureInitialized(): Promise<void> {
+    if (!initializationPromise) {
+      initializationPromise = initialize();
+    }
+    return initializationPromise;
+  }
+
+  function ensureWakeAlarm(): void {
+    try {
+      chrome.alarms.create(WAKE_ALARM_NAME, {
+        delayInMinutes: 1,
+        periodInMinutes: 1,
+      });
+    } catch (error) {
+      console.warn('[VFS Extension] Failed to register wake alarm:', error);
+    }
+  }
+
+  // Start initialization and keep the task engine waking while the browser runs.
+  void ensureInitialized();
+  ensureWakeAlarm();
+
+  // Browser profile start: the engine resumes according to persisted intent.
+  chrome.runtime.onStartup.addListener(() => {
+    console.log('[VFS Extension] Browser startup detected');
+    ensureWakeAlarm();
+    void ensureInitialized().then(() => {
+      const engine = getExistingTaskEngine();
+      if (!engine) return;
+      void engine.recoverStale().then(() => {
+        if (engine.isRunning()) engine.kick();
+      });
+    });
+  });
+
+  // Periodic alarm: revive a suspended service worker and resume processing.
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name !== WAKE_ALARM_NAME) return;
+    void ensureInitialized().then(() => {
+      const engine = getExistingTaskEngine();
+      if (!engine) return;
+      void engine.recoverStale().then(() => {
+        if (engine.isRunning()) engine.kick();
+      });
+    });
+  });
 
   // Handle messages from Content Scripts, DevTools Panel, Options, and Side Panel
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const fileManager = getFileManager();
-    const scheduler = getClassifyScheduler();
+    const engine = getTaskEngine();
     const configManager = getConfigManager();
 
     // Handle async responses
@@ -193,9 +258,9 @@ export default defineBackground(() => {
           /* eslint-disable no-case-declarations */
           case 'capture:media':
             const captureResult = await fileManager.handleCaptureMedia(message.data);
-            // Auto-enqueue for classification
+            // Auto-enqueue paired AI tasks (independent, idempotent)
             if (!captureResult.duplicate) {
-              await scheduler.enqueue(captureResult.hash);
+              await engine.enqueuePair(captureResult.hash);
             }
             sendResponse({ success: true, data: captureResult });
             break;
@@ -246,8 +311,8 @@ export default defineBackground(() => {
           // Classification operations
           case 'getQueueStatus':
           case 'get-queue-status':
-            const queueStatus = await scheduler.getQueueStatus();
-            const schedulerStatus = scheduler.getSchedulerStatus();
+            const queueStatus = await engine.getQueueStatus();
+            const schedulerStatus = engine.getSchedulerStatus();
             sendResponse({
               success: true,
               data: { ...queueStatus, scheduler: schedulerStatus },
@@ -257,47 +322,79 @@ export default defineBackground(() => {
             break;
 
           case 'enqueueClassification':
-            const enqueueResult = await scheduler.enqueue(message.hash, message.priority);
+            const enqueueResult = await engine.enqueueTask('classify', message.hash, {
+              priority: message.priority,
+            });
             sendResponse({ success: true, data: { success: enqueueResult } });
             break;
 
           case 'requeueClassification':
           case 'requeue-classification':
-            const requeueResult = await scheduler.enqueue(message.hash, message.priority ?? 10);
+            const requeueResult = await engine.requeueTask('classify', message.hash);
             sendResponse({ success: requeueResult, data: { success: requeueResult } });
             break;
 
+          case 'requeueTask':
+          case 'requeue-task': {
+            const taskType = message.taskType ?? message.task_type;
+            const result = await engine.requeueTask(taskType, message.hash);
+            sendResponse({ success: result, data: { success: result } });
+            break;
+          }
+
+          case 'requeueAllTasks':
+          case 'requeue-all-tasks': {
+            const taskTypes: string[] = Array.isArray(message.taskTypes)
+              ? message.taskTypes
+              : message.taskType
+                ? [message.taskType]
+                : ['classify', 'rename'];
+            let count = 0;
+            for (const type of taskTypes) {
+              count += await engine.requeueAll(type);
+            }
+            sendResponse({ success: true, data: { count }, count });
+            break;
+          }
+
+          case 'getTasksByHash':
+          case 'get-tasks-by-hash': {
+            const tasks = await getVFSWebSocketClient().getTasksByHash(message.hash);
+            sendResponse({ success: true, data: tasks, tasks });
+            break;
+          }
+
           case 'retryFailedTasks':
           case 'retry-failed-tasks':
-            const retryCount = await scheduler.retryFailed();
+            const retryCount = await engine.retryFailed(message.taskType);
             sendResponse({ success: true, data: { count: retryCount }, count: retryCount });
             break;
 
           case 'clearQueue':
           case 'clear-queue':
-            await scheduler.clearQueue();
+            await engine.clearQueue(message.taskType);
             sendResponse({ success: true });
             break;
 
           case 'startClassification':
           case 'start-classification':
-            scheduler.start();
+            engine.start();
             await configManager.updateConfig({ classificationPaused: false });
             sendResponse({
               success: true,
-              data: scheduler.getSchedulerStatus(),
-              ...scheduler.getSchedulerStatus(),
+              data: engine.getSchedulerStatus(),
+              ...engine.getSchedulerStatus(),
             });
             break;
 
           case 'pauseClassification':
           case 'pause-classification':
-            scheduler.pause();
+            engine.pause();
             await configManager.updateConfig({ classificationPaused: true });
             sendResponse({
               success: true,
-              data: scheduler.getSchedulerStatus(),
-              ...scheduler.getSchedulerStatus(),
+              data: engine.getSchedulerStatus(),
+              ...engine.getSchedulerStatus(),
             });
             break;
 
@@ -305,8 +402,8 @@ export default defineBackground(() => {
           case 'get-classification-control-status':
             sendResponse({
               success: true,
-              data: scheduler.getSchedulerStatus(),
-              ...scheduler.getSchedulerStatus(),
+              data: engine.getSchedulerStatus(),
+              ...engine.getSchedulerStatus(),
             });
             break;
 
@@ -321,6 +418,50 @@ export default defineBackground(() => {
             const tagCounts = await getVFSWebSocketClient().getTagCounts();
             sendResponse({ success: true, data: tagCounts, ...tagCounts });
             break;
+
+          case 'listTags':
+          case 'list-tags': {
+            const tags = await getVFSWebSocketClient().listTags({
+              limit: message.limit,
+              pinnedOnly: message.pinnedOnly,
+            });
+            sendResponse({ success: true, data: tags, tags });
+            break;
+          }
+
+          case 'getTagVocabulary': {
+            const vocabulary = await getVFSWebSocketClient().getTagVocabulary(message.limit);
+            sendResponse({ success: true, data: vocabulary, vocabulary });
+            break;
+          }
+
+          case 'renameTag': {
+            const tag = await getVFSWebSocketClient().renameTag(
+              message.id,
+              message.name,
+              message.label
+            );
+            sendResponse({ success: true, data: tag, tag });
+            break;
+          }
+
+          case 'mergeTags': {
+            const tag = await getVFSWebSocketClient().mergeTags(message.sourceId, message.targetId);
+            sendResponse({ success: true, data: tag, tag });
+            break;
+          }
+
+          case 'deleteTag': {
+            const result = await getVFSWebSocketClient().deleteTag(message.id);
+            sendResponse({ ...result, data: result });
+            break;
+          }
+
+          case 'setTagPinned': {
+            const tag = await getVFSWebSocketClient().setTagPinned(message.id, message.pinned);
+            sendResponse({ success: true, data: tag, tag });
+            break;
+          }
 
           case 'updateConfig':
             await configManager.updateConfig(message.updates);

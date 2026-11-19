@@ -30,9 +30,7 @@ class VFSAPI {
      */
     saveFile(params) {
         const { mimeType, sourceUrl, capturedAt } = params;
-        const buffer = Buffer.isBuffer(params.buffer)
-            ? params.buffer
-            : Buffer.from(params.buffer);
+        const buffer = Buffer.isBuffer(params.buffer) ? params.buffer : Buffer.from(params.buffer);
         if (buffer.length === 0) {
             throw new Error('Cannot save empty file buffer');
         }
@@ -132,7 +130,7 @@ class VFSAPI {
     updateMetadata(params) {
         const { hash, updates } = params;
         const success = this.db.updateMetadata(hash, updates);
-        const updatedMetadata = success ? this.db.getFile(hash) ?? undefined : undefined;
+        const updatedMetadata = success ? (this.db.getFile(hash) ?? undefined) : undefined;
         return { success, updatedMetadata };
     }
     /**
@@ -262,12 +260,52 @@ class VFSAPI {
         };
     }
     /**
-     * Enqueue classification API
+     * Enqueue classification API (legacy, requeues).
      */
     enqueueClassification(params) {
         const { hash, priority = 5 } = params;
         const success = this.db.enqueueClassification(hash, priority);
         return { success };
+    }
+    /**
+     * Enqueue a typed task. Idempotent unless `requeue` is requested.
+     */
+    enqueueTask(params) {
+        const success = this.db.enqueueTask(params);
+        return { success };
+    }
+    /**
+     * Atomically claim due tasks for the extension engine.
+     */
+    claimTasks(limit = 1) {
+        return this.db.claimTasks(limit);
+    }
+    /**
+     * Requeue a single typed task.
+     */
+    requeueTask(params) {
+        const success = this.db.requeueTask(params.taskType, params.hash);
+        return { success };
+    }
+    /**
+     * Requeue all tasks of a type (full rescan).
+     */
+    requeueAll(params = {}) {
+        const count = this.db.requeueAll(params.taskType);
+        return { count };
+    }
+    /**
+     * Recover tasks left processing by a terminated worker.
+     */
+    recoverStaleProcessingTasks() {
+        const count = this.db.recoverStaleProcessingTasks();
+        return { count };
+    }
+    /**
+     * Get all tasks for a hash.
+     */
+    getTasksByHash(hash) {
+        return this.db.getTasksByHash(hash);
     }
     /**
      * Get queue status API
@@ -287,26 +325,79 @@ class VFSAPI {
         }));
     }
     /**
-     * Update task status API
+     * Update task status API. Accepts either a typed task reference or the
+     * legacy classification-only shape.
      */
     updateTaskStatus(params) {
-        const { hash, status, error } = params;
-        this.db.updateTaskStatus(hash, status, error);
+        if ('taskType' in params) {
+            this.db.updateTaskStatus(params);
+        }
+        else {
+            this.db.updateTaskStatus(params.hash, params.status, params.error);
+        }
         return { success: true };
     }
     /**
      * Retry failed tasks API
      */
-    retryFailedTasks() {
-        const count = this.db.retryFailedTasks();
+    retryFailedTasks(params = {}) {
+        const count = this.db.retryFailedTasks(params.taskType);
         return { count };
     }
     /**
      * Clear queue API
      */
-    clearQueue() {
-        this.db.clearQueue();
+    clearQueue(params = {}) {
+        this.db.clearQueue(params.taskType);
         return { success: true };
+    }
+    /**
+     * Apply an AI classification result, updating the tag vocabulary and file.
+     */
+    applyClassification(params) {
+        return this.db.applyClassification(params);
+    }
+    /**
+     * Get the bounded tag vocabulary for the classification prompt.
+     */
+    getTagVocabulary(params = {}) {
+        return this.db.getTagVocabulary(params.limit);
+    }
+    /**
+     * Resolve a candidate tag against the alias cache and vocabulary.
+     */
+    resolveTagName(params) {
+        return { name: this.db.resolveTagName(params.candidate) };
+    }
+    /**
+     * List vocabulary tags.
+     */
+    listTags(params = {}) {
+        return this.db.listTags(params);
+    }
+    /**
+     * Rename a tag.
+     */
+    renameTag(params) {
+        return this.db.renameTag(params);
+    }
+    /**
+     * Merge one tag into another.
+     */
+    mergeTags(params) {
+        return this.db.mergeTags(params.sourceId, params.targetId);
+    }
+    /**
+     * Delete a tag.
+     */
+    deleteTag(params) {
+        return { success: this.db.deleteTag(params.id) };
+    }
+    /**
+     * Pin or unpin a tag.
+     */
+    setTagPinned(params) {
+        return this.db.setTagPinned(params.id, params.pinned);
     }
     /**
      * Get tag counts API

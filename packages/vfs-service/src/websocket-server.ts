@@ -159,7 +159,18 @@ export class VFSSWebSocketServer {
           });
         }
 
-        if (response.success && message.method === 'enqueueClassification') {
+        const taskMutationMethods = new Set([
+          'enqueueClassification',
+          'enqueueTask',
+          'claimTasks',
+          'updateTaskStatus',
+          'requeueTask',
+          'requeueAll',
+          'recoverStaleProcessingTasks',
+          'retryFailedTasks',
+          'clearQueue',
+        ]);
+        if (response.success && taskMutationMethods.has(message.method)) {
           const queueStatus = this.api.getQueueStatus();
           this.broadcast({
             type: 'event',
@@ -169,12 +180,21 @@ export class VFSSWebSocketServer {
           });
         }
 
-        if (response.success && message.method === 'updateTaskStatus') {
-          const queueStatus = this.api.getQueueStatus();
+        const tagMutationMethods = new Set([
+          'applyClassification',
+          'renameTag',
+          'mergeTags',
+          'deleteTag',
+          'setTagPinned',
+        ]);
+        if (response.success && tagMutationMethods.has(message.method)) {
           this.broadcast({
             type: 'event',
-            event: 'queue:updated',
-            data: queueStatus,
+            event: 'tags:updated',
+            data: {
+              tags: this.api.listTags({ limit: 200 }),
+              counts: this.api.getTagCounts(),
+            },
             timestamp: new Date().toISOString(),
           });
         }

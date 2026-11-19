@@ -111,7 +111,26 @@ async function dispatchMethod(
     case 'setWorkspaceConfig':
       return api.setWorkspaceConfig();
 
-    // Classification queue operations
+    // Unified task engine operations
+    case 'enqueueTask':
+      return api.enqueueTask(params as unknown as Parameters<typeof api.enqueueTask>[0]);
+
+    case 'claimTasks':
+      return api.claimTasks(params.limit as number | undefined);
+
+    case 'requeueTask':
+      return api.requeueTask(params as Parameters<typeof api.requeueTask>[0]);
+
+    case 'requeueAll':
+      return api.requeueAll(params as Parameters<typeof api.requeueAll>[0]);
+
+    case 'recoverStaleProcessingTasks':
+      return api.recoverStaleProcessingTasks();
+
+    case 'getTasksByHash':
+      return api.getTasksByHash(params.hash as string);
+
+    // Classification queue operations (legacy)
     case 'enqueueClassification':
       return api.enqueueClassification(params as Parameters<typeof api.enqueueClassification>[0]);
 
@@ -125,10 +144,37 @@ async function dispatchMethod(
       return api.updateTaskStatus(params as Parameters<typeof api.updateTaskStatus>[0]);
 
     case 'retryFailedTasks':
-      return api.retryFailedTasks();
+      return api.retryFailedTasks(params as Parameters<typeof api.retryFailedTasks>[0]);
 
     case 'clearQueue':
-      return api.clearQueue();
+      return api.clearQueue(params as Parameters<typeof api.clearQueue>[0]);
+
+    // Tag vocabulary operations
+    case 'applyClassification':
+      return api.applyClassification(
+        params as unknown as Parameters<typeof api.applyClassification>[0]
+      );
+
+    case 'getTagVocabulary':
+      return api.getTagVocabulary(params as Parameters<typeof api.getTagVocabulary>[0]);
+
+    case 'resolveTagName':
+      return api.resolveTagName(params as Parameters<typeof api.resolveTagName>[0]);
+
+    case 'listTags':
+      return api.listTags(params as Parameters<typeof api.listTags>[0]);
+
+    case 'renameTag':
+      return api.renameTag(params as Parameters<typeof api.renameTag>[0]);
+
+    case 'mergeTags':
+      return api.mergeTags(params as Parameters<typeof api.mergeTags>[0]);
+
+    case 'deleteTag':
+      return api.deleteTag(params as Parameters<typeof api.deleteTag>[0]);
+
+    case 'setTagPinned':
+      return api.setTagPinned(params as Parameters<typeof api.setTagPinned>[0]);
 
     case 'getTagCounts':
       return api.getTagCounts();

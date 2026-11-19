@@ -109,6 +109,32 @@ function extractClassifyStatus(events: BackgroundEvent[]): Record<string, Classi
     } else if (event.type === 'classify:failed') {
       const data = event.data as { hash: string };
       status[data.hash] = { hash: data.hash, status: 'failed' };
+    } else if (event.type === 'rename:complete' || event.type === 'rename:failed') {
+      const data = event.data as { hash: string; ai_filename?: string };
+      const previous = status[data.hash] ?? { hash: data.hash };
+      status[data.hash] = {
+        ...previous,
+        ai_filename: data.ai_filename ?? previous.ai_filename,
+      };
+    } else if (event.type === 'task:completed') {
+      const data = event.data as {
+        hash: string;
+        task_type?: string;
+        ai_filename?: string;
+        tags?: string[];
+        confidence?: number;
+      };
+      const previous = status[data.hash] ?? { hash: data.hash };
+      if (data.task_type === 'rename') {
+        status[data.hash] = { ...previous, ai_filename: data.ai_filename };
+      } else if (data.task_type === 'classify') {
+        status[data.hash] = {
+          ...previous,
+          status: 'completed',
+          tags: data.tags,
+          confidence: data.confidence,
+        };
+      }
     }
   }
 

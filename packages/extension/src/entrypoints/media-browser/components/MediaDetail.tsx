@@ -32,12 +32,19 @@ interface MediaDetailProps {
   item: MediaDetailData | null;
   onClose: () => void;
   onDelete?: (hash: string) => void;
+  /** Requeue one AI task type for this file (single-file refresh). */
+  onRefreshTask?: (taskType: 'classify' | 'rename', hash: string) => void;
 }
 
 /**
  * MediaDetail modal component
  */
-const MediaDetail = memo(function MediaDetail({ item, onClose, onDelete }: MediaDetailProps) {
+const MediaDetail = memo(function MediaDetail({
+  item,
+  onClose,
+  onDelete,
+  onRefreshTask,
+}: MediaDetailProps) {
   const { t } = useTranslation();
   const modalRef = useRef<HTMLDivElement>(null);
   const [imageLoaded, setImageLoaded] = useState(false);
@@ -134,6 +141,26 @@ const MediaDetail = memo(function MediaDetail({ item, onClose, onDelete }: Media
         </div>
 
         <div className={styles.toolbar}>
+          {onRefreshTask && (
+            <>
+              <button
+                type="button"
+                className={styles.refreshButton}
+                title="重新分类"
+                onClick={() => onRefreshTask('classify', item.hash)}
+              >
+                🏷️
+              </button>
+              <button
+                type="button"
+                className={styles.refreshButton}
+                title="重新命名"
+                onClick={() => onRefreshTask('rename', item.hash)}
+              >
+                ✏️
+              </button>
+            </>
+          )}
           {onDelete && (
             <button
               type="button"
