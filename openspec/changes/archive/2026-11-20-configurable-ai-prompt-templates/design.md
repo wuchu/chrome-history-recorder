@@ -73,7 +73,7 @@ The filename-style selector and its custom-prompt override are removed. The defa
 
 1. Add `PromptTemplates` to shared types and `DEFAULT_PROMPT_TEMPLATES` to `ollama-client.ts`.
 2. Route prompt building through `renderTemplate` with fallback; wire config through `applyConfig`.
-3. Add the Options "AI 提示词模板" section.
+3. Add editable templates to the AI task cards in the Options page.
 4. No storage migration: existing users have no `promptTemplates` key, which resolves to defaults. Rollback is a revert of the change; stored templates are additive and ignorable.
 
 ## Open Questions

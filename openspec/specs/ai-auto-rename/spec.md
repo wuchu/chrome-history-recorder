@@ -41,12 +41,20 @@ The rename task SHALL be independent from classification for scheduling, retry, 
 - **AND** rename SHALL be able to run before, after, or without classification
 
 ### Requirement: Rename naming style
-The system SHALL apply the user's configured naming style to generated display filenames.
+The system SHALL build the rename prompt from a user-editable template that contains the naming style inline, and apply the result to generated display filenames.
 
-#### Scenario: Respect configured style
+#### Scenario: Style baked into template
 - **WHEN** a rename task generates a filename
-- **THEN** the prompt SHALL use the configured naming style and language
+- **THEN** the prompt SHALL be built from the configured rename template, whose naming style is written directly into the template text
 - **AND** the resulting filename SHALL be sanitized for display
+
+#### Scenario: Use user template when set
+- **WHEN** a user-supplied rename template is configured
+- **THEN** the system SHALL build the prompt from that template
+
+#### Scenario: Fall back to default template
+- **WHEN** no rename template is configured
+- **THEN** the system SHALL build the prompt from the built-in default template
 
 #### Scenario: Empty or invalid model output
 - **WHEN** the model returns an empty or unusable filename

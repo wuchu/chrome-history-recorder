@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
-### Requirement: Prompt templates settings section
-The Options page SHALL provide editable AI prompt templates.
+### Requirement: AI prompt template editors
+The Options page SHALL provide editable AI prompt templates in the AI task cards.
 
 #### Scenario: Show editable templates
 - **WHEN** the Options page renders the AI task cards
@@ -30,5 +30,5 @@ The Options page SHALL provide editable AI prompt templates.
 
 ### Requirement: Filename style settings section
 **Reason**: The filename style selector and its custom-prompt override are removed; the naming style is now authored directly inside the editable rename prompt template.
-**Migration**: Configure the desired naming style by editing the rename template in the new "AI 提示词模板" section.
+**Migration**: Configure the desired naming style by editing the rename template in the AI 重命名 task card.
 
