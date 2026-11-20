@@ -126,6 +126,14 @@ export interface ListQuery {
     includeDeleted?: boolean;
 }
 /**
+ * Query for files indexed after a `(created_at, hash)` cursor.
+ */
+export interface ListFilesCreatedAfterParams {
+    createdAt: string;
+    hash: string;
+    limit?: number;
+}
+/**
  * Metadata update parameters
  */
 export interface MetadataUpdate {
@@ -155,6 +163,12 @@ export declare class SQLiteDatabase {
     private db;
     private dbPath;
     constructor(workspacePath: string);
+    /**
+     * Prefer WAL, but tolerate volumes where WAL is unavailable. A database
+     * whose header already uses WAL cannot be opened on those volumes at all,
+     * so report that case with recovery instructions instead of a bare error.
+     */
+    private configureJournalMode;
     /**
      * Initialize database schema
      */
@@ -206,6 +220,11 @@ export declare class SQLiteDatabase {
         hasMore: boolean;
     };
     /**
+     * List files strictly after a keyset cursor, ordered by `(created_at, hash)`.
+     * Used by incremental consumers such as the media archive worker.
+     */
+    listFilesCreatedAfter(params: ListFilesCreatedAfterParams): FileMetadata[];
+    /**
      * Get tag usage counts
      */
     getTagCounts(): Record<string, number>;
@@ -228,7 +247,7 @@ export declare class SQLiteDatabase {
     /**
      * Atomically claim up to `limit` due tasks for processing.
      */
-    claimTasks(limit: number): TaskItem[];
+    claimTasks(limit: number, taskTypes?: TaskType[]): TaskItem[];
     /**
      * Update a typed task's status, applying failure backoff.
      */
@@ -358,10 +377,6 @@ export declare class SQLiteDatabase {
      */
     getDbPath(): string;
 }
-/**
- * Get default workspace path
- */
-export declare function getDefaultWorkspacePath(): string;
 /**
  * Ensure workspace directory exists
  */

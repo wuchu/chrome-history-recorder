@@ -156,6 +156,67 @@ describe('VFSAPI', () => {
     });
   });
 
+  describe('getBlobPath API', () => {
+    it('should return the absolute path without reading contents', () => {
+      const buffer = Buffer.from('blob path content');
+      const saveResult = api.saveFile({
+        buffer,
+        mimeType: 'image/jpeg',
+      });
+
+      const result = api.getBlobPath(saveResult.hash);
+
+      expect(result).not.toBeNull();
+      expect(result?.path).toBe(blobStorage.getBlobPath(saveResult.hash, 'jpg'));
+      expect(result?.size).toBe(buffer.length);
+      expect(result?.mimeType).toBe('image/jpeg');
+      expect(fs.existsSync(result!.path)).toBe(true);
+    });
+
+    it('should return null for unknown hashes', () => {
+      expect(api.getBlobPath('nonexistent')).toBeNull();
+    });
+
+    it('should return null when the blob file is missing', () => {
+      const saveResult = api.saveFile({
+        buffer: Buffer.from('missing blob'),
+        mimeType: 'image/jpeg',
+      });
+      blobStorage.deleteBlob(saveResult.hash, 'jpg');
+
+      expect(api.getBlobPath(saveResult.hash)).toBeNull();
+    });
+  });
+
+  describe('listFilesCreatedAfter API', () => {
+    it('should delegate to the index query', () => {
+      api.saveFile({ buffer: Buffer.from('first'), mimeType: 'image/jpeg' });
+      api.saveFile({ buffer: Buffer.from('second'), mimeType: 'image/jpeg' });
+
+      const items = api.listFilesCreatedAfter({
+        createdAt: '1970-01-01T00:00:00.000Z',
+        hash: '',
+        limit: 10,
+      });
+
+      expect(items.length).toBe(2);
+      expect(items.every((item) => item.is_deleted === 0)).toBe(true);
+    });
+
+    it('should exclude soft-deleted files', () => {
+      const saved = api.saveFile({ buffer: Buffer.from('deleted'), mimeType: 'image/jpeg' });
+      api.deleteFile({ hash: saved.hash });
+
+      const items = api.listFilesCreatedAfter({
+        createdAt: '1970-01-01T00:00:00.000Z',
+        hash: '',
+        limit: 10,
+      });
+
+      expect(items).toEqual([]);
+    });
+  });
+
   describe('deleteFile API', () => {
     it('should soft delete file by default', () => {
       const buffer = Buffer.from('test');

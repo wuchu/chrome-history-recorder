@@ -7,7 +7,6 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
-import os from 'os';
 
 const MAX_TAG_NAME_LENGTH = 40;
 
@@ -71,6 +70,7 @@ CREATE TABLE IF NOT EXISTS files (
 
 CREATE INDEX IF NOT EXISTS idx_files_category ON files(category) WHERE is_deleted = 0;
 CREATE INDEX IF NOT EXISTS idx_files_captured_at ON files(captured_at);
+CREATE INDEX IF NOT EXISTS idx_files_created_at ON files(created_at);
 CREATE INDEX IF NOT EXISTS idx_files_classified ON files(classified_at) WHERE classified_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_files_starred ON files(is_starred) WHERE is_starred = 1;
 `;
@@ -250,6 +250,15 @@ export interface ListQuery {
 }
 
 /**
+ * Query for files indexed after a `(created_at, hash)` cursor.
+ */
+export interface ListFilesCreatedAfterParams {
+  createdAt: string;
+  hash: string;
+  limit?: number;
+}
+
+/**
  * Metadata update parameters
  */
 export interface MetadataUpdate {
@@ -275,6 +284,23 @@ export interface StatsResult {
 }
 
 /**
+ * Build an actionable error for databases SQLite refuses to open.
+ *
+ * `SQLITE_CANTOPEN` ("unable to open database file") is what SQLite reports
+ * when the workspace volume cannot provide the shared-memory files WAL needs,
+ * which is typical for network shares (SMB/NFS) and some removable media.
+ */
+function databaseOpenError(dbPath: string, error: unknown): Error {
+  const reason = error instanceof Error ? error.message : String(error);
+  return new Error(
+    `Unable to open workspace database at ${dbPath}: ${reason}. ` +
+      'If the workspace lives on a network share or removable disk, copy vfs.db to a local ' +
+      'disk, run `PRAGMA journal_mode = DELETE;` there, and copy it back (WAL journaling ' +
+      'requires shared memory that those volumes do not provide).'
+  );
+}
+
+/**
  * SQLiteDatabase class
  */
 export class SQLiteDatabase {
@@ -283,9 +309,39 @@ export class SQLiteDatabase {
 
   constructor(workspacePath: string) {
     this.dbPath = path.join(workspacePath, 'vfs.db');
-    this.db = new Database(this.dbPath);
-    this.db.pragma('journal_mode = WAL');
+    try {
+      this.db = new Database(this.dbPath);
+    } catch (error) {
+      throw databaseOpenError(this.dbPath, error);
+    }
+    this.configureJournalMode();
     this.initializeSchema();
+  }
+
+  /**
+   * Prefer WAL, but tolerate volumes where WAL is unavailable. A database
+   * whose header already uses WAL cannot be opened on those volumes at all,
+   * so report that case with recovery instructions instead of a bare error.
+   */
+  private configureJournalMode(): void {
+    let mode: string;
+    try {
+      mode = this.db.pragma('journal_mode = WAL', { simple: true }) as string;
+    } catch (error) {
+      try {
+        this.db.close();
+      } catch {
+        // Ignore close errors: the connection is already unusable.
+      }
+      throw databaseOpenError(this.dbPath, error);
+    }
+
+    if (mode !== 'wal') {
+      console.warn(
+        `[VFS] WAL journaling unavailable for ${this.dbPath}; using "${mode}" journal mode. ` +
+          'This is expected on network shares and some removable disks.'
+      );
+    }
   }
 
   /**
@@ -605,6 +661,22 @@ export class SQLiteDatabase {
   }
 
   /**
+   * List files strictly after a keyset cursor, ordered by `(created_at, hash)`.
+   * Used by incremental consumers such as the media archive worker.
+   */
+  listFilesCreatedAfter(params: ListFilesCreatedAfterParams): FileMetadata[] {
+    const limit = Math.max(1, Math.floor(params.limit ?? 200));
+    const stmt = this.db.prepare(`
+      SELECT * FROM files
+      WHERE is_deleted = 0
+        AND (created_at > ? OR (created_at = ? AND hash > ?))
+      ORDER BY created_at ASC, hash ASC
+      LIMIT ?
+    `);
+    return stmt.all(params.createdAt, params.createdAt, params.hash, limit) as FileMetadata[];
+  }
+
+  /**
    * Get tag usage counts
    */
   getTagCounts(): Record<string, number> {
@@ -765,12 +837,16 @@ export class SQLiteDatabase {
   /**
    * Atomically claim up to `limit` due tasks for processing.
    */
-  claimTasks(limit: number): TaskItem[] {
+  claimTasks(limit: number, taskTypes?: TaskType[]): TaskItem[] {
     if (limit <= 0) return [];
     const now = new Date().toISOString();
+    const typeFilter =
+      taskTypes && taskTypes.length > 0
+        ? `AND task_type IN (${taskTypes.map(() => '?').join(', ')})`
+        : '';
     const selectStmt = this.db.prepare(`
       SELECT * FROM tasks
-      WHERE status = 'pending' AND (next_run_at IS NULL OR next_run_at <= ?)
+      WHERE status = 'pending' AND (next_run_at IS NULL OR next_run_at <= ?) ${typeFilter}
       ORDER BY priority DESC, created_at ASC
       LIMIT ?
     `);
@@ -782,7 +858,7 @@ export class SQLiteDatabase {
 
     const claimed: TaskItem[] = [];
     const transaction = this.db.transaction(() => {
-      const rows = selectStmt.all(now, limit) as TaskItem[];
+      const rows = selectStmt.all(now, ...(taskTypes ?? []), limit) as TaskItem[];
       for (const row of rows) {
         const result = updateStmt.run(now, now, row.id);
         if (result.changes > 0) {
@@ -1432,13 +1508,6 @@ export class SQLiteDatabase {
   getDbPath(): string {
     return this.dbPath;
   }
-}
-
-/**
- * Get default workspace path
- */
-export function getDefaultWorkspacePath(): string {
-  return path.join(os.homedir(), '.vfs-workspace');
 }
 
 /**

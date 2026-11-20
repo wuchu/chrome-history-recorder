@@ -43,6 +43,7 @@ import {
   type ExtensionConfig,
   type TagDefinition,
   type VFSTagRecord,
+  type WorkspaceConfigInfo,
 } from '../../shared/extension-runtime';
 import { DEFAULT_PROMPT_TEMPLATES, type PromptTemplates } from '../../shared/prompt-templates';
 import { useOptionsData } from './hooks/useOptionsData';
@@ -50,6 +51,7 @@ import { useTaskQueue } from './hooks/useTaskQueue';
 import TaskConsole from './components/TaskConsole';
 import OverviewTab from './components/OverviewTab';
 import MediaLibrary from './components/MediaLibrary';
+import MediaArchiveCard from './components/MediaArchiveCard';
 import { consoleTabHash, isConsoleTab, readConsoleTabFromHash, type ConsoleTab } from './tabs';
 import { useTheme } from '../media-browser/hooks/useTheme';
 
@@ -68,6 +70,13 @@ const LANGUAGE_OPTIONS = [
   { value: 'zh-CN', label: '中文' },
   { value: 'en-US', label: 'English' },
 ];
+
+const WORKSPACE_SOURCE_LABELS: Record<WorkspaceConfigInfo['source'], string> = {
+  cli: '启动参数 (--workspace)',
+  env: '环境变量 (VFS_WORKSPACE)',
+  config: 'launcher 配置',
+  default: '默认值',
+};
 
 const VIDEO_TYPE_OPTIONS = SUPPORTED_VIDEO_MIME_TYPES.map((type) => ({
   value: type,
@@ -123,6 +132,14 @@ function App() {
     setTagPinned,
     savePromptTemplate,
     resetPromptTemplate,
+    workspaceInfo,
+    workspaceLoading,
+    refreshWorkspaceConfig,
+    saveWorkspacePath,
+    mediaArchiveStatus,
+    refreshMediaArchiveStatus,
+    saveMediaArchiveConfig,
+    runMediaArchive,
   } = useOptionsData();
 
   const taskQueue = useTaskQueue();
@@ -144,6 +161,7 @@ function App() {
     })
   );
   const [maxVideoSizeMb, setMaxVideoSizeMb] = useState<number>(DEFAULT_MAX_VIDEO_SIZE_MB);
+  const [workspaceDraft, setWorkspaceDraft] = useState('');
   const [renamingTag, setRenamingTag] = useState<VFSTagRecord | null>(null);
   const [mergingTag, setMergingTag] = useState<VFSTagRecord | null>(null);
   const [tagForm] = Form.useForm();
@@ -156,6 +174,12 @@ function App() {
   useEffect(() => {
     setMaxVideoSizeMb(Math.round(config.maxVideoSize / (1024 * 1024)));
   }, [config.maxVideoSize]);
+
+  useEffect(() => {
+    setWorkspaceDraft(workspaceInfo?.pendingPath ?? workspaceInfo?.path ?? '');
+  }, [workspaceInfo]);
+
+  const workspaceOverride = workspaceInfo?.source === 'cli' || workspaceInfo?.source === 'env';
 
   useEffect(() => {
     setTemplateDrafts({
@@ -200,6 +224,105 @@ function App() {
       const text = refreshError instanceof Error ? refreshError.message : '刷新模型失败';
       messageApi.error(text);
     }
+  };
+
+  const handleRefreshWorkspace = async () => {
+    try {
+      await refreshWorkspaceConfig();
+      messageApi.success('工作区信息已刷新');
+    } catch (refreshError) {
+      const text = refreshError instanceof Error ? refreshError.message : '刷新工作区信息失败';
+      messageApi.error(text);
+    }
+  };
+
+  const handleCopyWorkspacePath = async (value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      messageApi.success('路径已复制');
+    } catch {
+      messageApi.error('复制失败，请手动选择路径');
+    }
+  };
+
+  const handleMediaArchiveToggle = async (
+    enabled: boolean,
+    targetPath: string,
+    intervalMinutes: number
+  ) => {
+    try {
+      await saveMediaArchiveConfig({
+        enabled,
+        targetPath: enabled ? targetPath : (mediaArchiveStatus?.targetPath ?? targetPath),
+        intervalMinutes,
+      });
+      messageApi.success(enabled ? '媒体归档已启用' : '媒体归档已停用');
+    } catch (toggleError) {
+      messageApi.error(toggleError instanceof Error ? toggleError.message : '保存归档设置失败');
+    }
+  };
+
+  const handleMediaArchiveSave = async (targetPath: string, intervalMinutes: number) => {
+    if (!targetPath) {
+      messageApi.error('请输入归档目标目录');
+      return;
+    }
+
+    try {
+      await saveMediaArchiveConfig({ targetPath, intervalMinutes });
+      messageApi.success('媒体归档设置已保存');
+    } catch (saveError) {
+      messageApi.error(saveError instanceof Error ? saveError.message : '保存归档设置失败');
+    }
+  };
+
+  const handleMediaArchiveRun = async () => {
+    try {
+      await runMediaArchive();
+      messageApi.success('已触发媒体归档');
+    } catch (runError) {
+      messageApi.error(runError instanceof Error ? runError.message : '触发归档失败');
+    }
+  };
+
+  const handleRefreshMediaArchive = async () => {
+    try {
+      await refreshMediaArchiveStatus();
+      messageApi.success('归档状态已刷新');
+    } catch (refreshError) {
+      messageApi.error(refreshError instanceof Error ? refreshError.message : '刷新归档状态失败');
+    }
+  };
+
+  const handleWorkspaceSave = () => {
+    if (!workspaceInfo) return;
+    const nextPath = workspaceDraft.trim();
+    if (!nextPath || nextPath === workspaceInfo.path) return;
+
+    modal.confirm({
+      title: '更改工作区路径',
+      content: (
+        <Space direction="vertical" size={6}>
+          <Text>保存后需要重启后端进程才会切换工作区。</Text>
+          <Text type="secondary">
+            如果新目录为空，应用会把它初始化为全新的工作区，Ollama 等配置回到默认值。
+          </Text>
+          <Text type="secondary">
+            当前工作区 {workspaceInfo.path} 的数据和配置会原地保留，不会被移动或删除。
+          </Text>
+        </Space>
+      ),
+      okText: '保存',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          await saveWorkspacePath(nextPath);
+          messageApi.success('工作区路径已保存，重启后端后生效');
+        } catch (saveError) {
+          messageApi.error(saveError instanceof Error ? saveError.message : '保存工作区路径失败');
+        }
+      },
+    });
   };
 
   const handleModelChange = async (visionModel: string) => {
@@ -569,24 +692,40 @@ function App() {
                 key: 'tasks',
                 label: '任务',
                 children: (
-                  <TaskConsole
-                    status={taskQueue.status}
-                    loading={taskQueue.loading}
-                    busy={taskQueue.busy}
-                    concurrency={config.classificationConcurrency}
-                    templateDrafts={templateDrafts}
-                    onStart={handleStart}
-                    onPause={handlePause}
-                    onRetryFailed={handleRetryFailed}
-                    onClearQueue={handleClearQueue}
-                    onRescan={handleRescan}
-                    onConcurrencyChange={handleConcurrencyChange}
-                    onTemplateChange={(key, value) =>
-                      setTemplateDrafts((prev) => ({ ...prev, [key]: value }))
-                    }
-                    onTemplateSave={(key) => void handleTemplateSave(key)}
-                    onTemplateReset={(key) => void handleTemplateReset(key)}
-                  />
+                  <Space direction="vertical" size="large" className="full-width">
+                    <MediaArchiveCard
+                      status={mediaArchiveStatus}
+                      summary={taskQueue.status.byType?.archive}
+                      savingSave={saving.mediaArchive}
+                      savingRun={saving.mediaArchiveRun}
+                      onRefresh={() => void handleRefreshMediaArchive()}
+                      onToggle={(enabled, targetPath, intervalMinutes) =>
+                        void handleMediaArchiveToggle(enabled, targetPath, intervalMinutes)
+                      }
+                      onSave={(targetPath, intervalMinutes) =>
+                        void handleMediaArchiveSave(targetPath, intervalMinutes)
+                      }
+                      onRun={() => void handleMediaArchiveRun()}
+                    />
+                    <TaskConsole
+                      status={taskQueue.status}
+                      loading={taskQueue.loading}
+                      busy={taskQueue.busy}
+                      concurrency={config.classificationConcurrency}
+                      templateDrafts={templateDrafts}
+                      onStart={handleStart}
+                      onPause={handlePause}
+                      onRetryFailed={handleRetryFailed}
+                      onClearQueue={handleClearQueue}
+                      onRescan={handleRescan}
+                      onConcurrencyChange={handleConcurrencyChange}
+                      onTemplateChange={(key, value) =>
+                        setTemplateDrafts((prev) => ({ ...prev, [key]: value }))
+                      }
+                      onTemplateSave={(key) => void handleTemplateSave(key)}
+                      onTemplateReset={(key) => void handleTemplateReset(key)}
+                    />
+                  </Space>
                 ),
               },
               {
@@ -666,6 +805,98 @@ function App() {
                           </Button>
                         </Space>
                       </div>
+                    </Card>
+
+                    <Card
+                      className="options-card"
+                      title="存储与工作空间"
+                      extra={
+                        <Button
+                          loading={workspaceLoading}
+                          onClick={() => void handleRefreshWorkspace()}
+                        >
+                          刷新
+                        </Button>
+                      }
+                    >
+                      {!workspaceInfo ? (
+                        <Alert
+                          type="info"
+                          showIcon
+                          message="未连接后端"
+                          description="连接后端后可以查看和修改 VFS 工作区路径。"
+                        />
+                      ) : (
+                        <Form layout="vertical">
+                          <Form.Item label="当前路径">
+                            <Space.Compact className="full-width">
+                              <Input readOnly value={workspaceInfo.path} />
+                              <Button
+                                onClick={() => void handleCopyWorkspacePath(workspaceInfo.path)}
+                              >
+                                复制
+                              </Button>
+                            </Space.Compact>
+                          </Form.Item>
+
+                          {workspaceInfo.pendingPath && (
+                            <Alert
+                              type="warning"
+                              showIcon
+                              style={{ marginBottom: 16 }}
+                              message={`待生效路径：${workspaceInfo.pendingPath}`}
+                              description="重启后端进程后才会切换；当前仍写入上面的当前路径。"
+                            />
+                          )}
+
+                          <Form.Item
+                            label="路径来源"
+                            extra={`默认路径：${workspaceInfo.defaultPath}`}
+                          >
+                            <Text>{WORKSPACE_SOURCE_LABELS[workspaceInfo.source]}</Text>
+                          </Form.Item>
+
+                          <Form.Item
+                            label="更改工作区"
+                            extra={
+                              workspaceOverride
+                                ? '当前路径由启动参数或环境变量指定，修改 Options 不会生效。'
+                                : '输入绝对路径。保存后需要重启后端才会生效；旧工作区的数据不会被移动或删除。'
+                            }
+                          >
+                            <Space.Compact className="full-width">
+                              <Input
+                                value={workspaceDraft}
+                                disabled={workspaceOverride}
+                                placeholder="例如 /Volumes/SSD/vfs-workspace"
+                                onChange={(event) => setWorkspaceDraft(event.target.value)}
+                                onPressEnter={handleWorkspaceSave}
+                              />
+                              <Button
+                                type="primary"
+                                loading={saving.workspace}
+                                disabled={
+                                  workspaceOverride ||
+                                  !workspaceDraft.trim() ||
+                                  workspaceDraft.trim() === workspaceInfo.path
+                                }
+                                onClick={handleWorkspaceSave}
+                              >
+                                保存
+                              </Button>
+                            </Space.Compact>
+                          </Form.Item>
+
+                          {workspaceOverride && (
+                            <Alert
+                              type="info"
+                              showIcon
+                              message="工作区路径由启动配置决定"
+                              description="请通过 --workspace 参数或 VFS_WORKSPACE 环境变量修改，然后重启后端。"
+                            />
+                          )}
+                        </Form>
+                      )}
                     </Card>
 
                     <Card className="options-card" title="视频捕获">

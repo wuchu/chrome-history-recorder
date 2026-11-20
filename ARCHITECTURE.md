@@ -245,7 +245,7 @@ POST http://localhost:11434/api/chat
 
 ### Decision 3: Workspace Configuration
 
-**选择**: 默认 `~/.vfs-workspace`，支持参数传入。
+**选择**: 默认 `~/.vfs-workspace`，按 `--workspace` / `-w` ＞ `VFS_WORKSPACE` ＞ 用户级 launcher 配置 ＞ 默认值 的顺序解析；Options 可修改，重启生效。
 
 **目录结构**:
 
@@ -260,11 +260,29 @@ POST http://localhost:11434/api/chat
     └── ...
 ```
 
+**launcher 配置**（工作区之外，不能放 `workspace/config.json`，否则打开工作区前读不到）:
+
+```
+macOS    ~/Library/Application Support/browser-media-recorder/config.json
+Linux    $XDG_CONFIG_HOME/browser-media-recorder/config.json（缺省 ~/.config/...）
+Windows  %APPDATA%\browser-media-recorder\config.json
+
+{ "version": 1, "workspacePath": "/absolute/path" }
+```
+
+**行为**:
+
+- `getWorkspaceConfig` 由 app 覆盖为 `{ path, defaultPath, source, pendingPath? }`；`setWorkspacePath` 校验后原子写入 launcher 配置并返回 `restartRequired`。
+- 保存时与启动时各校验一次：绝对路径、父目录存在且可写、外置卷已挂载、目标为空目录或包含 `vfs.db` 的已有工作区；非空普通目录、根目录、home、当前工作区及其内部路径一律拒绝。
+- 运行期不热切换；`pendingPath` 实时读取 launcher 配置，重启后生效。
+- 启动时目标不可用则失败退出并打印恢复方式，不回退到默认或历史路径。
+- 切换路径不移动、复制或删除旧工作区数据；`workspace/config.json` 随工作区走。
+
 **理由**:
 
-- 用户目录是合理的默认位置。
-- 隐藏目录 `.vfs-workspace` 避免视觉干扰。
-- 参数传入支持自定义位置（如外部存储）。
+- 用户目录是合理的默认位置，隐藏目录 `.vfs-workspace` 避免视觉干扰。
+- 路径是"打开工作区之前"就需要的信息，只能存放在工作区之外的用户级位置。
+- CLI/env 保持最高优先级，便于开发与排障；Options 提供普通用户的图形入口。
 
 ### Decision 4: VFS API Design
 
@@ -327,6 +345,38 @@ Chrome Extension（薄层）:
 - 调度器和 AI 通过进程内 `VFSAPI` 读写存储，任务操作与媒体读取不再经 WebSocket 序列化。
 - extension 只保留浏览器专属能力（CDP、offscreen、UI）与薄中继，bundle 与冷启动时间显著下降。
 - 配置以 app 为真源，extension 持镜像，避免 chrome.storage 与后端状态分叉。
+
+### Decision 6: 媒体归档采用"本地工作区 + 单向复制"
+
+**选择**: 工作区（`vfs.db`、`blobs/`、`thumbnails/`）始终留在本地；每个新增媒体在统一任务表中生成一条 `archive` 任务，由 app 内的独立 runner 异步复制到用户指定的挂载目录（如 NAS）。
+
+```
+ingest ──▶ tasks(archive, pending)
+                 │
+   MediaArchiveWorker runner ── claimTasks(1, ['archive'])
+                 │
+                 ├─ 成功 ──▶ tasks(archive, completed)
+                 └─ 失败 ──▶ tasks(archive, pending, next_run_at 退避)
+
+本地工作区                         目标目录（SMB / 外置盘）
+blobs/<hash>.<ext>  ──copy──▶  .<hash>.<ext>.part ──rename──▶ <hash>.<ext>
+      ▲
+      └── files(created_at, hash) 对账游标 + media-archive-state.json
+```
+
+- Options 任务页顶部有专用的「媒体归档」卡片，展示已完成/总数、进度条与处理中/待处理/失败计数；TaskConsole 的按类型卡片不重复展示 archive。
+- AI `Scheduler` 只领取自己注册的任务类型，归档 runner 只领取 `archive`，互不抢占。
+- 归档 runner **不复用 AI 调度器**：`classificationPaused` 默认 true，且 Ollama 不可用时 `Scheduler.tick` 会直接返回；复用会让归档一起停摆。
+- 目标目录本身就是去重状态：`<hash>.<ext>` 且 size 一致即视为已归档；状态文件只保存 `activatedAt`、对账游标与换目标时的 requeue 标记。
+- 只归档首次启用后新增的文件；更换目标时把游标重置到 `activatedAt`，以 `requeue: true` 重建任务并补齐缺失文件。
+- 失败任务通过任务引擎的 `attempts` / `next_run_at` 无限重试（指数退避，上限 1 小时）；`max_attempts` 取极大值，任务不会被永久判失败。
+- 目标路径必须已存在且可写；每轮 drain 前校验，未挂载时跳过且不创建目录。归档失败不影响 app 启动。
+
+**为什么不做**:
+
+- 把整个工作区放到 SMB：SQLite WAL 需要共享内存，SMB 上无法打开 WAL 模式的 `vfs.db`。
+- 把 `blobs/` 软链到 SMB：HTTP 流式上传使用本地 `.tmp` → `rename` 到 `blobs/`，跨文件系统会 `EXDEV`，视频捕获全部失败。
+- 把归档任务交给 AI `Scheduler` 消费：暂停语义与 Ollama 可用性会让归档停摆，大文件复制也会与 AI 推理争抢并发。
 
 ## 数据流
 

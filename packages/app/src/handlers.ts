@@ -12,6 +12,19 @@ import type { ConfigStore } from './config-store';
 import type { EventBus } from './event-bus';
 import type { Scheduler } from './scheduler';
 import type { AppConfig } from './types';
+import type { WorkspaceInfo, WorkspaceUpdateResult } from './workspace-config';
+import type { MediaArchiveConfigUpdate, MediaArchiveStatus } from './media-archive';
+
+export interface AppWorkspaceHandlers {
+  getInfo(): WorkspaceInfo;
+  setPath(target: string): WorkspaceUpdateResult;
+}
+
+export interface AppMediaArchiveHandlers {
+  getStatus(): MediaArchiveStatus;
+  updateConfig(update: MediaArchiveConfigUpdate): MediaArchiveStatus;
+  runNow(): MediaArchiveStatus;
+}
 
 export interface AppHandlerDependencies {
   api: VFSAPI;
@@ -19,15 +32,40 @@ export interface AppHandlerDependencies {
   store: ConfigStore;
   scheduler: Scheduler;
   events: EventBus;
+  workspace: AppWorkspaceHandlers;
+  mediaArchive: AppMediaArchiveHandlers;
 }
 
 export function createAppExternalHandler(dependencies: AppHandlerDependencies): ExternalHandler {
-  const { api, ai, store, scheduler } = dependencies;
+  const { api, ai, store, scheduler, workspace, mediaArchive } = dependencies;
 
   return async (method: string, params: Record<string, unknown>) => {
     switch (method) {
       case 'getConfig':
         return store.get();
+
+      case 'getWorkspaceConfig':
+        return workspace.getInfo();
+
+      case 'setWorkspacePath': {
+        const target = typeof params.path === 'string' ? params.path.trim() : '';
+        const { pendingPath } = workspace.setPath(target);
+        return { success: true, restartRequired: true, pendingPath };
+      }
+
+      case 'getMediaArchiveStatus':
+        return mediaArchive.getStatus();
+
+      case 'updateMediaArchiveConfig':
+        return mediaArchive.updateConfig({
+          enabled: typeof params.enabled === 'boolean' ? params.enabled : undefined,
+          targetPath: typeof params.targetPath === 'string' ? params.targetPath : undefined,
+          intervalMinutes:
+            typeof params.intervalMinutes === 'number' ? params.intervalMinutes : undefined,
+        });
+
+      case 'runMediaArchiveNow':
+        return mediaArchive.runNow();
 
       case 'updateConfig': {
         const config = store.update((params.updates ?? {}) as Partial<AppConfig>);

@@ -5,7 +5,15 @@
  * thin: it relays RPC and events, while the app owns scheduling and AI.
  */
 
-import type { ExtensionConfig, OllamaModel, SchedulerStatus } from '../shared/extension-runtime';
+import type {
+  ExtensionConfig,
+  MediaArchiveConfigUpdate,
+  MediaArchiveStatus,
+  OllamaModel,
+  SchedulerStatus,
+  WorkspaceConfigInfo,
+  WorkspacePathUpdateResult,
+} from '../shared/extension-runtime';
 
 /**
  * VFS WebSocket Client configuration
@@ -507,8 +515,15 @@ export class VFSWebSocketClient {
   /**
    * Get workspace config
    */
-  async getWorkspaceConfig(): Promise<{ path: string }> {
+  async getWorkspaceConfig(): Promise<WorkspaceConfigInfo> {
     return this.send('getWorkspaceConfig');
+  }
+
+  /**
+   * Persist a new workspace path. Takes effect after the app restarts.
+   */
+  async setWorkspacePath(path: string): Promise<WorkspacePathUpdateResult> {
+    return this.send('setWorkspacePath', { path });
   }
 
   /**
@@ -516,6 +531,21 @@ export class VFSWebSocketClient {
    */
   async syncBlobsToIndex(): Promise<SyncBlobsToIndexResult> {
     return this.send('syncBlobsToIndex');
+  }
+
+  /**
+   * Media archive status and controls.
+   */
+  async getMediaArchiveStatus(): Promise<MediaArchiveStatus> {
+    return this.send('getMediaArchiveStatus');
+  }
+
+  async updateMediaArchiveConfig(update: MediaArchiveConfigUpdate): Promise<MediaArchiveStatus> {
+    return this.send('updateMediaArchiveConfig', { ...update });
+  }
+
+  async runMediaArchiveNow(): Promise<MediaArchiveStatus> {
+    return this.send('runMediaArchiveNow');
   }
 
   // App RPC: configuration, scheduler, and Ollama live in the backend.

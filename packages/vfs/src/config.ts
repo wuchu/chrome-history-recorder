@@ -8,17 +8,32 @@ import path from 'path';
 import os from 'os';
 
 /**
+ * Where the resolved workspace path came from.
+ */
+export type WorkspaceSource = 'cli' | 'env' | 'default';
+
+/**
  * VFS Service configuration
  */
 export interface VFSConfig {
   workspacePath: string;
+  source: WorkspaceSource;
 }
 
 /**
- * Parse command line arguments
+ * Parse command line arguments and environment variables.
+ *
+ * Precedence: `--workspace` / `-w` > `VFS_WORKSPACE` > default path.
  */
-export function parseArgs(args: string[]): VFSConfig {
+export function parseArgs(args: string[], env: NodeJS.ProcessEnv = process.env): VFSConfig {
   let workspacePath = getDefaultWorkspacePath();
+  let source: WorkspaceSource = 'default';
+
+  const envWorkspace = env.VFS_WORKSPACE?.trim();
+  if (envWorkspace) {
+    workspacePath = expandPath(envWorkspace);
+    source = 'env';
+  }
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -26,6 +41,7 @@ export function parseArgs(args: string[]): VFSConfig {
       const value = args[i + 1];
       if (value) {
         workspacePath = expandPath(value);
+        source = 'cli';
         i++; // Skip next argument (the value)
       }
     }
@@ -33,6 +49,7 @@ export function parseArgs(args: string[]): VFSConfig {
 
   return {
     workspacePath,
+    source,
   };
 }
 

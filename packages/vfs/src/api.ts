@@ -13,6 +13,7 @@ import {
   FileMetadata,
   MetadataUpdate,
   ListQuery,
+  ListFilesCreatedAfterParams,
   EnqueueTaskParams,
   TaskType,
   TaskStatus,
@@ -43,6 +44,12 @@ export interface SaveFileResult {
   duplicate: boolean;
   size: number;
   mimeType?: string;
+}
+
+export interface BlobPathInfo {
+  path: string;
+  size: number;
+  mimeType: string;
 }
 
 /**
@@ -370,6 +377,34 @@ export class VFSAPI {
   }
 
   /**
+   * List files strictly after a `(created_at, hash)` cursor.
+   */
+  listFilesCreatedAfter(params: ListFilesCreatedAfterParams): FileMetadata[] {
+    return this.db.listFilesCreatedAfter(params);
+  }
+
+  /**
+   * Resolve a blob's absolute path without reading its contents.
+   */
+  getBlobPath(hash: string): BlobPathInfo | null {
+    const metadata = this.db.getFile(hash);
+    if (!metadata) {
+      return null;
+    }
+
+    const blobPath = this.blobStorage.getBlobPath(hash, metadata.blob_ext);
+    try {
+      const stat = fs.statSync(blobPath);
+      if (!stat.isFile()) {
+        return null;
+      }
+      return { path: blobPath, size: stat.size, mimeType: metadata.mime_type };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Update metadata API
    */
   updateMetadata(params: { hash: string; updates: MetadataUpdate }): {
@@ -556,8 +591,8 @@ export class VFSAPI {
   /**
    * Atomically claim due tasks for the extension engine.
    */
-  claimTasks(limit: number = 1): TaskItem[] {
-    return this.db.claimTasks(limit);
+  claimTasks(limit: number = 1, taskTypes?: TaskType[]): TaskItem[] {
+    return this.db.claimTasks(limit, taskTypes);
   }
 
   /**

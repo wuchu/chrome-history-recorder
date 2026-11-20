@@ -17,6 +17,10 @@ export const SUPPORTED_VIDEO_MIME_TYPES = [
   'video/x-matroska',
 ];
 
+export const MIN_MEDIA_ARCHIVE_INTERVAL_MINUTES = 1;
+export const MAX_MEDIA_ARCHIVE_INTERVAL_MINUTES = 1440;
+export const DEFAULT_MEDIA_ARCHIVE_INTERVAL_MINUTES = 5;
+
 export interface AppConfig {
   ollamaEndpoint: string;
   visionModel?: string;
@@ -28,6 +32,9 @@ export interface AppConfig {
   captureVideos: boolean;
   maxVideoSize: number;
   enabledVideoTypes: string[];
+  mediaArchiveEnabled: boolean;
+  mediaArchiveTargetPath: string;
+  mediaArchiveIntervalMinutes: number;
 }
 
 export const DEFAULT_APP_CONFIG: AppConfig = {
@@ -39,6 +46,9 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   captureVideos: true,
   maxVideoSize: DEFAULT_MAX_VIDEO_SIZE,
   enabledVideoTypes: [...DEFAULT_ENABLED_VIDEO_TYPES],
+  mediaArchiveEnabled: false,
+  mediaArchiveTargetPath: '',
+  mediaArchiveIntervalMinutes: DEFAULT_MEDIA_ARCHIVE_INTERVAL_MINUTES,
 };
 
 /**
@@ -58,6 +68,13 @@ export function normalizeAppConfig(config: AppConfig): AppConfig {
     : [];
   const enabledVideoTypes = [...new Set(requestedTypes)];
 
+  const mediaArchiveIntervalMinutes = Number.isFinite(config.mediaArchiveIntervalMinutes)
+    ? Math.min(
+        MAX_MEDIA_ARCHIVE_INTERVAL_MINUTES,
+        Math.max(MIN_MEDIA_ARCHIVE_INTERVAL_MINUTES, Math.floor(config.mediaArchiveIntervalMinutes))
+      )
+    : DEFAULT_MEDIA_ARCHIVE_INTERVAL_MINUTES;
+
   return {
     ...config,
     classificationConcurrency: Math.max(1, Math.floor(config.classificationConcurrency || 1)),
@@ -65,5 +82,9 @@ export function normalizeAppConfig(config: AppConfig): AppConfig {
     maxVideoSize,
     enabledVideoTypes:
       enabledVideoTypes.length > 0 ? enabledVideoTypes : [...DEFAULT_ENABLED_VIDEO_TYPES],
+    mediaArchiveEnabled: config.mediaArchiveEnabled === true,
+    mediaArchiveTargetPath:
+      typeof config.mediaArchiveTargetPath === 'string' ? config.mediaArchiveTargetPath.trim() : '',
+    mediaArchiveIntervalMinutes,
   };
 }

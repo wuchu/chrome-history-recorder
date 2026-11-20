@@ -263,7 +263,70 @@ pnpm --filter extension build
     └── ...
 ```
 
-可以通过启动 VFS Service 时的 `--workspace` / `-w` 参数修改工作空间路径。AI 分类配置通过扩展 Options 页面管理。
+可以通过启动参数、环境变量或扩展 Options 页面修改工作空间路径。AI 分类配置通过扩展 Options 页面管理。
+
+### 路径来源与优先级
+
+工作区路径按以下顺序解析，先命中者生效：
+
+1. 启动参数 `--workspace` / `-w`
+2. 环境变量 `VFS_WORKSPACE`
+3. Options「设置 → 存储与工作空间」保存的路径（用户级 launcher 配置）
+4. 默认路径 `~/.vfs-workspace`
+
+```bash
+# 环境变量（对 pnpm dev 同样生效）
+VFS_WORKSPACE=/Volumes/Media/vfs-workspace pnpm dev
+
+# 启动参数
+pnpm --filter app start -- --workspace /Volumes/Media/vfs-workspace
+```
+
+### 在 Options 中修改
+
+打开扩展 Options →「设置」→「存储与工作空间」，输入绝对路径并保存。**重启后端进程后才会切换**（开发模式下按 Ctrl+C 终止后重新运行 `pnpm dev`）；重启前捕获的内容仍写入原路径。卡片会显示当前路径、路径来源和待生效路径。
+
+- 目标目录必须不存在、为空，或包含 `vfs.db` 的已有工作区；非空且没有 `vfs.db` 的目录会被拒绝。
+- 切换路径**不会移动、复制或删除**旧工作区的数据，旧目录原地保留。
+- 新空工作区会按默认配置初始化（AI 分类默认暂停），旧工作区的 `config.json` 仍然保留；切回旧路径即可恢复原配置。
+- 通过 `--workspace` / `VFS_WORKSPACE` 指定的路径优先于 Options，此时 Options 中的编辑控件为只读。
+
+Launcher 配置文件位于工作区之外：
+
+```
+macOS    ~/Library/Application Support/browser-media-recorder/config.json
+Linux    $XDG_CONFIG_HOME/browser-media-recorder/config.json（缺省 ~/.config/...）
+Windows  %APPDATA%\browser-media-recorder\config.json
+```
+
+### 外置盘、网络共享与启动失败
+
+保存路径和每次启动都会校验目标（父目录存在且可写、外置卷已挂载等）。如果配置的工作区在启动时不可用（例如外置盘未挂载），后端会**失败退出**并打印原因、配置来源和恢复方式，不会自动回退到默认路径。恢复方式：
+
+1. 挂载对应磁盘后重新启动；
+2. 使用 `--workspace <path>` 临时指定其他工作区；
+3. 删除 launcher 配置中的 `workspacePath` 字段（或整个文件），回到默认 `~/.vfs-workspace`。
+
+> **网络共享（SMB / NFS）不支持 SQLite WAL。** 新建的工作区在无法启用 WAL 时会自动退回 rollback journal（`delete`）模式，日志会打印一条警告，功能不受影响。但**已在 WAL 模式下创建或复制过来的 `vfs.db` 在该类卷上无法打开**，启动会失败并提示：把 `vfs.db` 复制到本地磁盘，执行 `PRAGMA journal_mode = DELETE;`，再复制回去。
+
+### 媒体归档（本地工作区 → NAS）
+
+推荐把工作区保留在本地，用「媒体归档」把新增媒体复制到 NAS 挂载目录，而不是把整个工作区或 `blobs/` 放到 SMB 上：SQLite 需要本地 WAL，而跨文件系统的 `rename` 会让视频上传失败。
+
+打开扩展 Options →「任务」→「媒体归档」：
+
+- 设置启用开关、目标目录和对账间隔（1–1440 分钟，默认 5 分钟）。
+- 卡片展示整体进度：已完成/总数、进度条、处理中/待处理/失败任务数。
+- 每个新增文件是一条「媒体归档」任务；归档由独立 runner 消费，分类暂停或 Ollama 不可用时照常运行。
+- 目标必须是**已存在**的绝对目录；NAS 需先挂载，应用不会自动创建目录，也不会在未挂载的挂载点写入本地文件。
+- 只归档**首次启用之后**新增的媒体；停用后重新启用会补上停用期间的新增，但启用前的存量永远不会自动归档。
+- 目标文件使用内容哈希命名 `<hash>.<ext>`，扁平存放；不复制缩略图、AI 元数据或 sidecar，也不镜像删除。
+- 更换目标目录时，会重建启用以来的归档任务，把新目标中缺失的文件补齐。
+- 复制先写入目标目录内的 `.<hash>.<ext>.part` 再 `rename`，避免出现半截文件；单个文件失败会留在任务队列中无限重试（指数退避，上限 1 小时），不会阻塞后续文件。
+
+状态文件 `~/.vfs-workspace/media-archive-state.json` 只保存启用基线、对账游标和换目标标记；逐文件的进度与失败在任务表中。归档失败不会阻止后端启动；设置卡片会显示上次运行时间、待处理/失败任务数和最后错误。
+
+> 如果 launcher 配置或 `--workspace` 仍指向 NAS 工作区，请先按上一节切回本地 `~/.vfs-workspace`。
 
 ## 端口配置
 

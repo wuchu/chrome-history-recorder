@@ -44,6 +44,9 @@ export interface ExtensionConfig {
   captureVideos: boolean;
   maxVideoSize: number;
   enabledVideoTypes: string[];
+  mediaArchiveEnabled: boolean;
+  mediaArchiveTargetPath: string;
+  mediaArchiveIntervalMinutes: number;
 }
 
 /**
@@ -58,6 +61,9 @@ export const DEFAULT_EXTENSION_CONFIG: ExtensionConfig = {
   captureVideos: true,
   maxVideoSize: DEFAULT_MAX_VIDEO_SIZE,
   enabledVideoTypes: [...DEFAULT_ENABLED_VIDEO_TYPES],
+  mediaArchiveEnabled: false,
+  mediaArchiveTargetPath: '',
+  mediaArchiveIntervalMinutes: 5,
 };
 
 export interface OllamaModel {
@@ -74,6 +80,42 @@ export interface SchedulerStatus {
   running: boolean;
   processing: number;
   concurrency: number;
+}
+
+/**
+ * Workspace path state reported by the app.
+ */
+export interface WorkspaceConfigInfo {
+  path: string;
+  defaultPath: string;
+  source: 'cli' | 'env' | 'config' | 'default';
+  pendingPath?: string;
+}
+
+export interface WorkspacePathUpdateResult {
+  success: boolean;
+  restartRequired: boolean;
+  pendingPath: string;
+}
+
+/**
+ * Media archive state reported by the app.
+ */
+export interface MediaArchiveStatus {
+  enabled: boolean;
+  targetPath: string;
+  intervalMinutes: number;
+  running: boolean;
+  lastRunAt?: string;
+  pendingCount: number;
+  failedCount: number;
+  lastError?: string;
+}
+
+export interface MediaArchiveConfigUpdate {
+  enabled?: boolean;
+  targetPath?: string;
+  intervalMinutes?: number;
 }
 
 export type TaskType = 'classify' | 'rename' | (string & {});
@@ -328,6 +370,28 @@ export async function getConfig(): Promise<ExtensionConfig> {
 
 export async function updateConfig(updates: Partial<ExtensionConfig>): Promise<void> {
   await sendRuntimeMessage<void>({ type: 'updateConfig', updates });
+}
+
+export async function getWorkspaceConfig(): Promise<WorkspaceConfigInfo> {
+  return sendRuntimeMessage<WorkspaceConfigInfo>({ type: 'getWorkspaceConfig' });
+}
+
+export async function setWorkspacePath(path: string): Promise<WorkspacePathUpdateResult> {
+  return sendRuntimeMessage<WorkspacePathUpdateResult>({ type: 'setWorkspacePath', path });
+}
+
+export async function getMediaArchiveStatus(): Promise<MediaArchiveStatus> {
+  return sendRuntimeMessage<MediaArchiveStatus>({ type: 'getMediaArchiveStatus' });
+}
+
+export async function updateMediaArchiveConfig(
+  update: MediaArchiveConfigUpdate
+): Promise<MediaArchiveStatus> {
+  return sendRuntimeMessage<MediaArchiveStatus>({ type: 'updateMediaArchiveConfig', ...update });
+}
+
+export async function runMediaArchiveNow(): Promise<MediaArchiveStatus> {
+  return sendRuntimeMessage<MediaArchiveStatus>({ type: 'runMediaArchiveNow' });
 }
 
 export async function listOllamaModels(): Promise<{

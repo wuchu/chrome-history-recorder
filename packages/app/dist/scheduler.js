@@ -196,7 +196,10 @@ class Scheduler {
             return;
         this.ticking = true;
         try {
-            const tasks = this.api.claimTasks(free);
+            // Only claim task types this scheduler owns. The media archive runner
+            // claims its own `archive` tasks so AI pause/Ollama availability cannot
+            // block archiving.
+            const tasks = this.api.claimTasks(free, Array.from(this.handlers.keys()));
             for (const task of tasks) {
                 const key = `${task.task_type}:${task.target_hash}`;
                 if (this.processing.has(key))

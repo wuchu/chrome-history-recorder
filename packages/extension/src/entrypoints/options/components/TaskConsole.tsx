@@ -25,6 +25,7 @@ const { TextArea } = Input;
 const TASK_TYPE_LABELS: Record<string, string> = {
   classify: 'AI 分类',
   rename: 'AI 重命名',
+  archive: '媒体归档',
 };
 
 const TEMPLATE_META: Record<'classify' | 'rename', { placeholder: string; description: string }> = {
@@ -111,7 +112,10 @@ const TaskConsole = memo(function TaskConsole({
     const keys = [
       'classify',
       'rename',
-      ...Object.keys(byType ?? {}).filter((key) => key !== 'classify' && key !== 'rename'),
+      // Archive tasks have their own card above the task console.
+      ...Object.keys(byType ?? {}).filter(
+        (key) => key !== 'classify' && key !== 'rename' && key !== 'archive'
+      ),
     ];
 
     return keys.map((key) => {

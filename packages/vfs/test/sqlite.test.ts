@@ -310,6 +310,166 @@ describe('SQLiteDatabase', () => {
     });
   });
 
+  describe('Incremental creation queries', () => {
+    function insert(hash: string, isDeleted = 0): void {
+      db.insertFile({
+        hash,
+        blob_ext: 'jpg',
+        mime_type: 'image/jpeg',
+        size: 1024,
+        source_url: null,
+        captured_at: '2024-01-01T00:00:00.000Z',
+        category: 'uncategorized',
+        ai_filename: null,
+        tags: null,
+        confidence: 0,
+        classified_at: null,
+        model_used: null,
+        is_starred: 0,
+        user_notes: null,
+        is_deleted: isDeleted,
+        deleted_at: isDeleted ? '2024-01-02T00:00:00.000Z' : null,
+      });
+    }
+
+    it('should return all files from an empty cursor', () => {
+      insert('aaa');
+      insert('bbb');
+      insert('ccc');
+
+      const items = db.listFilesCreatedAfter({
+        createdAt: '1970-01-01T00:00:00.000Z',
+        hash: '',
+        limit: 10,
+      });
+
+      expect(items.map((item) => item.hash)).toEqual(['aaa', 'bbb', 'ccc']);
+    });
+
+    it('should paginate with a keyset cursor without duplicates', () => {
+      insert('aaa');
+      insert('bbb');
+      insert('ccc');
+
+      const page1 = db.listFilesCreatedAfter({
+        createdAt: '1970-01-01T00:00:00.000Z',
+        hash: '',
+        limit: 2,
+      });
+      expect(page1.length).toBe(2);
+
+      const last = page1[page1.length - 1];
+      const page2 = db.listFilesCreatedAfter({
+        createdAt: last.created_at,
+        hash: last.hash,
+        limit: 2,
+      });
+
+      const combined = [...page1, ...page2].map((item) => item.hash);
+      expect(combined).toEqual(['aaa', 'bbb', 'ccc']);
+      expect(new Set(combined).size).toBe(3);
+    });
+
+    it('should exclude soft-deleted files', () => {
+      insert('aaa');
+      insert('bbb', 1);
+      insert('ccc');
+
+      const items = db.listFilesCreatedAfter({
+        createdAt: '1970-01-01T00:00:00.000Z',
+        hash: '',
+        limit: 10,
+      });
+
+      expect(items.map((item) => item.hash)).toEqual(['aaa', 'ccc']);
+    });
+
+    it('should treat the cursor as strictly exclusive', () => {
+      insert('aaa');
+
+      const [only] = db.listFilesCreatedAfter({
+        createdAt: '1970-01-01T00:00:00.000Z',
+        hash: '',
+        limit: 10,
+      });
+
+      const after = db.listFilesCreatedAfter({
+        createdAt: only.created_at,
+        hash: only.hash,
+        limit: 10,
+      });
+
+      expect(after).toEqual([]);
+    });
+
+    it('should order by hash when timestamps tie', () => {
+      insert('ccc');
+      insert('aaa');
+      insert('bbb');
+
+      const items = db.listFilesCreatedAfter({
+        createdAt: '1970-01-01T00:00:00.000Z',
+        hash: '',
+        limit: 10,
+      });
+
+      const sameTimestamp = items.every((item) => item.created_at === items[0].created_at);
+      if (sameTimestamp) {
+        expect(items.map((item) => item.hash)).toEqual(['aaa', 'bbb', 'ccc']);
+      } else {
+        expect(items.length).toBe(3);
+      }
+    });
+  });
+
+  describe('Typed task claiming', () => {
+    function insert(hash: string): void {
+      db.insertFile({
+        hash,
+        blob_ext: 'jpg',
+        mime_type: 'image/jpeg',
+        size: 1024,
+        source_url: null,
+        captured_at: '2024-01-01T00:00:00.000Z',
+        category: 'uncategorized',
+        ai_filename: null,
+        tags: null,
+        confidence: 0,
+        classified_at: null,
+        model_used: null,
+        is_starred: 0,
+        user_notes: null,
+        is_deleted: 0,
+        deleted_at: null,
+      });
+    }
+
+    it('claims only the requested task types', () => {
+      insert('aaa');
+      insert('bbb');
+      db.enqueueTask({ taskType: 'classify', hash: 'aaa' });
+      db.enqueueTask({ taskType: 'classify', hash: 'bbb' });
+      db.enqueueTask({ taskType: 'archive', hash: 'aaa', maxAttempts: 100 });
+
+      const archiveTasks = db.claimTasks(10, ['archive']);
+      expect(archiveTasks.map((task) => task.task_type)).toEqual(['archive']);
+      expect(archiveTasks.map((task) => task.target_hash)).toEqual(['aaa']);
+
+      const classifyTasks = db.claimTasks(10, ['classify']);
+      expect(classifyTasks.map((task) => task.task_type)).toEqual(['classify', 'classify']);
+      expect(classifyTasks.map((task) => task.target_hash).sort()).toEqual(['aaa', 'bbb']);
+    });
+
+    it('claims every type when no filter is given', () => {
+      insert('aaa');
+      db.enqueueTask({ taskType: 'classify', hash: 'aaa' });
+      db.enqueueTask({ taskType: 'archive', hash: 'aaa', maxAttempts: 100 });
+
+      const tasks = db.claimTasks(10);
+      expect(tasks.map((task) => task.task_type).sort()).toEqual(['archive', 'classify']);
+    });
+  });
+
   describe('Statistics', () => {
     beforeEach(() => {
       // Insert mixed content files

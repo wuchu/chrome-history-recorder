@@ -9,11 +9,28 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createAppExternalHandler = createAppExternalHandler;
 function createAppExternalHandler(dependencies) {
-    const { api, ai, store, scheduler } = dependencies;
+    const { api, ai, store, scheduler, workspace, mediaArchive } = dependencies;
     return async (method, params) => {
         switch (method) {
             case 'getConfig':
                 return store.get();
+            case 'getWorkspaceConfig':
+                return workspace.getInfo();
+            case 'setWorkspacePath': {
+                const target = typeof params.path === 'string' ? params.path.trim() : '';
+                const { pendingPath } = workspace.setPath(target);
+                return { success: true, restartRequired: true, pendingPath };
+            }
+            case 'getMediaArchiveStatus':
+                return mediaArchive.getStatus();
+            case 'updateMediaArchiveConfig':
+                return mediaArchive.updateConfig({
+                    enabled: typeof params.enabled === 'boolean' ? params.enabled : undefined,
+                    targetPath: typeof params.targetPath === 'string' ? params.targetPath : undefined,
+                    intervalMinutes: typeof params.intervalMinutes === 'number' ? params.intervalMinutes : undefined,
+                });
+            case 'runMediaArchiveNow':
+                return mediaArchive.runNow();
             case 'updateConfig': {
                 const config = store.update((params.updates ?? {}));
                 return { success: true, config };

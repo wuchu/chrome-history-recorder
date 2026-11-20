@@ -40,7 +40,13 @@ async function main(): Promise<void> {
   ensureWorkspace(config.workspacePath);
 
   // Initialize components
-  const db = new SQLiteDatabase(config.workspacePath);
+  let db: SQLiteDatabase;
+  try {
+    db = new SQLiteDatabase(config.workspacePath);
+  } catch (error) {
+    console.error(`Fatal error: ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
   const blobStorage = new BlobStorage(config.workspacePath);
   const thumbnailStorage = new ThumbnailStorage(config.workspacePath);
   const api = new VFSAPI(db, blobStorage, thumbnailStorage, config.workspacePath);
@@ -58,7 +64,7 @@ async function main(): Promise<void> {
 
   // Log startup
   console.error(`VFS Service started`);
-  console.error(`Workspace: ${config.workspacePath}`);
+  console.error(`Workspace: ${config.workspacePath} (source: ${config.source})`);
   console.error(`WebSocket: ws://localhost:${WEBSOCKET_PORT}`);
   console.error(`HTTP: http://localhost:${HTTP_PORT}`);
 

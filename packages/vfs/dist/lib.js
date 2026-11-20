@@ -8,7 +8,7 @@
  * extension over WebSocket/HTTP.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getDefaultWorkspacePath = exports.parseArgs = exports.DEFAULT_MAX_UPLOAD_SIZE = exports.createHTTPServer = exports.VFSHTTPServer = exports.createWebSocketServer = exports.VFSSWebSocketServer = exports.createDispatcher = exports.ThumbnailStorage = exports.getMimeTypeFromExtension = exports.getExtensionFromMimeType = exports.calculateHash = exports.BlobStorage = exports.ensureWorkspace = exports.SQLiteDatabase = exports.InvalidMediaError = exports.UploadEmptyError = exports.UploadTooLargeError = exports.VFSAPI = void 0;
+exports.expandPath = exports.getDefaultWorkspacePath = exports.parseArgs = exports.DEFAULT_MAX_UPLOAD_SIZE = exports.createHTTPServer = exports.VFSHTTPServer = exports.createWebSocketServer = exports.VFSSWebSocketServer = exports.createDispatcher = exports.ThumbnailStorage = exports.getMimeTypeFromExtension = exports.getExtensionFromMimeType = exports.calculateHash = exports.BlobStorage = exports.ensureWorkspace = exports.SQLiteDatabase = exports.InvalidMediaError = exports.UploadEmptyError = exports.UploadTooLargeError = exports.VFSAPI = void 0;
 var api_1 = require("./api");
 Object.defineProperty(exports, "VFSAPI", { enumerable: true, get: function () { return api_1.VFSAPI; } });
 Object.defineProperty(exports, "UploadTooLargeError", { enumerable: true, get: function () { return api_1.UploadTooLargeError; } });
@@ -36,4 +36,5 @@ Object.defineProperty(exports, "DEFAULT_MAX_UPLOAD_SIZE", { enumerable: true, ge
 var config_1 = require("./config");
 Object.defineProperty(exports, "parseArgs", { enumerable: true, get: function () { return config_1.parseArgs; } });
 Object.defineProperty(exports, "getDefaultWorkspacePath", { enumerable: true, get: function () { return config_1.getDefaultWorkspacePath; } });
+Object.defineProperty(exports, "expandPath", { enumerable: true, get: function () { return config_1.expandPath; } });
 //# sourceMappingURL=lib.js.map

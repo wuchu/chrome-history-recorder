@@ -35,7 +35,14 @@ async function main() {
     // Ensure workspace exists
     (0, sqlite_1.ensureWorkspace)(config.workspacePath);
     // Initialize components
-    const db = new sqlite_1.SQLiteDatabase(config.workspacePath);
+    let db;
+    try {
+        db = new sqlite_1.SQLiteDatabase(config.workspacePath);
+    }
+    catch (error) {
+        console.error(`Fatal error: ${error instanceof Error ? error.message : String(error)}`);
+        process.exit(1);
+    }
     const blobStorage = new blob_1.BlobStorage(config.workspacePath);
     const thumbnailStorage = new thumbnail_1.ThumbnailStorage(config.workspacePath);
     const api = new api_1.VFSAPI(db, blobStorage, thumbnailStorage, config.workspacePath);
@@ -50,7 +57,7 @@ async function main() {
     });
     // Log startup
     console.error(`VFS Service started`);
-    console.error(`Workspace: ${config.workspacePath}`);
+    console.error(`Workspace: ${config.workspacePath} (source: ${config.source})`);
     console.error(`WebSocket: ws://localhost:${WEBSOCKET_PORT}`);
     console.error(`HTTP: http://localhost:${HTTP_PORT}`);
     // Graceful shutdown handler

@@ -13,6 +13,7 @@ export {
   UploadEmptyError,
   InvalidMediaError,
   type SaveFileResult,
+  type BlobPathInfo,
   type SyncBlobsToIndexError,
   type SyncBlobsToIndexResult,
 } from './api';
@@ -22,6 +23,7 @@ export {
   type FileMetadata,
   type MetadataUpdate,
   type ListQuery,
+  type ListFilesCreatedAfterParams,
   type EnqueueTaskParams,
   type TaskType,
   type TaskStatus,
@@ -54,4 +56,10 @@ export {
   DEFAULT_MAX_UPLOAD_SIZE,
   type HTTPServerConfig,
 } from './http-server';
-export { parseArgs, getDefaultWorkspacePath, type VFSConfig } from './config';
+export {
+  parseArgs,
+  getDefaultWorkspacePath,
+  expandPath,
+  type VFSConfig,
+  type WorkspaceSource,
+} from './config';

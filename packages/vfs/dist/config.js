@@ -14,22 +14,32 @@ exports.expandPath = expandPath;
 const path_1 = __importDefault(require("path"));
 const os_1 = __importDefault(require("os"));
 /**
- * Parse command line arguments
+ * Parse command line arguments and environment variables.
+ *
+ * Precedence: `--workspace` / `-w` > `VFS_WORKSPACE` > default path.
  */
-function parseArgs(args) {
+function parseArgs(args, env = process.env) {
     let workspacePath = getDefaultWorkspacePath();
+    let source = 'default';
+    const envWorkspace = env.VFS_WORKSPACE?.trim();
+    if (envWorkspace) {
+        workspacePath = expandPath(envWorkspace);
+        source = 'env';
+    }
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
         if (arg === '--workspace' || arg === '-w') {
             const value = args[i + 1];
             if (value) {
                 workspacePath = expandPath(value);
+                source = 'cli';
                 i++; // Skip next argument (the value)
             }
         }
     }
     return {
         workspacePath,
+        source,
     };
 }
 /**

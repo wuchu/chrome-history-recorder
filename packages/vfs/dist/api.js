@@ -288,6 +288,32 @@ class VFSAPI {
         return this.db.listFiles(query);
     }
     /**
+     * List files strictly after a `(created_at, hash)` cursor.
+     */
+    listFilesCreatedAfter(params) {
+        return this.db.listFilesCreatedAfter(params);
+    }
+    /**
+     * Resolve a blob's absolute path without reading its contents.
+     */
+    getBlobPath(hash) {
+        const metadata = this.db.getFile(hash);
+        if (!metadata) {
+            return null;
+        }
+        const blobPath = this.blobStorage.getBlobPath(hash, metadata.blob_ext);
+        try {
+            const stat = fs_1.default.statSync(blobPath);
+            if (!stat.isFile()) {
+                return null;
+            }
+            return { path: blobPath, size: stat.size, mimeType: metadata.mime_type };
+        }
+        catch {
+            return null;
+        }
+    }
+    /**
      * Update metadata API
      */
     updateMetadata(params) {
@@ -441,8 +467,8 @@ class VFSAPI {
     /**
      * Atomically claim due tasks for the extension engine.
      */
-    claimTasks(limit = 1) {
-        return this.db.claimTasks(limit);
+    claimTasks(limit = 1, taskTypes) {
+        return this.db.claimTasks(limit, taskTypes);
     }
     /**
      * Requeue a single typed task.

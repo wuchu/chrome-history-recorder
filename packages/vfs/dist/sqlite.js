@@ -10,12 +10,10 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SQLiteDatabase = void 0;
 exports.normalizeTagName = normalizeTagName;
-exports.getDefaultWorkspacePath = getDefaultWorkspacePath;
 exports.ensureWorkspace = ensureWorkspace;
 const better_sqlite3_1 = __importDefault(require("better-sqlite3"));
 const path_1 = __importDefault(require("path"));
 const fs_1 = __importDefault(require("fs"));
-const os_1 = __importDefault(require("os"));
 const MAX_TAG_NAME_LENGTH = 40;
 /**
  * Normalize a tag candidate into a canonical vocabulary key.
@@ -77,6 +75,7 @@ CREATE TABLE IF NOT EXISTS files (
 
 CREATE INDEX IF NOT EXISTS idx_files_category ON files(category) WHERE is_deleted = 0;
 CREATE INDEX IF NOT EXISTS idx_files_captured_at ON files(captured_at);
+CREATE INDEX IF NOT EXISTS idx_files_created_at ON files(created_at);
 CREATE INDEX IF NOT EXISTS idx_files_classified ON files(classified_at) WHERE classified_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_files_starred ON files(is_starred) WHERE is_starred = 1;
 `;
@@ -125,6 +124,20 @@ CREATE TABLE IF NOT EXISTS tag_aliases (
 CREATE INDEX IF NOT EXISTS idx_tag_aliases_tag ON tag_aliases(tag_id);
 `;
 /**
+ * Build an actionable error for databases SQLite refuses to open.
+ *
+ * `SQLITE_CANTOPEN` ("unable to open database file") is what SQLite reports
+ * when the workspace volume cannot provide the shared-memory files WAL needs,
+ * which is typical for network shares (SMB/NFS) and some removable media.
+ */
+function databaseOpenError(dbPath, error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return new Error(`Unable to open workspace database at ${dbPath}: ${reason}. ` +
+        'If the workspace lives on a network share or removable disk, copy vfs.db to a local ' +
+        'disk, run `PRAGMA journal_mode = DELETE;` there, and copy it back (WAL journaling ' +
+        'requires shared memory that those volumes do not provide).');
+}
+/**
  * SQLiteDatabase class
  */
 class SQLiteDatabase {
@@ -132,9 +145,38 @@ class SQLiteDatabase {
     dbPath;
     constructor(workspacePath) {
         this.dbPath = path_1.default.join(workspacePath, 'vfs.db');
-        this.db = new better_sqlite3_1.default(this.dbPath);
-        this.db.pragma('journal_mode = WAL');
+        try {
+            this.db = new better_sqlite3_1.default(this.dbPath);
+        }
+        catch (error) {
+            throw databaseOpenError(this.dbPath, error);
+        }
+        this.configureJournalMode();
         this.initializeSchema();
+    }
+    /**
+     * Prefer WAL, but tolerate volumes where WAL is unavailable. A database
+     * whose header already uses WAL cannot be opened on those volumes at all,
+     * so report that case with recovery instructions instead of a bare error.
+     */
+    configureJournalMode() {
+        let mode;
+        try {
+            mode = this.db.pragma('journal_mode = WAL', { simple: true });
+        }
+        catch (error) {
+            try {
+                this.db.close();
+            }
+            catch {
+                // Ignore close errors: the connection is already unusable.
+            }
+            throw databaseOpenError(this.dbPath, error);
+        }
+        if (mode !== 'wal') {
+            console.warn(`[VFS] WAL journaling unavailable for ${this.dbPath}; using "${mode}" journal mode. ` +
+                'This is expected on network shares and some removable disks.');
+        }
     }
     /**
      * Initialize database schema
@@ -412,6 +454,21 @@ class SQLiteDatabase {
         };
     }
     /**
+     * List files strictly after a keyset cursor, ordered by `(created_at, hash)`.
+     * Used by incremental consumers such as the media archive worker.
+     */
+    listFilesCreatedAfter(params) {
+        const limit = Math.max(1, Math.floor(params.limit ?? 200));
+        const stmt = this.db.prepare(`
+      SELECT * FROM files
+      WHERE is_deleted = 0
+        AND (created_at > ? OR (created_at = ? AND hash > ?))
+      ORDER BY created_at ASC, hash ASC
+      LIMIT ?
+    `);
+        return stmt.all(params.createdAt, params.createdAt, params.hash, limit);
+    }
+    /**
      * Get tag usage counts
      */
     getTagCounts() {
@@ -556,13 +613,16 @@ class SQLiteDatabase {
     /**
      * Atomically claim up to `limit` due tasks for processing.
      */
-    claimTasks(limit) {
+    claimTasks(limit, taskTypes) {
         if (limit <= 0)
             return [];
         const now = new Date().toISOString();
+        const typeFilter = taskTypes && taskTypes.length > 0
+            ? `AND task_type IN (${taskTypes.map(() => '?').join(', ')})`
+            : '';
         const selectStmt = this.db.prepare(`
       SELECT * FROM tasks
-      WHERE status = 'pending' AND (next_run_at IS NULL OR next_run_at <= ?)
+      WHERE status = 'pending' AND (next_run_at IS NULL OR next_run_at <= ?) ${typeFilter}
       ORDER BY priority DESC, created_at ASC
       LIMIT ?
     `);
@@ -573,7 +633,7 @@ class SQLiteDatabase {
     `);
         const claimed = [];
         const transaction = this.db.transaction(() => {
-            const rows = selectStmt.all(now, limit);
+            const rows = selectStmt.all(now, ...(taskTypes ?? []), limit);
             for (const row of rows) {
                 const result = updateStmt.run(now, now, row.id);
                 if (result.changes > 0) {
@@ -1142,12 +1202,6 @@ class SQLiteDatabase {
     }
 }
 exports.SQLiteDatabase = SQLiteDatabase;
-/**
- * Get default workspace path
- */
-function getDefaultWorkspacePath() {
-    return path_1.default.join(os_1.default.homedir(), '.vfs-workspace');
-}
 /**
  * Ensure workspace directory exists
  */

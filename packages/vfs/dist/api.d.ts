@@ -4,7 +4,7 @@
  * Implements all VFS API methods.
  */
 import { type Readable } from 'stream';
-import { SQLiteDatabase, FileMetadata, MetadataUpdate, ListQuery, EnqueueTaskParams, TaskType, TaskStatus, TaskItem, QueueStatus, TagRecord, ApplyClassificationParams } from './sqlite';
+import { SQLiteDatabase, FileMetadata, MetadataUpdate, ListQuery, ListFilesCreatedAfterParams, EnqueueTaskParams, TaskType, TaskStatus, TaskItem, QueueStatus, TagRecord, ApplyClassificationParams } from './sqlite';
 import { BlobStorage } from './blob';
 import { ThumbnailStorage, ThumbnailSize } from './thumbnail';
 export interface SyncBlobsToIndexError {
@@ -24,6 +24,11 @@ export interface SaveFileResult {
     duplicate: boolean;
     size: number;
     mimeType?: string;
+}
+export interface BlobPathInfo {
+    path: string;
+    size: number;
+    mimeType: string;
 }
 /**
  * Raised when a streamed upload exceeds the configured byte limit.
@@ -112,6 +117,14 @@ export declare class VFSAPI {
         hasMore: boolean;
     };
     /**
+     * List files strictly after a `(created_at, hash)` cursor.
+     */
+    listFilesCreatedAfter(params: ListFilesCreatedAfterParams): FileMetadata[];
+    /**
+     * Resolve a blob's absolute path without reading its contents.
+     */
+    getBlobPath(hash: string): BlobPathInfo | null;
+    /**
      * Update metadata API
      */
     updateMetadata(params: {
@@ -180,7 +193,7 @@ export declare class VFSAPI {
     /**
      * Atomically claim due tasks for the extension engine.
      */
-    claimTasks(limit?: number): TaskItem[];
+    claimTasks(limit?: number, taskTypes?: TaskType[]): TaskItem[];
     /**
      * Requeue a single typed task.
      */

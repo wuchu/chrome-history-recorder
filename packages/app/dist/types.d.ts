@@ -7,6 +7,9 @@ export declare const MAX_VIDEO_SIZE_LIMIT: number;
 export declare const DEFAULT_MAX_VIDEO_SIZE: number;
 export declare const DEFAULT_ENABLED_VIDEO_TYPES: string[];
 export declare const SUPPORTED_VIDEO_MIME_TYPES: string[];
+export declare const MIN_MEDIA_ARCHIVE_INTERVAL_MINUTES = 1;
+export declare const MAX_MEDIA_ARCHIVE_INTERVAL_MINUTES = 1440;
+export declare const DEFAULT_MEDIA_ARCHIVE_INTERVAL_MINUTES = 5;
 export interface AppConfig {
     ollamaEndpoint: string;
     visionModel?: string;
@@ -18,6 +21,9 @@ export interface AppConfig {
     captureVideos: boolean;
     maxVideoSize: number;
     enabledVideoTypes: string[];
+    mediaArchiveEnabled: boolean;
+    mediaArchiveTargetPath: string;
+    mediaArchiveIntervalMinutes: number;
 }
 export declare const DEFAULT_APP_CONFIG: AppConfig;
 /**

@@ -9,8 +9,6 @@ import {
   BlobStorage,
   createHTTPServer,
   createWebSocketServer,
-  ensureWorkspace,
-  parseArgs,
   SQLiteDatabase,
   ThumbnailStorage,
   VFSAPI,
@@ -20,8 +18,16 @@ import { OllamaClient } from 'ai';
 import { ConfigStore } from './config-store';
 import { EventBus } from './event-bus';
 import { createAppExternalHandler } from './handlers';
+import { MediaArchiveWorker } from './media-archive';
 import { Scheduler } from './scheduler';
 import type { AppConfig } from './types';
+import {
+  formatWorkspaceStartupError,
+  getWorkspaceInfo,
+  prepareWorkspaceAtStartup,
+  resolveWorkspace,
+  updateWorkspacePath,
+} from './workspace-config';
 
 const WEBSOCKET_PORT = process.env.VFS_WS_PORT ? parseInt(process.env.VFS_WS_PORT, 10) : 8765;
 const HTTP_PORT = process.env.VFS_HTTP_PORT ? parseInt(process.env.VFS_HTTP_PORT, 10) : 8766;
@@ -30,17 +36,34 @@ const MAX_UPLOAD_SIZE = process.env.VFS_MAX_UPLOAD_SIZE
   : undefined;
 
 async function main(): Promise<void> {
-  const config = parseArgs(process.argv.slice(2));
-  ensureWorkspace(config.workspacePath);
+  const resolution = resolveWorkspace(process.argv.slice(2));
 
-  const db = new SQLiteDatabase(config.workspacePath);
-  const blobStorage = new BlobStorage(config.workspacePath);
-  const thumbnailStorage = new ThumbnailStorage(config.workspacePath);
-  const api = new VFSAPI(db, blobStorage, thumbnailStorage, config.workspacePath);
+  let workspacePath: string;
+  try {
+    workspacePath = prepareWorkspaceAtStartup(resolution);
+  } catch (error) {
+    console.error(formatWorkspaceStartupError(resolution, error));
+    process.exit(1);
+  }
 
-  const store = new ConfigStore(config.workspacePath);
+  const activeResolution = { ...resolution, workspacePath };
+
+  let db: SQLiteDatabase;
+  try {
+    db = new SQLiteDatabase(workspacePath);
+  } catch (error) {
+    console.error(formatWorkspaceStartupError(activeResolution, error));
+    process.exit(1);
+  }
+  const blobStorage = new BlobStorage(workspacePath);
+  const thumbnailStorage = new ThumbnailStorage(workspacePath);
+  const api = new VFSAPI(db, blobStorage, thumbnailStorage, workspacePath);
+
+  const store = new ConfigStore(workspacePath);
   store.load();
   const events = new EventBus();
+  const mediaArchive = new MediaArchiveWorker({ api, store, events, workspacePath });
+  mediaArchive.start();
   const ai = new OllamaClient({
     endpoint: store.get().ollamaEndpoint,
     model: store.get().visionModel,
@@ -60,13 +83,17 @@ async function main(): Promise<void> {
     store,
     scheduler,
     events,
+    workspace: {
+      getInfo: () => getWorkspaceInfo(activeResolution),
+      setPath: (target) => updateWorkspacePath(target, activeResolution),
+    },
+    mediaArchive: {
+      getStatus: () => mediaArchive.getStatus(),
+      updateConfig: (update) => mediaArchive.updateConfig(update),
+      runNow: () => mediaArchive.runNow(),
+    },
   });
-  const wsServer = createWebSocketServer(
-    api,
-    config.workspacePath,
-    { port: WEBSOCKET_PORT },
-    external
-  );
+  const wsServer = createWebSocketServer(api, workspacePath, { port: WEBSOCKET_PORT }, external);
   const httpServer = createHTTPServer(api, {
     port: HTTP_PORT,
     maxUploadSize: MAX_UPLOAD_SIZE,
@@ -86,6 +113,7 @@ async function main(): Promise<void> {
       duplicate: false,
     });
     void scheduler.enqueuePair(result.hash);
+    mediaArchive.enqueue(result.hash);
   });
 
   const applyConfig = (next: AppConfig) => {
@@ -105,6 +133,7 @@ async function main(): Promise<void> {
 
   store.onChange((next) => {
     applyConfig(next);
+    mediaArchive.reconfigure();
     events.emit('config:updated', next);
   });
 
@@ -145,6 +174,7 @@ async function main(): Promise<void> {
 
   const shutdown = () => {
     console.error('\nShutting down app...');
+    mediaArchive.stop();
     scheduler.stop();
     ai.stopPeriodicHealthCheck();
     wsServer.close();
@@ -157,7 +187,7 @@ async function main(): Promise<void> {
   process.on('SIGTERM', shutdown);
 
   console.error('Media app started');
-  console.error(`Workspace: ${config.workspacePath}`);
+  console.error(`Workspace: ${workspacePath} (source: ${resolution.source})`);
   console.error(`WebSocket: ws://localhost:${WEBSOCKET_PORT}`);
   console.error(`HTTP: http://localhost:${HTTP_PORT}`);
 

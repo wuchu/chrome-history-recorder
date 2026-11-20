@@ -4,22 +4,31 @@ import {
   clearIndex,
   deleteTag,
   ExtensionConfig,
+  DEFAULT_EXTENSION_CONFIG,
   getConfig,
+  getMediaArchiveStatus,
+  getWorkspaceConfig,
   listOllamaModels,
   listTags,
   loadServiceStatus,
   mergeTags,
+  MediaArchiveConfigUpdate,
+  MediaArchiveStatus,
   OllamaModel,
   PromptTemplates,
   reconnectVFS,
   renameTag,
+  runMediaArchiveNow,
   ServiceStatus,
   setTagPinned,
+  setWorkspacePath,
   syncBlobsToIndex,
   SyncBlobsToIndexResult,
   updateConfig,
+  updateMediaArchiveConfig,
   VFSTagRecord,
-  DEFAULT_EXTENSION_CONFIG,
+  WorkspaceConfigInfo,
+  WorkspacePathUpdateResult,
 } from '../../../shared/extension-runtime';
 
 const DEFAULT_CONFIG: ExtensionConfig = {
@@ -37,6 +46,9 @@ export function useOptionsData() {
   const [serviceStatus, setServiceStatus] = useState<ServiceStatus>(DEFAULT_SERVICE_STATUS);
   const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([]);
   const [tags, setTags] = useState<VFSTagRecord[]>([]);
+  const [workspaceInfo, setWorkspaceInfo] = useState<WorkspaceConfigInfo | null>(null);
+  const [workspaceLoading, setWorkspaceLoading] = useState(false);
+  const [mediaArchiveStatus, setMediaArchiveStatus] = useState<MediaArchiveStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [savingKeys, setSavingKeys] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
@@ -77,6 +89,64 @@ export function useOptionsData() {
     return nextTags;
   }, []);
 
+  const refreshWorkspaceConfig = useCallback(async () => {
+    setWorkspaceLoading(true);
+    try {
+      const info = await getWorkspaceConfig();
+      setWorkspaceInfo(info);
+      return info;
+    } finally {
+      setWorkspaceLoading(false);
+    }
+  }, []);
+
+  const refreshMediaArchiveStatus = useCallback(async () => {
+    const status = await getMediaArchiveStatus();
+    setMediaArchiveStatus(status);
+    return status;
+  }, []);
+
+  const saveMediaArchiveConfig = useCallback(
+    async (update: MediaArchiveConfigUpdate): Promise<MediaArchiveStatus> => {
+      setSaving('mediaArchive', true);
+      setError(null);
+      try {
+        const status = await updateMediaArchiveConfig(update);
+        setMediaArchiveStatus(status);
+        return status;
+      } finally {
+        setSaving('mediaArchive', false);
+      }
+    },
+    [setSaving]
+  );
+
+  const runMediaArchive = useCallback(async (): Promise<MediaArchiveStatus> => {
+    setSaving('mediaArchiveRun', true);
+    try {
+      const status = await runMediaArchiveNow();
+      setMediaArchiveStatus(status);
+      return status;
+    } finally {
+      setSaving('mediaArchiveRun', false);
+    }
+  }, [setSaving]);
+
+  const saveWorkspacePath = useCallback(
+    async (nextPath: string): Promise<WorkspacePathUpdateResult> => {
+      setSaving('workspace', true);
+      try {
+        const result = await setWorkspacePath(nextPath);
+        const info = await getWorkspaceConfig();
+        setWorkspaceInfo(info);
+        return result;
+      } finally {
+        setSaving('workspace', false);
+      }
+    },
+    [setSaving]
+  );
+
   const initialize = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -101,7 +171,26 @@ export function useOptionsData() {
     } catch (tagsError) {
       console.warn('[Options] Failed to load tag vocabulary:', tagsError);
     }
-  }, [refreshConfig, refreshOllamaModels, refreshServiceStatus, refreshTags]);
+    try {
+      await refreshWorkspaceConfig();
+    } catch (workspaceError) {
+      console.warn('[Options] Failed to load workspace config:', workspaceError);
+      setWorkspaceInfo(null);
+    }
+    try {
+      await refreshMediaArchiveStatus();
+    } catch (archiveError) {
+      console.warn('[Options] Failed to load media archive status:', archiveError);
+      setMediaArchiveStatus(null);
+    }
+  }, [
+    refreshConfig,
+    refreshMediaArchiveStatus,
+    refreshOllamaModels,
+    refreshServiceStatus,
+    refreshTags,
+    refreshWorkspaceConfig,
+  ]);
 
   const saveConfig = useCallback(
     async (updates: Partial<ExtensionConfig>, key = 'config') => {
@@ -237,6 +326,18 @@ export function useOptionsData() {
     initialize();
   }, [initialize]);
 
+  // Live archive status from Background event relays.
+  useEffect(() => {
+    const handleMessage = (message: unknown) => {
+      const msg = message as { type?: string; data?: unknown };
+      if (msg.type === 'media-archive:status' && msg.data) {
+        setMediaArchiveStatus(msg.data as MediaArchiveStatus);
+      }
+    };
+    chrome.runtime.onMessage.addListener(handleMessage);
+    return () => chrome.runtime.onMessage.removeListener(handleMessage);
+  }, []);
+
   const saving = useMemo(
     () => ({
       config: savingKeys.has('config'),
@@ -251,6 +352,9 @@ export function useOptionsData() {
       syncBlobsToIndex: savingKeys.has('syncBlobsToIndex'),
       clearIndex: savingKeys.has('clearIndex'),
       tags: savingKeys.has('tags'),
+      workspace: savingKeys.has('workspace'),
+      mediaArchive: savingKeys.has('mediaArchive'),
+      mediaArchiveRun: savingKeys.has('mediaArchiveRun'),
     }),
     [savingKeys]
   );
@@ -260,6 +364,9 @@ export function useOptionsData() {
     serviceStatus,
     ollamaModels,
     tags,
+    workspaceInfo,
+    workspaceLoading,
+    mediaArchiveStatus,
     loading,
     saving,
     error,
@@ -269,10 +376,15 @@ export function useOptionsData() {
     refreshOllamaModels,
     refreshOllamaHealth,
     refreshTags,
+    refreshWorkspaceConfig,
     reconnectVfsService,
     saveConfig,
     savePromptTemplate,
     resetPromptTemplate,
+    saveWorkspacePath,
+    refreshMediaArchiveStatus,
+    saveMediaArchiveConfig,
+    runMediaArchive,
     syncMediaIndex,
     clearMediaIndex,
     renameTag: renameTagAction,

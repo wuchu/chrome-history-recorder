@@ -11,22 +11,41 @@ const ai_1 = require("ai");
 const config_store_1 = require("./config-store");
 const event_bus_1 = require("./event-bus");
 const handlers_1 = require("./handlers");
+const media_archive_1 = require("./media-archive");
 const scheduler_1 = require("./scheduler");
+const workspace_config_1 = require("./workspace-config");
 const WEBSOCKET_PORT = process.env.VFS_WS_PORT ? parseInt(process.env.VFS_WS_PORT, 10) : 8765;
 const HTTP_PORT = process.env.VFS_HTTP_PORT ? parseInt(process.env.VFS_HTTP_PORT, 10) : 8766;
 const MAX_UPLOAD_SIZE = process.env.VFS_MAX_UPLOAD_SIZE
     ? parseInt(process.env.VFS_MAX_UPLOAD_SIZE, 10)
     : undefined;
 async function main() {
-    const config = (0, vfs_1.parseArgs)(process.argv.slice(2));
-    (0, vfs_1.ensureWorkspace)(config.workspacePath);
-    const db = new vfs_1.SQLiteDatabase(config.workspacePath);
-    const blobStorage = new vfs_1.BlobStorage(config.workspacePath);
-    const thumbnailStorage = new vfs_1.ThumbnailStorage(config.workspacePath);
-    const api = new vfs_1.VFSAPI(db, blobStorage, thumbnailStorage, config.workspacePath);
-    const store = new config_store_1.ConfigStore(config.workspacePath);
+    const resolution = (0, workspace_config_1.resolveWorkspace)(process.argv.slice(2));
+    let workspacePath;
+    try {
+        workspacePath = (0, workspace_config_1.prepareWorkspaceAtStartup)(resolution);
+    }
+    catch (error) {
+        console.error((0, workspace_config_1.formatWorkspaceStartupError)(resolution, error));
+        process.exit(1);
+    }
+    const activeResolution = { ...resolution, workspacePath };
+    let db;
+    try {
+        db = new vfs_1.SQLiteDatabase(workspacePath);
+    }
+    catch (error) {
+        console.error((0, workspace_config_1.formatWorkspaceStartupError)(activeResolution, error));
+        process.exit(1);
+    }
+    const blobStorage = new vfs_1.BlobStorage(workspacePath);
+    const thumbnailStorage = new vfs_1.ThumbnailStorage(workspacePath);
+    const api = new vfs_1.VFSAPI(db, blobStorage, thumbnailStorage, workspacePath);
+    const store = new config_store_1.ConfigStore(workspacePath);
     store.load();
     const events = new event_bus_1.EventBus();
+    const mediaArchive = new media_archive_1.MediaArchiveWorker({ api, store, events, workspacePath });
+    mediaArchive.start();
     const ai = new ai_1.OllamaClient({
         endpoint: store.get().ollamaEndpoint,
         model: store.get().visionModel,
@@ -45,8 +64,17 @@ async function main() {
         store,
         scheduler,
         events,
+        workspace: {
+            getInfo: () => (0, workspace_config_1.getWorkspaceInfo)(activeResolution),
+            setPath: (target) => (0, workspace_config_1.updateWorkspacePath)(target, activeResolution),
+        },
+        mediaArchive: {
+            getStatus: () => mediaArchive.getStatus(),
+            updateConfig: (update) => mediaArchive.updateConfig(update),
+            runNow: () => mediaArchive.runNow(),
+        },
     });
-    const wsServer = (0, vfs_1.createWebSocketServer)(api, config.workspacePath, { port: WEBSOCKET_PORT }, external);
+    const wsServer = (0, vfs_1.createWebSocketServer)(api, workspacePath, { port: WEBSOCKET_PORT }, external);
     const httpServer = (0, vfs_1.createHTTPServer)(api, {
         port: HTTP_PORT,
         maxUploadSize: MAX_UPLOAD_SIZE,
@@ -64,6 +92,7 @@ async function main() {
             duplicate: false,
         });
         void scheduler.enqueuePair(result.hash);
+        mediaArchive.enqueue(result.hash);
     });
     const applyConfig = (next) => {
         ai.updateConfig({
@@ -82,6 +111,7 @@ async function main() {
     };
     store.onChange((next) => {
         applyConfig(next);
+        mediaArchive.reconfigure();
         events.emit('config:updated', next);
     });
     ai.onStatus((available) => events.emit('ollama:status', { available }));
@@ -120,6 +150,7 @@ async function main() {
     }
     const shutdown = () => {
         console.error('\nShutting down app...');
+        mediaArchive.stop();
         scheduler.stop();
         ai.stopPeriodicHealthCheck();
         wsServer.close();
@@ -130,7 +161,7 @@ async function main() {
     process.on('SIGINT', shutdown);
     process.on('SIGTERM', shutdown);
     console.error('Media app started');
-    console.error(`Workspace: ${config.workspacePath}`);
+    console.error(`Workspace: ${workspacePath} (source: ${resolution.source})`);
     console.error(`WebSocket: ws://localhost:${WEBSOCKET_PORT}`);
     console.error(`HTTP: http://localhost:${HTTP_PORT}`);
     await new Promise(() => { });

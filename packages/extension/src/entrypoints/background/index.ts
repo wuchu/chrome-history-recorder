@@ -378,6 +378,44 @@ export default defineBackground(() => {
             break;
           }
 
+          // Workspace location (owned by the app; takes effect on restart)
+          case 'getWorkspaceConfig':
+          case 'get-workspace-config': {
+            const workspaceConfig = await vfsWsClient.getWorkspaceConfig();
+            sendResponse({ success: true, data: workspaceConfig });
+            break;
+          }
+
+          case 'setWorkspacePath': {
+            const result = await vfsWsClient.setWorkspacePath(String(message.path ?? ''));
+            sendResponse({ success: true, data: result });
+            break;
+          }
+
+          // Media archive (owned by the app)
+          case 'getMediaArchiveStatus': {
+            const archiveStatus = await vfsWsClient.getMediaArchiveStatus();
+            sendResponse({ success: true, data: archiveStatus });
+            break;
+          }
+
+          case 'updateMediaArchiveConfig': {
+            const archiveStatus = await vfsWsClient.updateMediaArchiveConfig({
+              enabled: typeof message.enabled === 'boolean' ? message.enabled : undefined,
+              targetPath: typeof message.targetPath === 'string' ? message.targetPath : undefined,
+              intervalMinutes:
+                typeof message.intervalMinutes === 'number' ? message.intervalMinutes : undefined,
+            });
+            sendResponse({ success: true, data: archiveStatus });
+            break;
+          }
+
+          case 'runMediaArchiveNow': {
+            const archiveStatus = await vfsWsClient.runMediaArchiveNow();
+            sendResponse({ success: true, data: archiveStatus });
+            break;
+          }
+
           // Scheduler and queue (owned by the app)
           case 'getQueueStatus':
           case 'get-queue-status': {
