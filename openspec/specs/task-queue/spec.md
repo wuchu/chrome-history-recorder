@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Manage typed AI task queues (classification and rename) for media captured and stored in VFS, providing persistence, scheduling, and status reporting through the Extension/VFS workflow.
+Manage typed AI task queues (classification and rename) for media captured and stored in VFS, providing persistence, app-owned scheduling, and status reporting.
 
 ## Requirements
 
@@ -36,7 +36,8 @@ The system SHALL apply a single global concurrency limit to all task types so th
 - **THEN** the engine SHALL apply the new limit to subsequent claims without restarting the queue
 
 ### Requirement: Queue persistence
-The system SHALL persist typed task state in the VFS Service storage layer so task status can be resumed and reported after Service Worker or browser restart.
+
+The system SHALL persist typed task state in the VFS Service storage layer so task status can be resumed and reported after app or browser restart.
 
 #### Scenario: Persist tasks through VFS
 - **WHEN** a task is enqueued or changes status
@@ -44,8 +45,8 @@ The system SHALL persist typed task state in the VFS Service storage layer so ta
 - **AND** it SHALL NOT write standalone queue files in the extension
 
 #### Scenario: Load tasks on startup
-- **WHEN** the Extension Background or VFS Service starts
-- **THEN** the system SHALL make the persisted typed task status available to Background and UI
+- **WHEN** the app starts
+- **THEN** the system SHALL make the persisted typed task status available to the scheduler and UI
 
 #### Scenario: Empty queue on first run
 - **WHEN** no persisted task entries exist
@@ -72,17 +73,19 @@ The system SHALL support typed task operations for media hashes captured and sto
 - **THEN** the system SHALL increment its attempt count, record the error, and either schedule a retry or mark it failed according to `max_attempts`
 
 ### Requirement: Queue priority
+
 The system SHALL support priority-based processing for VFS classification queue entries.
 
 #### Scenario: Priority queue
 - **WHEN** queue entries have different priorities
-- **THEN** the Background scheduler SHALL process higher priority entries before lower priority entries when possible
+- **THEN** the app scheduler SHALL process higher priority entries before lower priority entries when possible
 
 #### Scenario: Default priority
 - **WHEN** no priority is specified for a captured media item
 - **THEN** the system SHALL use the default classification priority
 
 ### Requirement: Queue status
+
 The system SHALL provide queue status information that includes per-type counts and scheduler state.
 
 #### Scenario: Show queue status
@@ -93,7 +96,7 @@ The system SHALL provide queue status information that includes per-type counts 
 
 #### Scenario: Refresh queue after actions
 - **WHEN** the user starts, pauses, retries, clears, refreshes, or requeues work
-- **THEN** the UI SHALL refresh queue status from Background
+- **THEN** the UI SHALL refresh queue status from the app
 
 ### Requirement: Queue recovery
 The system SHALL tolerate missing or unavailable queue storage without exposing standalone queue files.
@@ -106,61 +109,43 @@ The system SHALL tolerate missing or unavailable queue storage without exposing 
 - **WHEN** the VFS connection is restored
 - **THEN** the system SHALL resume reporting queue status from VFS storage and resume processing
 
-### Requirement: Service worker wake and recovery
-The system SHALL resume pending task processing after the Extension Service Worker is suspended or the browser restarts.
-
-#### Scenario: Resume after browser restart
-- **WHEN** the browser starts and the persisted run intent indicates processing is active
-- **THEN** the system SHALL initialize the engine and continue claiming pending tasks
-
-#### Scenario: Recover stale processing tasks
-- **WHEN** the Extension Service Worker starts
-- **THEN** the system SHALL reset tasks left in `processing` by a previous worker to `pending`
-- **AND** those tasks SHALL become eligible for processing again
-
-#### Scenario: Wake after idle suspension
-- **WHEN** a periodic wake alarm fires while the engine should be running
-- **THEN** the system SHALL ensure initialization has occurred and attempt to claim pending tasks
-
-#### Scenario: Resume on VFS reconnect
-- **WHEN** the VFS connection is restored while the run intent indicates processing is active
-- **THEN** the system SHALL resume claiming pending tasks
-
 ### Requirement: Scheduler running state
-The system SHALL track whether task processing is running or paused and SHALL persist the user's start/pause intent in extension configuration.
+
+The system SHALL track whether task processing is running or paused and SHALL persist the user's start/pause intent in app configuration.
 
 #### Scenario: Start processing
 - **WHEN** the user starts processing
-- **THEN** the system SHALL mark the engine as running
+- **THEN** the system SHALL mark the scheduler as running
 - **AND** pending tasks SHALL be eligible for processing
-- **AND** extension configuration SHALL record processing as active
+- **AND** app configuration SHALL record processing as active
 
 #### Scenario: Pause processing
 - **WHEN** the user pauses processing
-- **THEN** the system SHALL mark the engine as paused
-- **AND** the engine SHALL stop claiming new pending tasks
+- **THEN** the system SHALL mark the scheduler as paused
+- **AND** the scheduler SHALL stop claiming new pending tasks
 - **AND** active tasks SHALL be allowed to complete or fail
-- **AND** extension configuration SHALL record processing as paused
+- **AND** app configuration SHALL record processing as paused
 
 #### Scenario: Report engine state
 - **WHEN** queue status is requested
 - **THEN** the system SHALL include engine running or paused state with queue counts
 
 ### Requirement: Default paused classification processing
-The system SHALL default AI classification queue processing to paused for new/default extension configuration.
+
+The system SHALL default AI classification queue processing to paused for new/default app configuration.
 
 #### Scenario: Initialize with default paused state
-- **WHEN** the extension initializes without a saved classification pause setting
+- **WHEN** the app initializes without a saved classification pause setting
 - **THEN** the scheduler SHALL initialize in paused state
 - **AND** it SHALL NOT claim pending classification tasks until explicitly started
 
 #### Scenario: Respect saved running state
-- **WHEN** the extension initializes with saved configuration indicating classification is not paused
+- **WHEN** the app initializes with saved configuration indicating classification is not paused
 - **THEN** the scheduler SHALL initialize in running state
 - **AND** pending tasks SHALL be eligible for processing
 
 #### Scenario: Respect saved paused state
-- **WHEN** the extension initializes with saved configuration indicating classification is paused
+- **WHEN** the app initializes with saved configuration indicating classification is paused
 - **THEN** the scheduler SHALL initialize in paused state
 - **AND** pending tasks SHALL NOT be processed until the user starts classification
 

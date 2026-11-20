@@ -126,14 +126,8 @@ export class FileManager {
         return result;
       }
 
-      // Broadcast only new captures. Duplicates should not appear as new UI items.
-      this.broadcastEvent('file:captured', {
-        hash: result.hash,
-        mimeType: data.mimeType,
-        size: result.size,
-        duplicate: false,
-      });
-
+      // The app broadcasts file:captured when it stores the file; the
+      // extension relays that event to the UI.
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
@@ -162,14 +156,8 @@ export class FileManager {
    * Handle delete file request from DevTools Panel
    */
   async handleDeleteFile(hash: string, hard?: boolean): Promise<{ success: boolean }> {
-    const result = await this.vfsWsClient.deleteFile(hash, hard);
-
-    if (result.success) {
-      // Broadcast file deleted event
-      this.broadcastEvent('file:deleted', { hash });
-    }
-
-    return result;
+    // The app broadcasts file:deleted; the extension relays it.
+    return this.vfsWsClient.deleteFile(hash, hard);
   }
 
   /**

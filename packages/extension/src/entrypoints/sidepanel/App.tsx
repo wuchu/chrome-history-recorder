@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   CaptureStream,
-  ClassifyProgressSection,
   MediaDetail,
   ScrollableTabBar,
   StatusBar,
@@ -12,7 +11,6 @@ import {
   useBackgroundMessaging,
   useCapturedFiles,
   useClassifyEvents,
-  useClassifyQueue,
   useCombinedMedia,
   useHistoricalImages,
   useTheme,
@@ -21,7 +19,6 @@ import {
 import {
   getTagCounts,
   listTags,
-  refreshAllTasks,
   refreshTask,
   type TagCounts,
   type VFSTagRecord,
@@ -60,7 +57,6 @@ function App() {
   const capture = useSidePanelCapture({ backgroundEvents });
   const capturedFiles = useCapturedFiles(backgroundEvents);
   const classifyStatus = useClassifyEvents(backgroundEvents);
-  const classifyQueue = useClassifyQueue({ backgroundEvents });
 
   const loadTagCounts = useCallback(async () => {
     try {
@@ -77,13 +73,14 @@ function App() {
   }, [loadTagCounts]);
 
   useEffect(() => {
+    // Refresh tag counts only when tags actually change — not on every queue
+    // update, which merely reflects claim/status transitions and does not
+    // affect the tag vocabulary.
     const shouldRefreshTags = backgroundEvents.some(
       (event) =>
         event.type === 'classify:complete' ||
         event.type === 'file:classified' ||
-        event.type === 'task:completed' ||
-        event.type === 'tags:updated' ||
-        event.type === 'queue:updated'
+        event.type === 'tags:updated'
     );
     if (shouldRefreshTags) {
       loadTagCounts();
@@ -161,10 +158,6 @@ function App() {
     });
   }, []);
 
-  const handleRefreshAll = useCallback(async () => {
-    await refreshAllTasks(['classify', 'rename']);
-  }, []);
-
   const handleOpenOptions = useCallback(() => {
     chrome.runtime.openOptionsPage();
   }, []);
@@ -209,7 +202,6 @@ function App() {
           isCapturing={capture.isCapturing}
           vfsConnected={vfsConnected}
           ollamaAvailable={ollamaAvailable}
-          classifyQueue={classifyQueue.status}
           captureCount={capture.captureState?.captureCount ?? 0}
           failedCount={capture.captureState?.failedCount ?? 0}
           captureError={capture.error || capture.captureState?.error}
@@ -229,16 +221,6 @@ function App() {
             onItemClick={handleCaptureItemClick}
           />
         )}
-
-        <ClassifyProgressSection
-          status={classifyQueue.status}
-          loading={classifyQueue.loading}
-          onStart={classifyQueue.startClassification}
-          onPause={classifyQueue.pauseClassification}
-          onRetryFailed={classifyQueue.retryFailed}
-          onClearQueue={classifyQueue.clearQueue}
-          onRefreshAll={handleRefreshAll}
-        />
 
         <ScrollableTabBar tabs={visibleTabs} activeTabId={activeTab} onTabChange={setActiveTab} />
       </div>

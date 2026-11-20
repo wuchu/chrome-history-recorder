@@ -1,8 +1,11 @@
 /**
  * VFS WebSocket Client
  *
- * Communicates with VFS Service via WebSocket connection.
+ * Communicates with the app backend over WebSocket. The client is intentionally
+ * thin: it relays RPC and events, while the app owns scheduling and AI.
  */
+
+import type { ExtensionConfig, OllamaModel, SchedulerStatus } from '../shared/extension-runtime';
 
 /**
  * VFS WebSocket Client configuration
@@ -513,6 +516,56 @@ export class VFSWebSocketClient {
    */
   async syncBlobsToIndex(): Promise<SyncBlobsToIndexResult> {
     return this.send('syncBlobsToIndex');
+  }
+
+  // App RPC: configuration, scheduler, and Ollama live in the backend.
+
+  async getConfig(): Promise<ExtensionConfig> {
+    return this.send('getConfig');
+  }
+
+  async updateConfig(
+    updates: Partial<ExtensionConfig>
+  ): Promise<{ success: boolean; config: ExtensionConfig }> {
+    return this.send('updateConfig', { updates });
+  }
+
+  async migrateConfig(
+    config: Partial<ExtensionConfig>
+  ): Promise<{ imported: boolean; config: ExtensionConfig }> {
+    return this.send('migrateConfig', { config });
+  }
+
+  async getSchedulerStatus(): Promise<SchedulerStatus> {
+    return this.send('getSchedulerStatus');
+  }
+
+  async startClassification(): Promise<SchedulerStatus> {
+    return this.send('startClassification');
+  }
+
+  async pauseClassification(): Promise<SchedulerStatus> {
+    return this.send('pauseClassification');
+  }
+
+  async listOllamaModels(): Promise<{
+    models: OllamaModel[];
+    selectedModel?: string;
+    changed?: boolean;
+  }> {
+    return this.send('listOllamaModels');
+  }
+
+  async checkOllamaHealth(): Promise<{ available: boolean }> {
+    return this.send('checkOllamaHealth');
+  }
+
+  async isOllamaAvailable(): Promise<{ available: boolean }> {
+    return this.send('isOllamaAvailable');
+  }
+
+  async translateTags(text: string): Promise<{ translated: string }> {
+    return this.send('translateTags', { text });
   }
 
   /**

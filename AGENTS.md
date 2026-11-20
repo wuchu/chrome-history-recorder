@@ -2,10 +2,12 @@
 
 ## Project Structure & Module Organization
 
-`browser-media-recorder` is a pnpm workspace defined in `pnpm-workspace.yaml`. Two packages live under `packages/`:
+`browser-media-recorder` is a pnpm workspace defined in `pnpm-workspace.yaml`. Four packages live under `packages/`:
 
-- `packages/extension` — WXT + React Chrome extension. Source under `src/`, split into `entrypoints/` (`background`, `devtools-panel`, `options`), reusable `background/` services, `shared/` types, and `utils/`. Build artifacts land in `.wxt/` (gitignored).
-- `packages/vfs-service` — Node service backing the extension. Code in `src/`, tests in `test/`, build output in `dist/`, SQL/templates in `templates/`.
+- `packages/extension` — WXT + React Chrome extension (thin UX layer). Source under `src/`, split into `entrypoints/` (`background`, `sidepanel`, `options`, `offscreen`), reusable `background/` capture services, `shared/` types. Build artifacts land in `.wxt/` (gitignored).
+- `packages/vfs` — Storage library and transport (formerly `vfs-service`). Exposes `VFSAPI`, SQLite/blob storage, thumbnails, and the WebSocket + HTTP servers. Code in `src/` (library entry `src/lib.ts`), tests in `test/`, build output in `dist/`, templates in `templates/`.
+- `packages/ai` — Ollama vision classification, renaming, translation, health checks, and model listing. Depends on the `vfs` API type only; media is injected through a `MediaReader`.
+- `packages/app` — Long-running composition root: bootstrap, task scheduler, configuration store, event bus, and transport startup. This is the process `pnpm dev` runs. The extension talks to it over WebSocket/HTTP.
 
 Specifications and proposed changes live in `openspec/` (driven by the OpenSpec skills in `.codex/skills/`). Top-level docs: `README.md`, `ARCHITECTURE.md`.
 
@@ -13,10 +15,10 @@ Specifications and proposed changes live in `openspec/` (driven by the OpenSpec 
 
 Run from the repo root unless noted.
 
-- `pnpm dev` — Concurrently starts `vfs-service` and the extension dev build (auto-launches Chromium).
+- `pnpm dev` — Concurrently starts the `app` backend and the extension dev build (auto-launches Chromium).
 - `pnpm dev:no-browser` — Same as above without launching Chromium.
-- `pnpm dev:extension` / `pnpm dev:vfs` — Run a single package in dev mode.
-- `pnpm build` — Builds `vfs-service` then the extension (`packages/extension/.wxt/chrome-mv3`).
+- `pnpm dev:extension` / `pnpm dev:app` / `pnpm dev:vfs` — Run a single package in dev mode.
+- `pnpm build` — Builds `vfs` → `ai` → `app` → extension (`packages/extension/.wxt/chrome-mv3`).
 - `pnpm zip` — Packages the built extension for distribution.
 - `pnpm test` / `pnpm test:watch` / `pnpm test:coverage` — Vitest suites.
 - `pnpm lint` / `pnpm lint:fix` — ESLint over the workspace.
@@ -28,7 +30,7 @@ TypeScript everywhere. Prettier (`.prettierrc.mjs`) enforces 2-space indent, sin
 
 ## Testing Guidelines
 
-Vitest (`vitest.config.ts`) discovers `packages/**/test/**/*.test.ts` in a Node environment. Place tests beside the package under `packages/<pkg>/test/`, named `<unit>.test.ts`. Coverage uses the v8 provider (`pnpm test:coverage`); aim to cover new public APIs and protocol changes in `vfs-service`.
+Vitest (`vitest.config.ts`) discovers `packages/**/test/**/*.test.ts` in a Node environment. Place tests beside the package under `packages/<pkg>/test/`, named `<unit>.test.ts`. Coverage uses the v8 provider (`pnpm test:coverage`); aim to cover new public APIs in `vfs`, `ai`, and `app`, plus protocol changes in the WebSocket/HTTP transport.
 
 ## Commit & Pull Request Guidelines
 

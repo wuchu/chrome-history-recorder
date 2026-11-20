@@ -1,0 +1,28 @@
+{
+  "name": "app",
+  "version": "1.0.0",
+  "description": "Long-running backend app: storage, AI scheduling, configuration, and extension transport",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "dev:start": "node dist/index.js",
+    "start": "node dist/index.js",
+    "test": "vitest",
+    "lint": "eslint src"
+  },
+  "dependencies": {
+    "ai": "workspace:*",
+    "vfs": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^1.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "MIT"
+}

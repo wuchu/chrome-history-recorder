@@ -1,47 +1,30 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  clearQueue,
   checkOllamaHealth,
   clearIndex,
   deleteTag,
   ExtensionConfig,
   getConfig,
-  getQueueStatus,
   listOllamaModels,
   listTags,
   loadServiceStatus,
   mergeTags,
   OllamaModel,
-  pauseClassification,
-  QueueStatus,
+  PromptTemplates,
   reconnectVFS,
   renameTag,
-  retryFailedTasks,
   ServiceStatus,
   setTagPinned,
-  startClassification,
   syncBlobsToIndex,
   SyncBlobsToIndexResult,
   updateConfig,
   VFSTagRecord,
+  DEFAULT_EXTENSION_CONFIG,
 } from '../../../shared/extension-runtime';
 
 const DEFAULT_CONFIG: ExtensionConfig = {
-  ollamaEndpoint: 'http://localhost:11434',
-  // visionModel 不设置默认值，从服务端接口选择返回的第一个
-  language: 'zh-CN',
-  filenameStyle: 'auto',
-  classificationConcurrency: 1,
-  classificationPaused: true,
-  maxFileSize: 50 * 1024 * 1024,
-};
-
-const DEFAULT_QUEUE: QueueStatus = {
-  pending: 0,
-  processing: 0,
-  completed: 0,
-  failed: 0,
-  total: 0,
+  ...DEFAULT_EXTENSION_CONFIG,
+  enabledVideoTypes: [...DEFAULT_EXTENSION_CONFIG.enabledVideoTypes],
 };
 
 const DEFAULT_SERVICE_STATUS: ServiceStatus = {
@@ -51,7 +34,6 @@ const DEFAULT_SERVICE_STATUS: ServiceStatus = {
 
 export function useOptionsData() {
   const [config, setConfig] = useState<ExtensionConfig>(DEFAULT_CONFIG);
-  const [queueStatus, setQueueStatus] = useState<QueueStatus>(DEFAULT_QUEUE);
   const [serviceStatus, setServiceStatus] = useState<ServiceStatus>(DEFAULT_SERVICE_STATUS);
   const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([]);
   const [tags, setTags] = useState<VFSTagRecord[]>([]);
@@ -77,12 +59,6 @@ export function useOptionsData() {
     return nextConfig;
   }, []);
 
-  const refreshQueue = useCallback(async () => {
-    const nextQueue = await getQueueStatus();
-    setQueueStatus(nextQueue);
-    return nextQueue;
-  }, []);
-
   const refreshServiceStatus = useCallback(async () => {
     const nextStatus = await loadServiceStatus();
     setServiceStatus(nextStatus);
@@ -105,24 +81,27 @@ export function useOptionsData() {
     setLoading(true);
     setError(null);
     try {
-      await Promise.all([refreshConfig(), refreshQueue(), refreshServiceStatus()]);
-      try {
-        await refreshOllamaModels();
-      } catch (modelsError) {
-        console.warn('[Options] Failed to load Ollama models:', modelsError);
-      }
-      try {
-        await refreshTags();
-      } catch (tagsError) {
-        console.warn('[Options] Failed to load tag vocabulary:', tagsError);
-      }
+      // Only the core config + service status gate the full-page spinner.
+      await Promise.all([refreshConfig(), refreshServiceStatus()]);
     } catch (loadError) {
       const message = loadError instanceof Error ? loadError.message : '加载配置失败';
       setError(message);
     } finally {
       setLoading(false);
     }
-  }, [refreshConfig, refreshOllamaModels, refreshQueue, refreshServiceStatus, refreshTags]);
+
+    // Non-critical data loads after the page is already interactive.
+    try {
+      await refreshOllamaModels();
+    } catch (modelsError) {
+      console.warn('[Options] Failed to load Ollama models:', modelsError);
+    }
+    try {
+      await refreshTags();
+    } catch (tagsError) {
+      console.warn('[Options] Failed to load tag vocabulary:', tagsError);
+    }
+  }, [refreshConfig, refreshOllamaModels, refreshServiceStatus, refreshTags]);
 
   const saveConfig = useCallback(
     async (updates: Partial<ExtensionConfig>, key = 'config') => {
@@ -146,6 +125,22 @@ export function useOptionsData() {
     [config, refreshConfig, setSaving]
   );
 
+  const savePromptTemplate = useCallback(
+    async (key: keyof PromptTemplates, value: string | undefined) => {
+      const nextTemplates = { ...config.promptTemplates, [key]: value || undefined };
+      await saveConfig({ promptTemplates: nextTemplates }, 'promptTemplates');
+    },
+    [config.promptTemplates, saveConfig]
+  );
+
+  const resetPromptTemplate = useCallback(
+    async (key: keyof PromptTemplates) => {
+      const nextTemplates = { ...config.promptTemplates, [key]: undefined };
+      await saveConfig({ promptTemplates: nextTemplates }, 'promptTemplates');
+    },
+    [config.promptTemplates, saveConfig]
+  );
+
   const refreshOllamaHealth = useCallback(async () => {
     setSaving('ollamaHealth', true);
     try {
@@ -165,50 +160,6 @@ export function useOptionsData() {
       setSaving('vfsReconnect', false);
     }
   }, [refreshServiceStatus, setSaving]);
-
-  const start = useCallback(async () => {
-    setSaving('classificationState', true);
-    try {
-      const scheduler = await startClassification();
-      setConfig((prev) => ({ ...prev, classificationPaused: false }));
-      setQueueStatus((prev) => ({ ...prev, scheduler }));
-      await refreshQueue();
-    } finally {
-      setSaving('classificationState', false);
-    }
-  }, [refreshQueue, setSaving]);
-
-  const pause = useCallback(async () => {
-    setSaving('classificationState', true);
-    try {
-      const scheduler = await pauseClassification();
-      setConfig((prev) => ({ ...prev, classificationPaused: true }));
-      setQueueStatus((prev) => ({ ...prev, scheduler }));
-      await refreshQueue();
-    } finally {
-      setSaving('classificationState', false);
-    }
-  }, [refreshQueue, setSaving]);
-
-  const retryFailed = useCallback(async () => {
-    setSaving('retryFailed', true);
-    try {
-      await retryFailedTasks();
-      await refreshQueue();
-    } finally {
-      setSaving('retryFailed', false);
-    }
-  }, [refreshQueue, setSaving]);
-
-  const clearClassificationQueue = useCallback(async () => {
-    setSaving('clearQueue', true);
-    try {
-      await clearQueue();
-      await refreshQueue();
-    } finally {
-      setSaving('clearQueue', false);
-    }
-  }, [refreshQueue, setSaving]);
 
   const syncMediaIndex = useCallback(async (): Promise<SyncBlobsToIndexResult> => {
     setSaving('syncBlobsToIndex', true);
@@ -291,14 +242,12 @@ export function useOptionsData() {
       config: savingKeys.has('config'),
       ollamaEndpoint: savingKeys.has('ollamaEndpoint'),
       visionModel: savingKeys.has('visionModel'),
-      filenameStyle: savingKeys.has('filenameStyle'),
-      classificationState: savingKeys.has('classificationState'),
+      promptTemplates: savingKeys.has('promptTemplates'),
       classificationConcurrency: savingKeys.has('classificationConcurrency'),
+      videoCapture: savingKeys.has('videoCapture'),
       serviceStatus: savingKeys.has('serviceStatus'),
       ollamaHealth: savingKeys.has('ollamaHealth'),
       vfsReconnect: savingKeys.has('vfsReconnect'),
-      retryFailed: savingKeys.has('retryFailed'),
-      clearQueue: savingKeys.has('clearQueue'),
       syncBlobsToIndex: savingKeys.has('syncBlobsToIndex'),
       clearIndex: savingKeys.has('clearIndex'),
       tags: savingKeys.has('tags'),
@@ -308,7 +257,6 @@ export function useOptionsData() {
 
   return {
     config,
-    queueStatus,
     serviceStatus,
     ollamaModels,
     tags,
@@ -317,18 +265,14 @@ export function useOptionsData() {
     error,
     refreshAll: initialize,
     refreshConfig,
-    refreshQueue,
     refreshServiceStatus,
     refreshOllamaModels,
     refreshOllamaHealth,
     refreshTags,
     reconnectVfsService,
     saveConfig,
-    startClassification: start,
-    pauseClassification: pause,
-    retryFailedTasks: retryFailed,
-    retryFailed,
-    clearQueue: clearClassificationQueue,
+    savePromptTemplate,
+    resetPromptTemplate,
     syncMediaIndex,
     clearMediaIndex,
     renameTag: renameTagAction,

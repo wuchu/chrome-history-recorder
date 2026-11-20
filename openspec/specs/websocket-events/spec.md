@@ -1,4 +1,10 @@
-## ADDED Requirements
+# Spec: WebSocket Events
+
+## Purpose
+
+Define the WebSocket event channel used to push capture, classification, service, and error events to connected clients.
+
+## Requirements
 
 ### Requirement: WebSocket 服务端点
 Proxy 服务必须 (SHALL) 提供 WebSocket 端点用于实时事件推送。
@@ -52,31 +58,34 @@ Proxy 服务必须 (SHALL) 在文件捕获时推送实时事件。
   ```
 
 ### Requirement: 分类状态事件
-Extension Background / VFS 事件通道必须 (SHALL) 推送 AI 分类相关事件。
+app 事件总线必须 (SHALL) 聚合 AI 分类相关事件，并通过 vfs transport 推送给 extension。
 
 #### Scenario: 推送分类开始事件
-- **WHEN** Extension Background 分类器开始处理文件
+- **WHEN** app 调度器开始处理一个 `classify` 任务
 - **THEN** 系统必须 (SHALL) 推送 `classify:started` 事件
 - **AND** 事件数据必须 (SHALL) 包含：
   - `hash`: 正在分类的文件哈希
 
 #### Scenario: 推送分类完成事件
-- **WHEN** Extension Background 分类器完成分类
+- **WHEN** app 的 `ai` 包完成分类
 - **THEN** 系统必须 (SHALL) 推送 `classify:complete` 事件
 - **AND** 事件数据必须 (SHALL) 包含：
   - `hash`: 文件哈希
-  - `category`: 分类结果
-  - `filename`: 新文件名
-  - `confidence`: 置信度分数（0-1）
   - `tags`: 标签数组
-  - `outputPath`: 输出路径
+  - `confidence`: 置信度分数（0-1）
+  - `ai_filename`: 生成的显示文件名
 
 #### Scenario: 推送分类失败事件
-- **WHEN** Extension Background 分类器分类失败
+- **WHEN** app 的 `ai` 包分类失败
 - **THEN** 系统必须 (SHALL) 推送 `classify:failed` 事件
 - **AND** 事件数据必须 (SHALL) 包含：
   - `hash`: 文件哈希
   - `error`: 错误信息
+
+#### Scenario: 推送任务状态事件
+- **WHEN** app 调度器处理 `classify` 或 `rename` 任务
+- **THEN** 系统必须 (SHALL) 推送 `task:started`、`task:completed`、`task:retrying` 或 `task:failed` 事件
+- **AND** 事件数据必须 (SHALL) 包含 `task_type` 和 `hash`
 
 #### Scenario: 推送分类进度事件
 - **WHEN** 分类置信度正在生成

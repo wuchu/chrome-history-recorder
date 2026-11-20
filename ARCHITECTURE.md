@@ -4,78 +4,54 @@
 
 ## 架构概览
 
-Chrome Media Recorder 使用 **WebSocket + HTTP 双通道**架构，由四个主要组件构成：
+Chrome Media Recorder 使用 **四层**架构：薄 extension UX 层、长驻 app 编排层、ai 域包、vfs 存储与传输层。
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     Chrome Extension                         │
-│  ┌──────────────┐  chrome.runtime  ┌──────────────┐         │
-│  │ Side Panel   │◀───────────────▶│ Background   │         │
-│  │ (React UI)   │                  │ Service      │         │
-│  │              │                  │ Worker       │         │
-│  └──────┬───────┘                  └──────┬───────┘         │
-│         │                                 │                 │
-│         │ HTTP file/thumbnail URLs        │ WebSocket API   │
-│         │ http://localhost:8766           │ ws://localhost:8765
-└─────────┼─────────────────────────────────┼─────────────────┘
-          │                                 │
-          ▼                                 ▼
-┌─────────────────────────────────────────────────────────────┐
-│                       VFS Service                            │
-│  ┌───────────────────────┐      ┌────────────────────────┐  │
-│  │ WebSocket Server      │      │ HTTP Server            │  │
-│  │ API + event channel   │      │ files + thumbnails     │  │
-│  │ localhost:8765        │      │ localhost:8766         │  │
-│  └──────────┬────────────┘      └───────────┬────────────┘  │
-│             │                               │               │
-│             └───────────────┬───────────────┘               │
-│                             ▼                               │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐  │
-│  │ SQLite       │  │ Blob Storage │  │ Thumbnail        │  │
-│  │ Metadata     │  │ Files        │  │ Generator        │  │
-│  └──────────────┘  └──────────────┘  └──────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────┐
-│                    Ollama Service (Local)                    │
-│  HTTP API: http://localhost:11434                            │
-│  Vision Models: LLaVA, Moondream                             │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────── Chrome Extension（薄 UX）─────────────────────┐
+│  Side Panel / Options / Offscreen                                  │
+│        ▲ chrome.runtime messaging                                  │
+│  Background SW                                                     │
+│   ├─ DebuggerCaptureController（CDP 捕获）                          │
+│   ├─ VideoDownloadManager（offscreen 下载）                         │
+│   ├─ 薄 VFSWebSocketClient（RPC + 事件中继）                        │
+│   └─ 配置镜像（app 为真源）                                         │
+└──────────────┬────────────────────────────────────┬───────────────┘
+               │ HTTP files / thumbnails / upload   │ WebSocket RPC + events
+               ▼                                    ▼
+┌──────────────────────── packages/app（长驻 Node 进程）──────────────┐
+│  bootstrap · 任务调度器 · 配置真源 · 事件总线                        │
+│    ├─ packages/ai：Ollama 分类 / 重命名 / 翻译 / 健康 / 模型          │
+│    └─ packages/vfs：VFSAPI + SQLite/blob/thumbnail + WS/HTTP 服务    │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               ▼
+                    Ollama（http://localhost:11434）
 ```
 
 ## 组件职责
 
-### 1. Chrome Extension
+### 1. Chrome Extension（薄 UX 层）
 
-Extension 是用户交互和捕获流程的核心。
+Extension 只保留浏览器专属能力与界面，不再包含业务调度或 AI 调用。
 
-#### Side Panel (UI Layer)
+#### Side Panel / Options / Offscreen (UI Layer)
 
-- **职责**: 用户界面展示、实时状态监控、当前标签页捕获控制、配置入口
-- **技术**: React 18, TypeScript, CSS Modules
+- **职责**: 媒体网格、实时捕获流、任务/服务状态、配置界面、视频下载执行上下文
+- **技术**: React 18, TypeScript, CSS Modules, 扩展 offscreen document
 - **主要功能**:
-  - 媒体网格展示
-  - 实时捕获流预览
-  - VFS / Ollama / AI 任务队列状态展示
   - 通过 HTTP URL 加载文件和缩略图
-  - 通过 `chrome.runtime` messaging 接收 Background 事件
+  - 通过 `chrome.runtime` messaging 接收 Background 中继的事件
+  - 通过 Background RPC 读写 app 配置、调度器状态与 Ollama 模型
 
-#### DevTools Panel (Migration Fallback)
+#### Background Service Worker（薄层）
 
-DevTools Panel 在迁移期仍保留为 fallback 和调试入口，但不再是主捕获和浏览界面。新的主流程由 Chrome Side Panel 触发，并由 Background 统一管理当前标签页捕获状态。
-
-#### Background Service Worker (Business Logic Layer)
-
-- **职责**: 业务逻辑协调、VFS 连接、异步 AI 任务调度、事件广播
+- **职责**: CDP 捕获、视频下载编排、WebSocket 中继、配置镜像、UI 消息转发
 - **技术**: Manifest V3 Service Worker
 - **主要模块**:
-  - `VFSWebSocketClient`: WebSocket 客户端，封装所有 VFS API 调用和连接状态
-  - `FileManager`: 文件捕获流程管理（接收媒体数据 → VFS 保存 → 广播事件）
-  - `TaskEngine`: 统一异步 AI 任务引擎（全局并发上限，按 `task_type` 分派 `classify` / `rename`）
-  - `OllamaClient`: Ollama HTTP API 客户端（健康检查、模型查询、融合分类与重命名调用）
-  - `ConfigManager`: 配置管理（Ollama endpoint、模型、并发数、运行意图等）
-  - `DebuggerCaptureController`: 管理 tab-scoped debugger/CDP 捕获状态和图片响应体提取
-  - `EventBroadcaster`: 向 Side Panel / DevTools Panel 广播事件
+  - `VFSWebSocketClient`: 薄 RPC/事件客户端，不再持有调度或 Ollama 逻辑
+  - `FileManager`: 捕获入库（图片 `saveFile`、视频 `POST /upload`）
+  - `DebuggerCaptureController`: tab-scoped CDP 捕获与视频候选识别
+  - `VideoDownloadManager`: offscreen 下载队列、并发与取消
+  - 配置镜像: 启动/重连时从 app 拉取，`config:updated` 时更新；真源在 app
 
 #### Background Debugger / CDP Capture Layer
 
@@ -88,11 +64,33 @@ DevTools Panel 在迁移期仍保留为 fallback 和调试入口，但不再是�
   - 过滤 MIME type 和文件大小
   - 调用 `Network.getResponseBody` 获取图片响应体
   - 将捕获的 buffer 交给 `FileManager.handleCaptureMedia`
+  - 识别全局资源视频响应，交给 `VideoDownloadManager`
   - 跳过过大文件和不支持格式
 
-### 2. VFS Service
+### 2. App（`packages/app`）
 
-VFS Service 是本地 Node.js 服务，负责文件系统、元数据、缩略图和异步任务队列操作。
+长驻 Node 进程与组合根：
+
+- `bootstrap`: 构造 `VFSAPI`、`ai` 客户端、配置存储、调度器，启动 WS/HTTP transport
+- `Scheduler`: claim → handler → 写回、全局并发、退避、stale recovery、paused/running 意图
+- `ConfigStore`: 配置真源（`workspace/config.json`），一次性迁移 chrome.storage，推送镜像
+- `EventBus`: 聚合 vfs/scheduler/ai 事件，经 transport 推送给 extension
+- 入库钩子: `saveFile` / `POST /upload` 成功后自动 enqueue `classify` + `rename`
+
+### 3. AI（`packages/ai`）
+
+- `OllamaClient`: 分类、重命名、翻译、健康检查、模型列表
+- 通过注入的 `MediaReader` 直接读取 `VFSAPI` 的缩略图/原图，不再经 WebSocket 传输图片字节
+- 分块 base64 编码，避免阻塞 app 事件循环
+
+### 4. VFS（`packages/vfs`）
+
+本地存储与传输库（由 `vfs-service` 演进而来）：
+
+- `VFSAPI`: 稳定的文件/任务/标签契约，供 app 进程内调用，也经 WS 暴露给 extension
+- SQLite 元数据、content-addressable blob、ffmpeg/sharp 缩略图
+- WebSocket Server（RPC + 事件）与 HTTP Server（文件/缩略图/流式上传）
+- `setIngestHook` 让 app 在入库后执行自动 enqueue 与 `file:captured` 广播
 
 #### WebSocket Server
 
@@ -190,9 +188,9 @@ CREATE TABLE tag_aliases (
 - **缓存**: `workspace/thumbnails/{hash}-{size}.{ext}`
 - **尺寸**: small, medium, large
 
-### 3. Ollama Service
+### 5. Ollama Service
 
-Ollama 提供本地视觉模型 API，用于 AI 分类与 AI 重命名：
+Ollama 提供本地视觉模型 API。app 的 `ai` 包直接调用它进行分类与重命名：
 
 ```typescript
 POST http://localhost:11434/api/chat
@@ -300,32 +298,32 @@ POST http://localhost:11434/api/chat
 - 每个方法职责单一，便于实现和测试。
 - 文件展示和下载通过 HTTP 端点直接完成，减少 Background 转发负担。
 
-### Decision 5: Background Service Worker 作为中央协调器
+### Decision 5: App 作为中央协调器
 
 **架构**:
 
 ```
-Extension Background Service Worker:
-├── VFSWebSocketClient   # WebSocket 客户端
-├── FileManager          # 捕获媒体保存流程
-├── DebuggerCaptureController # Side Panel 触发的 tab-scoped CDP 捕获
-├── OllamaClient         # HTTP 客户端（调用本地 Ollama）
-├── TaskEngine           # 统一异步任务引擎（classify / rename 共享并发上限）
-├── EventBroadcaster     # 向 Side Panel / DevTools Panel 广播事件
-└── ConfigManager        # 配置管理
+packages/app（长驻 Node 进程）:
+├── bootstrap            # 构造 VFSAPI / ai / config / scheduler，启动 transport
+├── Scheduler            # claim → handler → 回写，全局并发、退避、stale recovery
+├── ConfigStore          # 配置真源 + chrome.storage 一次性迁移 + 镜像推送
+├── EventBus             # 聚合 vfs/scheduler/ai 事件 → transport → extension
+└── VFSAPI（packages/vfs）+ OllamaClient（packages/ai）
 
-Side Panel:
-├── React UI             # 展示媒体网格
-├── HTTP URLs            # 加载文件和缩略图
-├── chrome.runtime messaging # 接收 Background 事件
-└── Options/Settings     # 用户配置
+Chrome Extension（薄层）:
+├── DebuggerCaptureController  # CDP 捕获
+├── VideoDownloadManager       # offscreen 下载
+├── 薄 VFSWebSocketClient      # RPC + 事件中继
+├── 配置镜像                   # app 推送，capture 使用
+└── Side Panel / Options / Offscreen UI
 ```
 
 **理由**:
 
-- Background Service Worker 是 Manifest V3 的标准业务协调层。
-- VFS 连接和分类调度集中管理，避免多个 UI 面板重复调度。
-- Side Panel 保持偏 UI，捕获状态集中在 Background，降低状态同步复杂度。
+- 调度器、Ollama 客户端和配置不再受 MV3 service worker 30 秒空闲挂起影响，可真正长驻运行。
+- 调度器和 AI 通过进程内 `VFSAPI` 读写存储，任务操作与媒体读取不再经 WebSocket 序列化。
+- extension 只保留浏览器专属能力（CDP、offscreen、UI）与薄中继，bundle 与冷启动时间显著下降。
+- 配置以 app 为真源，extension 持镜像，避免 chrome.storage 与后端状态分叉。
 
 ## 数据流
 
@@ -346,34 +344,35 @@ Side Panel:
    ↓
 7. Background FileManager.handleCaptureMedia()
    ↓
-8. VFSWebSocketClient.saveFile() → ws://localhost:8765
+8. VFSWebSocketClient.saveFile() → app（ws://localhost:8765）
    ↓
-9. VFS Service: hash, save blob, insert SQLite
+9. app: VFS hash、保存 blob、写入 SQLite，并自动 enqueue AI 任务
    ↓
 10. Response: { hash, duplicate, size }
     ↓
-11. FileManager.broadcastEvent('file:captured', { hash, mimeType, size })
+11. app 广播 file:captured；extension 中继给 UI
     ↓
-12. Side Panel receives event and renders file/thumbnail HTTP URLs
+12. Side Panel 接收事件并通过 HTTP URL 渲染文件/缩略图
 ```
 
 ### AI 任务流程
 
 ```
-1. FileManager 检测新文件（image/video）
+1. app 在 saveFile / POST /upload 入库成功后触发 ingest hook
    ↓
-2. VFSWebSocketClient.enqueueTask(classify) + enqueueTask(rename)
+2. app 自动 enqueue classify + rename（幂等）
    ↓
-3. VFS Service: insert tasks (UNIQUE(task_type, target_hash), ON CONFLICT DO NOTHING)
+3. VFS: insert tasks (UNIQUE(task_type, target_hash), ON CONFLICT DO NOTHING)
    ↓
-4. TaskEngine 每 5s tick（或由事件 kick）：
-   a. 若引擎暂停 / VFS 未连接 / Ollama 不可用 → 跳过
+4. app Scheduler 每 5s tick（或由事件 kick）：
+   a. 若暂停 / Ollama 不可用 → 跳过
    b. claimTasks(可用并发) —— 条件 UPDATE 保证原子认领
    ↓
-5. classify handler:
-   a. 读取大缩略图（回退原图）
+5. classify handler（packages/ai）:
+   a. 通过 VFSAPI 读取大缩略图（回退原图）
    b. Ollama 融合调用 → tags + aliases + confidence
    c. VFS applyClassification()：事务解析/创建标签、写别名、保留 system:*、停写 category
+   d. 广播 tags:updated
    ↓
 6. rename handler:
    a. Ollama 视觉调用 → 展示名
@@ -382,8 +381,7 @@ Side Panel:
 7. 成功：updateTaskStatus(completed)，广播 task:completed + 类型事件
    失败：updateTaskStatus(failed, retryDelayMs) —— attempts 未达上限则回到 pending 退避
    ↓
-8. MV3 恢复：runtime.onStartup / 每分钟 alarm / VFS 重连 →
-   recoverStaleProcessingTasks() 后 kick 引擎，按持久化运行意图决定是否继续
+8. app 启动时 recoverStaleProcessingTasks()，按持久化运行意图决定是否启动调度器
 ```
 
 两种任务只共享全局并发与队列，状态、重试与手动刷新彼此独立；单文件刷新调用
@@ -487,4 +485,6 @@ const PROMPTS = {
 
 - [README.md](README.md) - 项目概述和快速开始
 - [Extension README](packages/extension/README.md) - Chrome 扩展说明
-- [VFS Service README](packages/vfs-service/README.md) - VFS Service 说明
+- `packages/vfs/` — 存储与传输库（VFSAPI、WS/HTTP）
+- `packages/ai/` — Ollama 集成
+- `packages/app/` — 长驻后端编排

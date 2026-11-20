@@ -17,18 +17,25 @@ import {
   Select,
   Space,
   Spin,
-  Statistic,
   Switch,
   Tag,
+  theme,
   Typography,
 } from 'antd';
-import type {
-  ExtensionConfig,
-  FilenameStyle,
-  TagDefinition,
-  VFSTagRecord,
+import {
+  DEFAULT_MAX_VIDEO_SIZE,
+  MAX_VIDEO_SIZE_LIMIT,
+  MIN_VIDEO_SIZE_LIMIT,
+  SUPPORTED_VIDEO_MIME_TYPES,
+  type ExtensionConfig,
+  type TagDefinition,
+  type VFSTagRecord,
 } from '../../shared/extension-runtime';
+import { DEFAULT_PROMPT_TEMPLATES, type PromptTemplates } from '../../shared/prompt-templates';
 import { useOptionsData } from './hooks/useOptionsData';
+import { useTaskQueue } from './hooks/useTaskQueue';
+import TaskConsole from './components/TaskConsole';
+import { useTheme } from '../media-browser/hooks/useTheme';
 
 const { Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
@@ -39,17 +46,40 @@ const LANGUAGE_OPTIONS = [
   { value: 'en-US', label: 'English' },
 ];
 
-const FILENAME_STYLE_OPTIONS: Array<{ value: FilenameStyle; label: string; description: string }> =
-  [
-    { value: 'auto', label: '自动', description: '根据图片内容自动选择风格' },
-    { value: 'fun', label: '有趣', description: '活泼、俏皮、像在讲故事' },
-    { value: 'sexy', label: '迷人', description: '优雅、有吸引力、有美感' },
-    { value: 'artistic', label: '艺术', description: '像描述摄影或画作' },
-    { value: 'poetic', label: '诗意', description: '带有意境和情感' },
-    { value: 'minimal', label: '极简', description: '只保留核心信息' },
-    { value: 'professional', label: '专业', description: '客观、准确、简洁' },
-    { value: 'narrative', label: '叙事', description: '描述场景中的情节' },
-  ];
+const VIDEO_TYPE_OPTIONS = SUPPORTED_VIDEO_MIME_TYPES.map((type) => ({
+  value: type,
+  label: type,
+}));
+
+const MIN_VIDEO_SIZE_MB = MIN_VIDEO_SIZE_LIMIT / (1024 * 1024);
+const MAX_VIDEO_SIZE_MB = MAX_VIDEO_SIZE_LIMIT / (1024 * 1024);
+const DEFAULT_MAX_VIDEO_SIZE_MB = DEFAULT_MAX_VIDEO_SIZE / (1024 * 1024);
+
+const PROMPT_TEMPLATE_FIELDS: Array<{
+  key: keyof PromptTemplates;
+  label: string;
+  placeholder: string;
+  help: string;
+}> = [
+  {
+    key: 'classify',
+    label: '标签分类（classify）',
+    placeholder: '{{vocabulary}}',
+    help: '生成图片标签。占位符 {{vocabulary}} 会被替换为现有标签词表。',
+  },
+  {
+    key: 'rename',
+    label: '文件重命名（rename）',
+    placeholder: '观察这张图片，为它生成一个简洁生动的文件名…',
+    help: '生成文件名。命名风格直接写在本模板中，无需额外占位符。',
+  },
+  {
+    key: 'translate',
+    label: '标签翻译（translate）',
+    placeholder: '{{input}}',
+    help: '翻译标签。占位符 {{input}} 会被替换为待翻译文本。',
+  },
+];
 
 // 系统标签定义
 const SYSTEM_TAGS: TagDefinition[] = [
@@ -75,22 +105,16 @@ function App() {
   const [messageApi, contextHolder] = message.useMessage();
   const {
     config,
-    queueStatus,
     serviceStatus,
     ollamaModels,
     loading,
     saving,
     error,
     refreshAll,
-    refreshQueue,
     refreshOllamaModels,
     refreshOllamaHealth,
     reconnectVfsService,
     saveConfig,
-    startClassification,
-    pauseClassification,
-    retryFailedTasks: retryFailed,
-    clearQueue,
     syncMediaIndex,
     clearMediaIndex,
     tags,
@@ -99,10 +123,30 @@ function App() {
     mergeTags,
     deleteTag,
     setTagPinned,
+    savePromptTemplate,
+    resetPromptTemplate,
   } = useOptionsData();
 
+  const taskQueue = useTaskQueue();
+  const { themeMode, systemDark, changeTheme } = useTheme();
+  const isDark = useMemo(
+    () => (themeMode === 'auto' ? systemDark : themeMode === 'dark'),
+    [themeMode, systemDark]
+  );
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = isDark ? 'dark' : 'light';
+  }, [isDark]);
+
   const [endpointDraft, setEndpointDraft] = useState(config.ollamaEndpoint);
-  const [stylePromptDraft, setStylePromptDraft] = useState(config.filenameStylePrompt ?? '');
+  const [templateDrafts, setTemplateDrafts] = useState<Record<keyof PromptTemplates, string>>(
+    () => ({
+      classify: config.promptTemplates?.classify ?? DEFAULT_PROMPT_TEMPLATES.classify,
+      rename: config.promptTemplates?.rename ?? DEFAULT_PROMPT_TEMPLATES.rename,
+      translate: config.promptTemplates?.translate ?? DEFAULT_PROMPT_TEMPLATES.translate,
+    })
+  );
+  const [maxVideoSizeMb, setMaxVideoSizeMb] = useState<number>(DEFAULT_MAX_VIDEO_SIZE_MB);
   const [renamingTag, setRenamingTag] = useState<VFSTagRecord | null>(null);
   const [mergingTag, setMergingTag] = useState<VFSTagRecord | null>(null);
   const [tagForm] = Form.useForm();
@@ -113,8 +157,16 @@ function App() {
   }, [config.ollamaEndpoint]);
 
   useEffect(() => {
-    setStylePromptDraft(config.filenameStylePrompt ?? '');
-  }, [config.filenameStylePrompt]);
+    setMaxVideoSizeMb(Math.round(config.maxVideoSize / (1024 * 1024)));
+  }, [config.maxVideoSize]);
+
+  useEffect(() => {
+    setTemplateDrafts({
+      classify: config.promptTemplates?.classify ?? DEFAULT_PROMPT_TEMPLATES.classify,
+      rename: config.promptTemplates?.rename ?? DEFAULT_PROMPT_TEMPLATES.rename,
+      translate: config.promptTemplates?.translate ?? DEFAULT_PROMPT_TEMPLATES.translate,
+    });
+  }, [config.promptTemplates]);
 
   useEffect(() => {
     if (error) {
@@ -158,34 +210,78 @@ function App() {
     await saveSetting({ visionModel }, 'visionModel', `模型已切换为 ${visionModel}`);
   };
 
-  const handleStylePromptSave = async () => {
-    const nextPrompt = stylePromptDraft.trim();
-    if ((config.filenameStylePrompt ?? '') === nextPrompt) return;
-    await saveSetting(
-      { filenameStylePrompt: nextPrompt || undefined },
-      'filenameStyle',
-      '自定义风格提示已保存'
-    );
+  const handleTemplateSave = async (key: keyof PromptTemplates) => {
+    const value = templateDrafts[key].trim();
+    const current = (config.promptTemplates?.[key] ?? DEFAULT_PROMPT_TEMPLATES[key]).trim();
+    if (current === value) return;
+    await savePromptTemplate(key, value || undefined);
+    messageApi.success('提示词模板已保存');
   };
 
-  const handleClassificationToggle = async (running: boolean) => {
-    if (running) {
-      await startClassification();
-      messageApi.success('AI 分类已开始');
-    } else {
-      await pauseClassification();
-      messageApi.success('AI 分类已暂停');
-    }
+  const handleTemplateReset = async (key: keyof PromptTemplates) => {
+    await resetPromptTemplate(key);
+    messageApi.success('已恢复默认提示词');
+  };
+
+  const handleStart = async () => {
+    await taskQueue.start();
+    messageApi.success('AI 任务已开始');
+  };
+
+  const handlePause = async () => {
+    await taskQueue.pause();
+    messageApi.success('AI 任务已暂停');
   };
 
   const handleRetryFailed = async () => {
-    await retryFailed();
+    await taskQueue.retryFailed();
     messageApi.success('失败任务已重新入队');
   };
 
   const handleClearQueue = async () => {
-    await clearQueue();
+    await taskQueue.clearQueue();
     messageApi.success('队列已清空');
+  };
+
+  const handleRescan = async () => {
+    const count = await taskQueue.requeueAll(['classify', 'rename']);
+    messageApi.success(`已重新入队 ${count} 个任务`);
+  };
+
+  const handleConcurrencyChange = (value: number) => {
+    void saveSetting(
+      { classificationConcurrency: value },
+      'classificationConcurrency',
+      '并发数已保存'
+    );
+  };
+
+  const handleVideoCaptureToggle = async (checked: boolean) => {
+    await saveSetting(
+      { captureVideos: checked },
+      'videoCapture',
+      checked ? '已开启视频捕获' : '已关闭视频捕获'
+    );
+  };
+
+  const handleMaxVideoSizeSave = async () => {
+    const value = Math.floor(maxVideoSizeMb);
+    if (!Number.isFinite(value) || value < MIN_VIDEO_SIZE_MB || value > MAX_VIDEO_SIZE_MB) {
+      messageApi.error(`视频大小上限需在 ${MIN_VIDEO_SIZE_MB}–${MAX_VIDEO_SIZE_MB} MB 之间`);
+      setMaxVideoSizeMb(Math.round(config.maxVideoSize / (1024 * 1024)));
+      return;
+    }
+
+    if (value * 1024 * 1024 === config.maxVideoSize) return;
+    await saveSetting({ maxVideoSize: value * 1024 * 1024 }, 'videoCapture', '视频大小上限已保存');
+  };
+
+  const handleVideoFormatsChange = async (types: string[]) => {
+    if (types.length === 0) {
+      messageApi.warning('至少保留一种视频格式');
+      return;
+    }
+    await saveSetting({ enabledVideoTypes: types }, 'videoCapture', '视频格式已保存');
   };
 
   const handleSyncMediaIndex = async () => {
@@ -282,6 +378,7 @@ function App() {
   return (
     <ConfigProvider
       theme={{
+        algorithm: isDark ? theme.darkAlgorithm : theme.defaultAlgorithm,
         token: {
           colorPrimary: '#1677ff',
           borderRadius: 10,
@@ -289,14 +386,26 @@ function App() {
       }}
     >
       {contextHolder}
-      <Layout className="options-shell">
+      <Layout className="options-shell" data-theme={isDark ? 'dark' : 'light'}>
         <Content className="options-content">
           <div className="options-header">
-            <Title level={2}>Media Recorder 设置</Title>
-            <Paragraph className="options-subtitle">
-              配置本地 VFS、Ollama AI 分类、文件名风格和分类队列。AI
-              分类默认暂停，捕获的媒体可以先进入待处理队列。
-            </Paragraph>
+            <div>
+              <Title level={2}>Media Recorder 设置</Title>
+              <Paragraph className="options-subtitle">
+                配置本地 VFS、Ollama AI 分类、文件名风格和分类队列。AI
+                分类默认暂停，捕获的媒体可以先进入待处理队列。
+              </Paragraph>
+            </div>
+            <Select
+              value={themeMode}
+              onChange={(value) => changeTheme(value as 'auto' | 'light' | 'dark')}
+              style={{ width: 140 }}
+              options={[
+                { value: 'auto', label: '主题：自动' },
+                { value: 'light', label: '主题：亮色' },
+                { value: 'dark', label: '主题：暗色' },
+              ]}
+            />
           </div>
 
           {error && <Alert type="error" showIcon message={error} style={{ marginBottom: 16 }} />}
@@ -375,6 +484,57 @@ function App() {
                     </Button>
                   </Space>
                 </div>
+              </Card>
+
+              <Card className="options-card" title="视频捕获">
+                <Paragraph type="secondary" style={{ marginBottom: 16 }}>
+                  捕获直链视频（如 MP4/WebM
+                  文件）。开启后，侧边栏中的捕获会话会把识别到的完整视频下载到本地
+                  VFS。流媒体分片（MSE/blob）暂不支持。
+                </Paragraph>
+                <Form layout="vertical">
+                  <Form.Item label="启用视频捕获">
+                    <Switch
+                      checked={config.captureVideos}
+                      loading={saving.videoCapture}
+                      onChange={handleVideoCaptureToggle}
+                      checkedChildren="开启"
+                      unCheckedChildren="关闭"
+                    />
+                  </Form.Item>
+
+                  <Form.Item
+                    label="单个视频大小上限"
+                    extra={`范围 ${MIN_VIDEO_SIZE_MB}–${MAX_VIDEO_SIZE_MB} MB。超过上限的视频会被跳过。`}
+                  >
+                    <InputNumber
+                      min={MIN_VIDEO_SIZE_MB}
+                      max={MAX_VIDEO_SIZE_MB}
+                      step={10}
+                      value={maxVideoSizeMb}
+                      addonAfter="MB"
+                      style={{ width: 200 }}
+                      onChange={(value) =>
+                        setMaxVideoSizeMb(
+                          typeof value === 'number' ? value : DEFAULT_MAX_VIDEO_SIZE_MB
+                        )
+                      }
+                      onBlur={handleMaxVideoSizeSave}
+                      onPressEnter={handleMaxVideoSizeSave}
+                    />
+                  </Form.Item>
+
+                  <Form.Item label="捕获格式" extra="仅这些 MIME 类型的视频会被识别为下载候选。">
+                    <Select
+                      mode="multiple"
+                      value={config.enabledVideoTypes}
+                      options={VIDEO_TYPE_OPTIONS}
+                      loading={saving.videoCapture}
+                      onChange={handleVideoFormatsChange}
+                      placeholder="选择至少一种视频格式"
+                    />
+                  </Form.Item>
+                </Form>
               </Card>
 
               <Card className="options-card" title="Ollama 设置">
@@ -551,119 +711,57 @@ function App() {
                 </div>
               </Card>
 
-              <Card className="options-card" title="AI 分类控制">
-                <Row gutter={[16, 16]} align="middle">
-                  <Col xs={24} md={8}>
-                    <Space direction="vertical">
-                      <Text strong>分类处理状态</Text>
-                      <Space>
-                        <Switch
-                          checked={!config.classificationPaused}
-                          loading={saving.classificationState}
-                          checkedChildren="运行中"
-                          unCheckedChildren="已暂停"
-                          onChange={handleClassificationToggle}
-                        />
-                        <Tag color={config.classificationPaused ? 'default' : 'processing'}>
-                          {config.classificationPaused ? '已暂停' : '运行中'}
-                        </Tag>
-                      </Space>
-                      <Text type="secondary">默认暂停；暂停时可入队，但不会自动消费任务。</Text>
-                    </Space>
-                  </Col>
-                  <Col xs={24} md={8}>
-                    <Form layout="vertical">
-                      <Form.Item label="并发数">
-                        <InputNumber
-                          min={1}
-                          max={8}
-                          value={config.classificationConcurrency}
-                          onChange={(value) => {
-                            if (typeof value === 'number') {
-                              saveSetting(
-                                { classificationConcurrency: value },
-                                'classificationConcurrency',
-                                '并发数已保存'
-                              );
-                            }
-                          }}
-                        />
-                      </Form.Item>
-                    </Form>
-                  </Col>
-                  <Col xs={24} md={8}>
-                    <Statistic
-                      title="当前处理中"
-                      value={queueStatus.scheduler?.processing ?? queueStatus.processing}
-                    />
-                  </Col>
-                </Row>
-              </Card>
+              <TaskConsole
+                status={taskQueue.status}
+                loading={taskQueue.loading}
+                busy={taskQueue.busy}
+                concurrency={config.classificationConcurrency}
+                onStart={handleStart}
+                onPause={handlePause}
+                onRetryFailed={handleRetryFailed}
+                onClearQueue={handleClearQueue}
+                onRescan={handleRescan}
+                onConcurrencyChange={handleConcurrencyChange}
+              />
 
-              <Card className="options-card" title="文件名风格">
-                <Form layout="vertical">
-                  <Form.Item label="风格">
-                    <Select
-                      value={config.filenameStyle}
-                      options={FILENAME_STYLE_OPTIONS.map((style) => ({
-                        value: style.value,
-                        label: `${style.label} - ${style.description}`,
-                      }))}
-                      onChange={(filenameStyle) =>
-                        saveSetting({ filenameStyle }, 'filenameStyle', '文件名风格已保存')
-                      }
-                    />
-                  </Form.Item>
-                  <Form.Item label="自定义提示" extra="留空时使用所选风格的默认提示。失焦后保存。">
-                    <TextArea
-                      rows={3}
-                      value={stylePromptDraft}
-                      onChange={(event) => setStylePromptDraft(event.target.value)}
-                      onBlur={handleStylePromptSave}
-                      placeholder="例如：用简洁、富有画面感的中文短句命名。"
-                    />
-                  </Form.Item>
-                </Form>
-              </Card>
-
-              <Card
-                className="options-card"
-                title="分类队列"
-                extra={<Button onClick={refreshQueue}>刷新队列</Button>}
-              >
-                <Row gutter={[16, 16]}>
-                  <Col xs={12} md={6}>
-                    <Statistic title="等待" value={queueStatus.pending} />
-                  </Col>
-                  <Col xs={12} md={6}>
-                    <Statistic title="处理中" value={queueStatus.processing} />
-                  </Col>
-                  <Col xs={12} md={6}>
-                    <Statistic title="完成" value={queueStatus.completed} />
-                  </Col>
-                  <Col xs={12} md={6}>
-                    <Statistic title="失败" value={queueStatus.failed} />
-                  </Col>
-                </Row>
-                <Space style={{ marginTop: 16 }}>
-                  <Button
-                    loading={saving.retryFailed}
-                    disabled={queueStatus.failed === 0}
-                    onClick={handleRetryFailed}
-                  >
-                    重试失败任务
-                  </Button>
-                  <Popconfirm
-                    title="清空分类队列"
-                    description="这会删除当前队列记录，确定继续吗？"
-                    okText="清空"
-                    cancelText="取消"
-                    onConfirm={handleClearQueue}
-                  >
-                    <Button danger loading={saving.clearQueue}>
-                      清空队列
-                    </Button>
-                  </Popconfirm>
+              <Card className="options-card" title="AI 提示词模板">
+                <Paragraph type="secondary" style={{ marginBottom: 16 }}>
+                  自定义发送给 Ollama 的提示词模板，使用 {'{{占位符}}'}{' '}
+                  注入动态内容。留空时使用内置默认模板。
+                </Paragraph>
+                <Space direction="vertical" size="middle" className="full-width">
+                  {PROMPT_TEMPLATE_FIELDS.map((field) => (
+                    <div key={field.key}>
+                      <div
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          marginBottom: 8,
+                        }}
+                      >
+                        <Text strong>{field.label}</Text>
+                        <Button size="small" onClick={() => handleTemplateReset(field.key)}>
+                          恢复默认
+                        </Button>
+                      </div>
+                      <TextArea
+                        rows={4}
+                        value={templateDrafts[field.key]}
+                        onChange={(event) =>
+                          setTemplateDrafts((prev) => ({
+                            ...prev,
+                            [field.key]: event.target.value,
+                          }))
+                        }
+                        onBlur={() => handleTemplateSave(field.key)}
+                        placeholder={field.placeholder}
+                      />
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        {field.help}
+                      </Text>
+                    </div>
+                  ))}
                 </Space>
               </Card>
             </Space>

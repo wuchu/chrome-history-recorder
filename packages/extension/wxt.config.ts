@@ -20,7 +20,7 @@ export default defineConfig({
       'declarativeNetRequest',
       'sidePanel',
       'debugger',
-      'alarms',
+      'offscreen',
     ],
     host_permissions: [
       '<all_urls>', // 允许访问所有域名，用于拦截所有网站的媒体

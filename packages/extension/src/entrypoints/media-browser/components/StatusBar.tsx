@@ -14,12 +14,6 @@ interface StatusBarProps {
   isCapturing: boolean;
   vfsConnected?: boolean;
   ollamaAvailable?: boolean;
-  classifyQueue?: {
-    pending: number;
-    processing: number;
-    completed: number;
-    failed: number;
-  };
   captureCount?: number;
   failedCount?: number;
   captureError?: string;
@@ -37,7 +31,6 @@ const StatusBar = memo(function StatusBar({
   isCapturing,
   vfsConnected,
   ollamaAvailable,
-  classifyQueue,
   captureCount,
   failedCount,
   captureError,
@@ -78,11 +71,9 @@ const StatusBar = memo(function StatusBar({
         )}
 
         {/* 分隔符 */}
-        {(captureCount !== undefined ||
-          failedCount !== undefined ||
-          (classifyQueue &&
-            (classifyQueue.pending + classifyQueue.processing > 0 ||
-              classifyQueue.completed > 0))) && <span className={styles.separator}>|</span>}
+        {(captureCount !== undefined || failedCount !== undefined) && (
+          <span className={styles.separator}>|</span>
+        )}
 
         {/* 捕获统计 - 只要有值就显示，包括 0 */}
         {captureCount !== undefined || failedCount !== undefined ? (
@@ -108,27 +99,6 @@ const StatusBar = memo(function StatusBar({
             <span className={styles.separator}>|</span>
           </>
         ) : null}
-
-        {/* 分类队列状态 */}
-        {classifyQueue && classifyQueue.pending + classifyQueue.processing > 0 && (
-          <div className={styles.classifyStatus}>
-            <span className={styles.classifyIcon}>◉</span>
-            <span className={styles.classifyText}>
-              {t('status.classifying', {
-                count: classifyQueue.processing,
-                pending: classifyQueue.pending,
-              })}
-            </span>
-          </div>
-        )}
-
-        {/* 已分类数量 */}
-        {classifyQueue && classifyQueue.completed > 0 && (
-          <div className={styles.completedCount}>
-            <span className={styles.completedIcon}>✓</span>
-            <span className={styles.completedText}>{classifyQueue.completed}</span>
-          </div>
-        )}
       </div>
 
       <div className={styles.rightSection}>

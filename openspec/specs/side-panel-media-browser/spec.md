@@ -91,7 +91,7 @@ The Side Panel SHALL derive its tag tabs from the VFS tag vocabulary and pinned 
 - **THEN** the Side Panel SHALL refresh its tabs and counts from VFS
 
 ### Requirement: Side Panel service status
-The Side Panel SHALL show capture, VFS, Ollama, and classification status for the active Extension Background runtime in a compact single-row layout.
+The Side Panel SHALL show capture, VFS, and Ollama status for the active Extension Background runtime in a compact single-row layout.
 
 #### Scenario: Show runtime service status
 - **WHEN** the Side Panel renders its status area
@@ -104,7 +104,7 @@ The Side Panel SHALL show capture, VFS, Ollama, and classification status for th
 - **AND** status information SHALL be grouped with vertical bar separators for visual clarity
 
 #### Scenario: Status updates from Background events
-- **WHEN** Background broadcasts service or scheduler status events
+- **WHEN** Background broadcasts service status events
 - **THEN** the Side Panel SHALL update the visible status without requiring a page refresh
 
 #### Scenario: Show capture error as tooltip
@@ -152,7 +152,7 @@ The Side Panel SHALL fix the top bar and all components above it to the viewport
 
 #### Scenario: Top area stays fixed when scrolling
 - **WHEN** the user scrolls the media grid
-- **THEN** the StatusBar, CaptureStream (if visible), ClassifyProgressSection, and ScrollableTabBar SHALL remain fixed at the top of the viewport
+- **THEN** the StatusBar, CaptureStream (if visible), and ScrollableTabBar SHALL remain fixed at the top of the viewport
 - **AND** they SHALL NOT scroll with the media content
 
 #### Scenario: Frosted glass background effect

@@ -1,12 +1,6 @@
-export type FilenameStyle =
-  | 'auto'
-  | 'fun'
-  | 'sexy'
-  | 'artistic'
-  | 'poetic'
-  | 'minimal'
-  | 'professional'
-  | 'narrative';
+import type { PromptTemplates } from './prompt-templates';
+
+export type { PromptTemplates };
 
 /**
  * Tag definition for user-defined and system tags
@@ -19,16 +13,52 @@ export interface TagDefinition {
   sortOrder: number;
 }
 
+/**
+ * Video capture configuration bounds and defaults.
+ */
+export const MIN_VIDEO_SIZE_LIMIT = 1 * 1024 * 1024;
+export const MAX_VIDEO_SIZE_LIMIT = 2 * 1024 * 1024 * 1024;
+export const DEFAULT_MAX_VIDEO_SIZE = 200 * 1024 * 1024;
+export const DEFAULT_ENABLED_VIDEO_TYPES = ['video/mp4', 'video/webm'];
+
+/**
+ * Video MIME types this build can store and thumbnail.
+ */
+export const SUPPORTED_VIDEO_MIME_TYPES = [
+  'video/mp4',
+  'video/webm',
+  'video/quicktime',
+  'video/x-msvideo',
+  'video/ogg',
+  'video/x-matroska',
+];
+
 export interface ExtensionConfig {
   ollamaEndpoint: string;
   visionModel?: string;
   language: string;
-  filenameStyle: FilenameStyle;
-  filenameStylePrompt?: string;
+  promptTemplates?: PromptTemplates;
   classificationConcurrency: number;
   classificationPaused: boolean;
   maxFileSize: number;
+  captureVideos: boolean;
+  maxVideoSize: number;
+  enabledVideoTypes: string[];
 }
+
+/**
+ * Default configuration used when the app has not provided a mirror yet.
+ */
+export const DEFAULT_EXTENSION_CONFIG: ExtensionConfig = {
+  ollamaEndpoint: 'http://localhost:11434',
+  language: 'zh-CN',
+  classificationConcurrency: 1,
+  classificationPaused: true,
+  maxFileSize: 50 * 1024 * 1024,
+  captureVideos: true,
+  maxVideoSize: DEFAULT_MAX_VIDEO_SIZE,
+  enabledVideoTypes: [...DEFAULT_ENABLED_VIDEO_TYPES],
+};
 
 export interface OllamaModel {
   name: string;

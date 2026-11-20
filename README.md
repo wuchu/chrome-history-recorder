@@ -20,8 +20,10 @@
 ```
 chrome-history-recorder/
 ├── packages/
-│   ├── extension/          # Chrome 扩展 → [详细说明](packages/extension/README.md)
-│   └── vfs-service/        # VFS Service (WebSocket + HTTP Server) → [详细说明](packages/vfs-service/README.md)
+│   ├── extension/          # Chrome 扩展（薄 UX 层）→ [详细说明](packages/extension/README.md)
+│   ├── app/                # 长驻后端：启动、调度、配置、事件总线
+│   ├── ai/                 # Ollama 分类 / 重命名 / 翻译 / 健康 / 模型
+│   └── vfs/                # 存储与传输（VFSAPI、SQLite/blob、WS/HTTP）
 ├── openspec/               # 项目规划和规范文档
 ├── package.json            # Monorepo 根配置
 └── pnpm-workspace.yaml     # pnpm 工作区配置
@@ -64,22 +66,22 @@ chrome-history-recorder/
 # 安装依赖
 pnpm install
 
-# 构建 VFS Service
-pnpm --filter vfs-service build
+# 构建后端（vfs → ai → app）
+pnpm build:app
 
 # 构建 Extension
 pnpm --filter extension build
 ```
 
-### 启动 VFS Service
+### 启动后端 App
 
-VFS Service 需要在 Extension 加载前启动：
+app 需要在 Extension 加载前启动（它负责 WebSocket + HTTP 服务、任务调度和配置）：
 
 ```bash
-# 启动 VFS Service（WebSocket + HTTP Server）
-pnpm --filter vfs-service start
+# 启动 app（WebSocket + HTTP Server + 调度器）
+pnpm --filter app start
 
-# 或使用开发模式（监听代码变化）
+# 或使用开发模式（同时启动 app 与 extension）
 pnpm dev
 ```
 
@@ -130,10 +132,12 @@ AI 分类会在捕获文件后加入本地 VFS 分类队列。扩展 Options 页
 
 ## 子模块文档
 
-| 模块        | 说明                                                  | 文档                                        |
-| ----------- | ----------------------------------------------------- | ------------------------------------------- |
-| extension   | Chrome 扩展，Side Panel 媒体浏览与 Background AI 分类 | [README.md](packages/extension/README.md)   |
-| vfs-service | VFS Service（WebSocket + HTTP、队列与元数据存储）     | [README.md](packages/vfs-service/README.md) |
+| 模块      | 说明                                            | 文档                                      |
+| --------- | ----------------------------------------------- | ----------------------------------------- |
+| extension | Chrome 扩展，Side Panel 媒体浏览、CDP 捕获与 UI | [README.md](packages/extension/README.md) |
+| app       | 长驻后端：启动、任务调度、配置真源、事件总线    | `packages/app/`                           |
+| ai        | Ollama 分类 / 重命名 / 翻译 / 健康 / 模型       | `packages/ai/`                            |
+| vfs       | 存储与传输（VFSAPI、SQLite/blob、WS/HTTP）      | `packages/vfs/`                           |
 
 ## VFS Service 端点
 
@@ -208,15 +212,17 @@ pnpm dev:no-browser
 
 # 单独启动各组件
 pnpm --filter extension dev          # 启动 Extension 开发模式
-pnpm --filter vfs-service dev        # 监听 VFS Service 代码变化
-pnpm --filter vfs-service dev:start  # 启动 VFS Service
+pnpm --filter app dev                # 监听 app 代码变化
+pnpm --filter app dev:start          # 启动 app
 ```
 
 ### 测试
 
 ```bash
-# 运行 VFS Service 测试
-pnpm --filter vfs-service test
+# 运行后端测试
+pnpm --filter vfs test
+pnpm --filter ai test
+pnpm --filter app test
 
 # 运行 Extension 测试
 pnpm --filter extension test
@@ -232,7 +238,9 @@ pnpm test
 pnpm build
 
 # 或单独构建
-pnpm --filter vfs-service build
+pnpm --filter vfs build
+pnpm --filter ai build
+pnpm --filter app build
 pnpm --filter extension build
 ```
 

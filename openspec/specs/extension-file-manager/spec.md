@@ -9,39 +9,40 @@ Extension 内置的文件管理逻辑，通过调度 VFS 实现本地媒体资�
 
 ### Requirement: Extension Background manages file operations
 
-The Extension Background Service Worker SHALL coordinate all file operations through the VFS Service Native Messaging client.
+The Extension Background Service Worker SHALL capture media and relay file operations to the app, which owns storage and event emission.
 
 #### Scenario: Capture and save image from network
-- **WHEN** Content Script detects image response with valid MIME type
-- **THEN** Background receives ArrayBuffer from Content Script via chrome.runtime.sendMessage, calculates hash, calls VFS.saveFile, and broadcasts 'file:captured' event to DevTools Panel
+- **WHEN** the CDP capture controller detects an image response with a valid MIME type
+- **THEN** Background captures the bytes and sends them to the app via `saveFile` (or `POST /upload`)
+- **AND** the app stores the file and broadcasts `file:captured`; the extension relays the event to the UI
 
 #### Scenario: List captured files
-- **WHEN** DevTools Panel requests file list via chrome.runtime.sendMessage
-- **THEN** Background calls VFS.listFiles with pagination parameters and returns result to Panel
+- **WHEN** the UI requests a file list
+- **THEN** Background relays the request to the app's `listFiles` and returns the result
 
 #### Scenario: List files by tag
-- **WHEN** DevTools Panel requests file list with { tag: 'images' } or { tag: 'uncategorized' } or { tag: '<user-tag>' }
-- **THEN** Background calls VFS.listFiles with the tag parameter and returns filtered results to Panel
+- **WHEN** the UI requests a file list with a tag filter
+- **THEN** Background relays the request to the app's `listFiles` with the tag parameter and returns filtered results
 
 #### Scenario: Delete file from UI
-- **WHEN** User clicks delete button in DevTools Panel
-- **THEN** Panel sends message to Background, Background calls VFS.deleteFile, and Background broadcasts 'file:deleted' event
+- **WHEN** the user deletes a file
+- **THEN** Background relays the request to the app's `deleteFile`, and the app broadcasts `file:deleted`
 
 ### Requirement: Extension Background provides file event broadcasting
 
-The Extension Background Service Worker SHALL broadcast file events to connected DevTools Panels using chrome.runtime.sendMessage.
+The Extension Background Service Worker SHALL relay app-originated file events to connected UI panels using `chrome.runtime.sendMessage`.
 
 #### Scenario: Broadcast file captured event
-- **WHEN** File is successfully saved to VFS
-- **THEN** Background sends { type: 'file:captured', data: { hash, mimeType, size, ... } } to all connected Panels
+- **WHEN** the app broadcasts a `file:captured` event over the WebSocket
+- **THEN** Background relays `{ type: 'file:captured', data: { hash, mimeType, size, ... } }` to connected panels
 
 #### Scenario: Broadcast file classified event
-- **WHEN** AI classification completes
-- **THEN** Background sends { type: 'file:classified', data: { hash, category, aiFilename, ... } } to all connected Panels
+- **WHEN** the app broadcasts a `file:classified` event
+- **THEN** Background relays `{ type: 'file:classified', data: { hash, tags, aiFilename, ... } }` to connected panels
 
 #### Scenario: Broadcast file deleted event
-- **WHEN** File is deleted from VFS
-- **THEN** Background sends { type: 'file:deleted', data: { hash } } to all connected Panels
+- **WHEN** the app broadcasts a `file:deleted` event
+- **THEN** Background relays `{ type: 'file:deleted', data: { hash } }` to connected panels
 
 ### Requirement: Extension Background handles thumbnail requests
 

@@ -1,5 +1,10 @@
 import type { FileManager } from './file-manager';
-import type { TaskEngine } from './tasks/engine';
+import {
+  DEFAULT_ENABLED_VIDEO_TYPES,
+  DEFAULT_MAX_VIDEO_SIZE,
+  type ExtensionConfig,
+} from '../shared/extension-runtime';
+import { getExistingVideoDownloadManager } from './video-download';
 
 type CaptureStatus = 'idle' | 'capturing' | 'error';
 
@@ -24,10 +29,23 @@ interface CandidateRequest {
   capturedAt: string;
 }
 
+/**
+ * A detected direct video resource to be downloaded by the video pipeline.
+ */
+export interface VideoCandidate {
+  tabId: number;
+  url: string;
+  mimeType: string;
+  size: number;
+  maxBytes: number;
+  capturedAt: string;
+}
+
 interface CdpResponse {
   url?: string;
   headers?: Record<string, unknown>;
   mimeType?: string;
+  status?: number;
 }
 
 interface CdpEventParams {
@@ -37,13 +55,22 @@ interface CdpEventParams {
 
 interface CaptureDependencies {
   getFileManager: () => FileManager;
-  getScheduler: () => TaskEngine;
+  onVideoCandidate?: (candidate: VideoCandidate) => void;
+}
+
+export interface CaptureConfig {
+  captureVideos: boolean;
+  maxVideoSize: number;
+  enabledVideoTypes: string[];
 }
 
 const DEBUGGER_PROTOCOL_VERSION = '1.3';
 const MAX_IMAGE_SIZE = 50 * 1024 * 1024;
 const MIN_IMAGE_SIZE = 10 * 1024;
+const MIN_VIDEO_SIZE = 1 * 1024 * 1024;
+const MAX_VIDEO_SKIP_EVENTS_PER_PAGE = 10;
 const SVG_MIME_TYPE = 'image/svg+xml';
+const GENERIC_MIME_TYPES = new Set(['application/octet-stream', 'binary/octet-stream']);
 const SUPPORTED_IMAGE_TYPES = new Set([
   'image/jpeg',
   'image/png',
@@ -91,7 +118,157 @@ function inferMimeType(url: string): string | null {
   if (pathname.endsWith('.tif') || pathname.endsWith('.tiff')) return 'image/tiff';
   if (pathname.endsWith('.ico')) return 'image/x-icon';
   if (pathname.endsWith('.svg')) return SVG_MIME_TYPE;
+  if (pathname.endsWith('.mp4') || pathname.endsWith('.m4v')) return 'video/mp4';
+  if (pathname.endsWith('.webm')) return 'video/webm';
+  if (pathname.endsWith('.mov')) return 'video/quicktime';
+  if (pathname.endsWith('.avi')) return 'video/x-msvideo';
+  if (pathname.endsWith('.ogv')) return 'video/ogg';
+  if (pathname.endsWith('.mkv')) return 'video/x-matroska';
   return null;
+}
+
+/**
+ * Resolve the media type, preferring the response header but falling back to
+ * the debugger-reported type when the header is missing or generic.
+ */
+export function resolveMimeType(
+  headerMimeType: string | undefined,
+  sniffedMimeType: string | undefined,
+  url: string
+): string | null {
+  const header = headerMimeType ? stripMimeParameters(headerMimeType) : '';
+  const sniffed = sniffedMimeType ? stripMimeParameters(sniffedMimeType) : '';
+
+  if (header && !GENERIC_MIME_TYPES.has(header)) return header;
+  if (sniffed && !GENERIC_MIME_TYPES.has(sniffed)) return sniffed;
+  if (header) return header;
+  if (sniffed) return sniffed;
+  return inferMimeType(url);
+}
+
+interface ResourceRange {
+  start: number;
+  end: number;
+  total: number;
+}
+
+function parseContentRange(headers: Record<string, string>): ResourceRange | null {
+  const contentRange = getHeader(headers, 'content-range');
+  if (!contentRange) return null;
+
+  const match = /^bytes\s+(\d+)-(\d+)\/(\d+)$/i.exec(contentRange.trim());
+  if (!match) return null;
+
+  return {
+    start: Number.parseInt(match[1], 10),
+    end: Number.parseInt(match[2], 10),
+    total: Number.parseInt(match[3], 10),
+  };
+}
+
+/**
+ * Determine the total resource size and whether the response carried a byte
+ * range. A ranged response still identifies a resource that can be fetched in
+ * full without a `Range` header.
+ */
+export function analyzeResource(
+  _status: number | undefined,
+  headers: Record<string, string>,
+  contentLength: number
+): { ranged: boolean; totalSize: number } {
+  const range = parseContentRange(headers);
+  if (range) {
+    return { ranged: true, totalSize: range.total };
+  }
+
+  return { ranged: false, totalSize: contentLength };
+}
+
+export interface VideoEvaluationInput {
+  url: string;
+  mimeType: string;
+  status?: number;
+  headers: Record<string, string>;
+  contentLength: number;
+  config: CaptureConfig;
+  seenUrls: Set<string>;
+}
+
+export interface VideoEvaluation {
+  eligible: boolean;
+  /** Skip silently without broadcasting a reason. */
+  silent?: boolean;
+  reason?: string;
+  totalSize: number;
+}
+
+/**
+ * Decide whether a detected video response should become a download candidate.
+ */
+export function evaluateVideoResponse(input: VideoEvaluationInput): VideoEvaluation {
+  const { url, mimeType, status, headers, contentLength, config, seenUrls } = input;
+  const { ranged, totalSize } = analyzeResource(status, headers, contentLength);
+
+  if (!config.captureVideos) {
+    return { eligible: false, silent: true, totalSize };
+  }
+
+  if (!config.enabledVideoTypes.includes(mimeType)) {
+    return { eligible: false, silent: true, totalSize };
+  }
+
+  let protocol: string;
+  try {
+    protocol = new URL(url).protocol;
+  } catch {
+    return { eligible: false, silent: true, totalSize };
+  }
+
+  if (protocol !== 'http:' && protocol !== 'https:') {
+    return { eligible: false, silent: true, totalSize };
+  }
+
+  // A 200 response is complete; a 206 response is a byte range of the same
+  // resource. Both identify a downloadable resource — the pipeline always
+  // fetches the URL in full without a Range header. A 206 without a usable
+  // Content-Range leaves the total size unknown, so it is not a candidate.
+  if (status !== 200 && status !== 206) {
+    return {
+      eligible: false,
+      reason: `Unsupported video response status ${status ?? 'unknown'}`,
+      totalSize,
+    };
+  }
+
+  if (status === 206 && !ranged) {
+    return {
+      eligible: false,
+      reason: 'Partial video response without a usable Content-Range',
+      totalSize,
+    };
+  }
+
+  if (totalSize > 0 && totalSize < MIN_VIDEO_SIZE) {
+    return {
+      eligible: false,
+      reason: `Video smaller than ${MIN_VIDEO_SIZE} bytes`,
+      totalSize,
+    };
+  }
+
+  if (totalSize > config.maxVideoSize) {
+    return {
+      eligible: false,
+      reason: `Video larger than ${config.maxVideoSize} bytes`,
+      totalSize,
+    };
+  }
+
+  if (seenUrls.has(url)) {
+    return { eligible: false, silent: true, totalSize };
+  }
+
+  return { eligible: true, totalSize };
 }
 
 function decodeBody(body: string, base64Encoded: boolean): number[] {
@@ -110,14 +287,35 @@ function decodeBody(body: string, base64Encoded: boolean): number[] {
 export class DebuggerCaptureController {
   private states = new Map<number, CaptureState>();
   private candidates = new Map<string, CandidateRequest>();
+  private videoUrls = new Map<number, Set<string>>();
+  private videoSkipEvents = new Map<number, number>();
+  private config: CaptureConfig;
   private readonly dependencies: CaptureDependencies;
   private readonly boundDebuggerEvent = this.handleDebuggerEvent.bind(this);
   private readonly boundDebuggerDetach = this.handleDebuggerDetach.bind(this);
   private readonly boundTabRemoved = this.handleTabRemoved.bind(this);
   private readonly boundTabUpdated = this.handleTabUpdated.bind(this);
 
-  constructor(dependencies: CaptureDependencies) {
+  constructor(dependencies: CaptureDependencies, config?: Partial<CaptureConfig>) {
     this.dependencies = dependencies;
+    this.config = {
+      captureVideos: config?.captureVideos ?? true,
+      maxVideoSize: config?.maxVideoSize ?? DEFAULT_MAX_VIDEO_SIZE,
+      enabledVideoTypes: config?.enabledVideoTypes ?? [...DEFAULT_ENABLED_VIDEO_TYPES],
+    };
+  }
+
+  /**
+   * Apply updated video capture settings without restarting capture.
+   */
+  updateConfig(
+    config: Pick<ExtensionConfig, 'captureVideos' | 'maxVideoSize' | 'enabledVideoTypes'>
+  ): void {
+    this.config = {
+      captureVideos: config.captureVideos,
+      maxVideoSize: config.maxVideoSize,
+      enabledVideoTypes: config.enabledVideoTypes,
+    };
   }
 
   initialize(): void {
@@ -166,6 +364,8 @@ export class DebuggerCaptureController {
     state.error = undefined;
 
     this.clearCandidatesForTab(tabId);
+    this.clearVideoUrlsForTab(tabId);
+    getExistingVideoDownloadManager()?.cancelTab(tabId);
 
     if (state.debuggerAttached) {
       try {
@@ -222,14 +422,18 @@ export class DebuggerCaptureController {
     if (!requestId || !url || url.startsWith('data:') || url.startsWith('blob:')) return;
 
     const headers = normalizeHeaders(response?.headers);
-    const headerMimeType = getHeader(headers, 'content-type');
-    const rawMimeType = headerMimeType ?? response?.mimeType ?? inferMimeType(url);
-    if (!rawMimeType) return;
+    const mimeType = resolveMimeType(getHeader(headers, 'content-type'), response?.mimeType, url);
+    if (!mimeType) return;
 
-    const mimeType = stripMimeParameters(rawMimeType);
-    const size = Number.parseInt(getHeader(headers, 'content-length') ?? '0', 10) || 0;
+    const contentLength = Number.parseInt(getHeader(headers, 'content-length') ?? '0', 10) || 0;
 
-    if (!this.shouldCapture(tabId, mimeType, size, url)) return;
+    if (mimeType.startsWith('video/')) {
+      this.handleVideoResponse(tabId, url, mimeType, response?.status, headers, contentLength);
+      return;
+    }
+
+    const size = contentLength;
+    if (!this.shouldCaptureImage(tabId, mimeType, size, url)) return;
 
     this.candidates.set(this.candidateKey(tabId, requestId), {
       requestId,
@@ -237,6 +441,47 @@ export class DebuggerCaptureController {
       url,
       mimeType,
       size,
+      capturedAt: new Date().toISOString(),
+    });
+  }
+
+  /**
+   * Evaluate a video response and forward whole-resource candidates to the
+   * download pipeline. The page's own response body is never read.
+   */
+  private handleVideoResponse(
+    tabId: number,
+    url: string,
+    mimeType: string,
+    status: number | undefined,
+    headers: Record<string, string>,
+    contentLength: number
+  ): void {
+    const urls = this.getVideoUrls(tabId);
+    const evaluation = evaluateVideoResponse({
+      url,
+      mimeType,
+      status,
+      headers,
+      contentLength,
+      config: this.config,
+      seenUrls: urls,
+    });
+
+    if (!evaluation.eligible) {
+      if (evaluation.reason) {
+        this.recordVideoSkipped(tabId, url, evaluation.reason);
+      }
+      return;
+    }
+
+    urls.add(url);
+    this.dependencies.onVideoCandidate?.({
+      tabId,
+      url,
+      mimeType,
+      size: evaluation.totalSize,
+      maxBytes: this.config.maxVideoSize,
       capturedAt: new Date().toISOString(),
     });
   }
@@ -265,7 +510,6 @@ export class DebuggerCaptureController {
       }
 
       const fileManager = this.dependencies.getFileManager();
-      const scheduler = this.dependencies.getScheduler();
       const result = await fileManager.handleCaptureMedia({
         buffer,
         mimeType: candidate.mimeType,
@@ -273,10 +517,7 @@ export class DebuggerCaptureController {
         capturedAt: candidate.capturedAt,
       });
 
-      if (!result.duplicate) {
-        await scheduler.enqueuePair(result.hash);
-      }
-
+      // The app auto-enqueues AI tasks when it stores the file.
       const state = this.ensureState(tabId);
       state.captureCount += result.duplicate ? 0 : 1;
       state.lastCaptureTime = candidate.capturedAt;
@@ -299,7 +540,7 @@ export class DebuggerCaptureController {
     this.candidates.delete(this.candidateKey(tabId, requestId));
   }
 
-  private shouldCapture(tabId: number, mimeType: string, size: number, url: string): boolean {
+  private shouldCaptureImage(tabId: number, mimeType: string, size: number, url: string): boolean {
     const state = this.ensureState(tabId);
 
     if (mimeType === SVG_MIME_TYPE) {
@@ -327,6 +568,63 @@ export class DebuggerCaptureController {
     return true;
   }
 
+  /**
+   * Record an increment for a skipped video candidate and notify listeners.
+   */
+  recordVideoSkipped(tabId: number, url: string, reason: string): void {
+    const state = this.ensureState(tabId);
+    state.skippedCount += 1;
+
+    // Adaptive-streaming pages can produce hundreds of partial responses.
+    // Count them all, but broadcast only the first few reasons.
+    const broadcasts = this.videoSkipEvents.get(tabId) ?? 0;
+    if (broadcasts >= MAX_VIDEO_SKIP_EVENTS_PER_PAGE) return;
+
+    this.videoSkipEvents.set(tabId, broadcasts + 1);
+    this.broadcastSkipped(tabId, url, reason);
+    this.broadcastState(tabId);
+  }
+
+  /**
+   * Record a successfully stored video.
+   */
+  recordVideoCaptured(tabId: number, capturedAt: string): void {
+    const state = this.ensureState(tabId);
+    state.captureCount += 1;
+    state.lastCaptureTime = capturedAt;
+    state.status = 'capturing';
+    state.error = undefined;
+    this.broadcastState(tabId);
+  }
+
+  /**
+   * Record a failed video download or upload.
+   */
+  recordVideoFailed(tabId: number, url: string, message: string): void {
+    const state = this.ensureState(tabId);
+    state.failedCount += 1;
+    state.error = message;
+    this.broadcastError(tabId, message, url);
+    this.broadcastState(tabId);
+  }
+
+  /**
+   * Get the per-tab set of video URLs already seen in this page session.
+   */
+  private getVideoUrls(tabId: number): Set<string> {
+    let urls = this.videoUrls.get(tabId);
+    if (!urls) {
+      urls = new Set();
+      this.videoUrls.set(tabId, urls);
+    }
+    return urls;
+  }
+
+  private clearVideoUrlsForTab(tabId: number): void {
+    this.videoUrls.delete(tabId);
+    this.videoSkipEvents.delete(tabId);
+  }
+
   private handleDebuggerDetach(source: chrome.debugger.Debuggee, reason: string): void {
     if (typeof source.tabId !== 'number') return;
     const state = this.ensureState(source.tabId);
@@ -335,11 +633,14 @@ export class DebuggerCaptureController {
     state.status = reason === 'target_closed' ? 'idle' : 'error';
     state.error = reason === 'target_closed' ? undefined : `Debugger detached: ${reason}`;
     this.clearCandidatesForTab(source.tabId);
+    this.clearVideoUrlsForTab(source.tabId);
     this.broadcastState(source.tabId);
   }
 
   private handleTabRemoved(tabId: number): void {
     this.clearCandidatesForTab(tabId);
+    this.clearVideoUrlsForTab(tabId);
+    getExistingVideoDownloadManager()?.cancelTab(tabId);
     this.states.delete(tabId);
   }
 
@@ -354,6 +655,8 @@ export class DebuggerCaptureController {
     state.lastCaptureTime = undefined;
     state.error = undefined;
     this.clearCandidatesForTab(tabId);
+    this.clearVideoUrlsForTab(tabId);
+    getExistingVideoDownloadManager()?.cancelTab(tabId);
     if (state.isEnabled && state.debuggerAttached) {
       void this.enableNetwork(tabId).catch((error) => {
         const message =
@@ -404,9 +707,10 @@ export class DebuggerCaptureController {
 let captureController: DebuggerCaptureController | null = null;
 
 export function initDebuggerCaptureController(
-  dependencies: CaptureDependencies
+  dependencies: CaptureDependencies,
+  config?: Partial<CaptureConfig>
 ): DebuggerCaptureController {
-  captureController = new DebuggerCaptureController(dependencies);
+  captureController = new DebuggerCaptureController(dependencies, config);
   captureController.initialize();
   return captureController;
 }
@@ -415,5 +719,9 @@ export function getDebuggerCaptureController(): DebuggerCaptureController {
   if (!captureController) {
     throw new Error('Debugger capture controller has not been initialized');
   }
+  return captureController;
+}
+
+export function getExistingDebuggerCaptureController(): DebuggerCaptureController | null {
   return captureController;
 }
