@@ -17,7 +17,7 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     root: '.',
-    include: ['packages/**/test/**/*.test.ts'],
+    include: ['packages/**/test/**/*.test.{ts,tsx}'],
     exclude: ['node_modules/**', '**/node_modules/**', 'dist', '.wxt'],
     coverage: {
       provider: 'v8',

@@ -134,9 +134,5 @@ export declare class OllamaClient {
      * Rename task: one vision call that produces a display filename only.
      */
     renameByHash(hash: string): Promise<RenameResult>;
-    /**
-     * Translate tag names to Chinese
-     */
-    translateTags(text: string): Promise<string>;
 }
 //# sourceMappingURL=ollama-client.d.ts.map

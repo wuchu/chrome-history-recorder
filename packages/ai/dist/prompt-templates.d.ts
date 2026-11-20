@@ -8,7 +8,6 @@
 export interface PromptTemplates {
     classify?: string;
     rename?: string;
-    translate?: string;
 }
 export declare const DEFAULT_PROMPT_TEMPLATES: Required<PromptTemplates>;
 /**

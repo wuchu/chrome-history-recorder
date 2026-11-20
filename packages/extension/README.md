@@ -1,15 +1,30 @@
 # Chrome Media Recorder Extension
 
-Chrome 扩展，通过 DevTools API 拦截网页媒体请求并保存到本地 VFS Service。
+Chrome 扩展，通过 `chrome.debugger` 拦截当前标签页的网络媒体响应，并保存到本地 VFS 服务。界面分为两个明确的表面：
+
+- **Side Panel（捕获驾驶舱）**：只监控当前标签页上的单次捕获会话，显示实时媒体流、会话指标和可展开的事件日志。
+- **Options（控制台）**：全局媒体库、标签治理、AI 任务和程序配置。
 
 ## 功能
 
-- DevTools 集成面板，实时监控媒体捕获和分类进度
-- Extension Options 配置页，集中管理 Ollama、AI 分类、文件名风格和队列维护
-- 智能去重（SHA-256 内容哈希）
-- 支持图片（JPEG、PNG、WebP、GIF、BMP）和视频（MP4、WebM、MOV、AVI）
-- 深色/浅色主题自动适配
-- 多语言支持（跟随 Chrome DevTools 语言）
+- **单捕获会话**：全局同时只允许一个标签页捕获；切换捕获标签页需要显式确认。
+- **标签页绑定**：Side Panel 始终显示当前标签页身份；会话在另一个标签页运行时显示切换/停止横幅。
+- **实时诊断**：保存、重复、跳过、失败、视频候选/结果和 AI 状态都会进入会话事件日志。
+- **全局媒体库**：在 Options 中浏览、筛选、查看详情、删除和重新入队。
+- **智能去重**：基于 SHA-256 内容哈希。
+- **媒体格式**：图片（JPEG、PNG、WebP、GIF、BMP）和视频（MP4、WebM、MOV、AVI）。
+- **深色/浅色主题**与多语言支持。
+
+## 页面职责
+
+| 页面             | 职责                                                               | 不做的事                              |
+| ---------------- | ------------------------------------------------------------------ | ------------------------------------- |
+| Side Panel       | 当前标签页身份、捕获开关、会话指标、实时捕获流、事件日志、会话总结 | 全局历史瀑布流、标签治理、AI/任务配置 |
+| Options > 概览   | 服务状态、存储与媒体统计、AI 队列快照、最近捕获、只读会话状态      | 启动/停止捕获                         |
+| Options > 媒体库 | 全局历史媒体、标签筛选、详情、删除、重新分类/命名                  | 捕获控制                              |
+| Options > 标签   | AI 标签词表、置顶、重命名、合并、删除                              | —                                     |
+| Options > 任务   | AI 队列控制台、并发、重试/清空/重扫                                | —                                     |
+| Options > 设置   | 服务、视频捕获、Ollama、索引维护、提示词模板、主题                 | —                                     |
 
 ## 开发
 
@@ -24,19 +39,20 @@ pnpm build
 pnpm zip
 ```
 
-## 配置
+## 使用
 
-通过扩展 Options 页面配置：
+1. 启动本地 app（`pnpm dev` 或 `pnpm --filter app start`）。
+2. 在任意普通网页点击扩展图标，打开 Chrome 右侧 Side Panel。
+3. 点击「开始捕获」开始当前标签页的会话。
+4. 会话中可查看实时捕获流；展开「事件日志」查看跳过/失败原因。
+5. 切换到其他标签页时，Side Panel 会显示「另一个标签页正在捕获」横幅。
+6. 在 Side Panel 中打开媒体库或设置，会跳转到对应的 Options 控制台标签。
 
-| 配置项 | 说明 | 默认值 |
-| ------ | ---- | ------ |
-| Ollama 地址 | 本地 Ollama HTTP 地址 | http://localhost:11434 |
-| 视觉模型 | 用于后续 AI 分类的 Ollama 模型，选择后立即保存 | llava:7b |
-| AI 分类状态 | 调度器运行/暂停；默认暂停但捕获媒体仍可入队 | 暂停 |
-| 分类并发数 | 后台同时处理的分类任务数 | 1 |
-| 文件名风格 | AI 生成 `ai_filename` 的提示风格 | 自动 |
+全局只允许一个捕获会话。在另一个标签页开始捕获时，扩展会先要求确认，确认后停止旧会话并启动新会话。
 
-刷新 Ollama 模型列表只更新可选模型，不会覆盖当前已保存的模型选择。
+捕获启用时，Chrome 可能显示当前标签页正在被调试的提示；停止会话会释放该标签页的 debugger 会话。
+
+当前版本聚焦网络媒体响应：暂不支持 Canvas/WebGL 生成的 `data:` 图片、页面内组装的 `blob:` 图片，也不承诺还原复杂视频流、Range 分片或 MSE 播放内容。这些情况会尽量以跳过/失败事件显示在诊断日志中。
 
 ## 结构
 
@@ -44,19 +60,21 @@ pnpm zip
 extension/
 ├── src/
 │   ├── entrypoints/
-│   │   ├── background/        # Service Worker
-│   │   ├── devtools-panel/    # DevTools 媒体面板
-│   │   └── options/           # Options 配置页
-│   ├── shared/                # 前端共享运行时消息客户端
-│   └── utils/                 # 工具模块
+│   │   ├── background/        # Service Worker、会话存储、消息转发
+│   │   ├── sidepanel/         # 捕获驾驶舱
+│   │   ├── options/           # 控制台与全局媒体库
+│   │   ├── media-browser/     # 共享媒体网格、详情与事件 hooks
+│   │   └── offscreen/         # 视频下载执行上下文
+│   ├── background/            # CDP 捕获、视频下载、VFS 中继、会话存储
+│   └── shared/                # 共享运行时消息与类型
 └── wxt.config.ts              # WXT 配置
 ```
 
 ## 技术栈
 
-- WXT 0.20+ (扩展框架)
+- WXT 0.20+
 - React 18+
 - TypeScript 5.6+
-- Ant Design (Options UI)
+- Ant Design（Options UI）
 - CSS Modules
-- i18next (国际化)
+- i18next

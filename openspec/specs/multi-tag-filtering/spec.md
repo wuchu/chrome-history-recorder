@@ -2,22 +2,22 @@
 
 ## Purpose
 
-Provide tag-based filtering in the DevTools Panel so users can browse captured media by system and user-defined tags.
+Provide tag-based filtering in the Options media library so users can browse captured media by system and user-defined tags.
 
 ## Requirements
 
 ### Requirement: Scrollable tag tab bar
-The system SHALL provide a scrollable tab bar for tag-based filtering in DevTools Panel.
+The system SHALL provide a scrollable tab bar for tag-based filtering in the Options media library.
 
 #### Scenario: Always show "All" tab
 - **WHEN** the media grid is displayed
 - **THEN** the system SHALL always show an "All" tab as the first option
 - **AND** the "All" tab SHALL show all media files when selected
 
-#### Scenario: Display only tags with files
+#### Scenario: Display only user tags with files
 - **WHEN** the tag tab bar is rendered
-- **THEN** the system SHALL only display tags that have at least one associated media file
-- **AND** empty tags SHALL NOT be shown in the tab bar
+- **THEN** the system SHALL only display user-defined tags that have at least one associated media file
+- **AND** system tabs SHALL remain visible as defined by the system-tabs-always-visible capability
 
 #### Scenario: Tab order
 - **WHEN** tags are displayed in the tab bar

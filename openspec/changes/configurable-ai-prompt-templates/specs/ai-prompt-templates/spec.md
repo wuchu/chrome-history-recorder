@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Prompt template storage
-The system SHALL store AI prompt templates as part of extension configuration, with one template per prompt type (`classify`, `rename`, `translate`).
+The system SHALL store AI prompt templates as part of extension configuration, with one template per prompt type (`classify`, `rename`).
 
 #### Scenario: Templates are optional
 - **WHEN** extension configuration is loaded
@@ -17,10 +17,6 @@ The system SHALL substitute `{{placeholder}}` variables into prompt templates be
 #### Scenario: Substitute classify placeholder
 - **WHEN** the classify template contains `{{vocabulary}}`
 - **THEN** the system SHALL replace it with the bounded tag vocabulary block
-
-#### Scenario: Substitute translate placeholder
-- **WHEN** the translate template contains `{{input}}`
-- **THEN** the system SHALL replace it with the text to translate
 
 #### Scenario: Unknown placeholders are preserved
 - **WHEN** a template contains a placeholder that has no matching value

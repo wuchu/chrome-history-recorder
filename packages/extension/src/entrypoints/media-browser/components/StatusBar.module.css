@@ -2,23 +2,23 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 4px 8px;
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border-color);
+  gap: 8px;
+  padding: 2px 8px 6px 12px;
 }
 
 .leftSection {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
 }
 
 .statusDot {
-  width: 10px;
-  height: 10px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   display: inline-block;
-  flex: 0 0 10px;
+  flex: 0 0 7px;
 }
 
 .online {
@@ -33,7 +33,8 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: 10px;
+  color: var(--text-secondary);
 }
 
 .vfsStatus {
@@ -51,7 +52,7 @@
 }
 
 .vfsText {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--text-secondary);
 }
 
@@ -70,7 +71,7 @@
 }
 
 .ollamaText {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--text-secondary);
 }
 
@@ -144,16 +145,6 @@
   background: var(--button-hover);
 }
 
-.active {
-  background: var(--accent-color);
-  color: white;
-  border-color: var(--accent-color);
-}
-
-.active:hover:not(:disabled) {
-  background: var(--accent-hover);
-}
-
 .captureButton:disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -162,18 +153,24 @@
 .rightSection {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 2px;
+  flex: 0 0 auto;
 }
 
 .iconButton {
-  padding: 4px 6px;
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
   cursor: pointer;
-  background: var(--button-bg);
-  color: var(--text-primary);
-  font-size: 16px;
-  transition: all 0.15s ease;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 15px;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -182,9 +179,38 @@
 
 .iconButton:hover:not(:disabled) {
   background: var(--button-hover);
+  color: var(--text-primary);
+}
+
+:global([data-theme='dark']) .iconButton:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.iconButton:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.iconButton.active {
+  background: rgba(26, 115, 232, 0.14);
+  border-color: rgba(26, 115, 232, 0.45);
+  color: var(--accent-color);
+}
+
+.iconButton.active:hover:not(:disabled) {
+  background: rgba(26, 115, 232, 0.22);
+}
+
+:global([data-theme='dark']) .iconButton.active {
+  background: rgba(107, 182, 255, 0.14);
+  border-color: rgba(107, 182, 255, 0.5);
+  color: #6bb6ff;
+}
+
+:global([data-theme='dark']) .iconButton.active:hover:not(:disabled) {
+  background: rgba(107, 182, 255, 0.22);
 }
 
 .iconButton:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: not-allowed;
 }

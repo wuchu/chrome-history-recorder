@@ -21,11 +21,15 @@ export interface VideoDownloadResult {
   size?: number;
   mimeType?: string;
   error?: string;
+  pageUrl?: string;
 }
 
 interface VideoDownloadDependencies {
   recordCaptured: (tabId: number, capturedAt: string) => void;
   recordFailed: (tabId: number, url: string, message: string) => void;
+  recordDownloadStarted?: (tabId: number) => void;
+  recordDownloadCancelled?: (tabId: number) => void;
+  recordResult?: (result: VideoDownloadResult) => void;
 }
 
 interface VideoJob extends VideoCandidate {
@@ -75,6 +79,14 @@ export class VideoDownloadManager {
 
     const tabId = job?.tabId ?? result.tabId;
     const url = job?.url ?? result.url;
+    const pageUrl = job?.pageUrl ?? result.pageUrl;
+
+    this.dependencies.recordResult?.({
+      ...result,
+      tabId,
+      url,
+      pageUrl,
+    });
 
     if (result.error) {
       this.dependencies.recordFailed(tabId, url, result.error);
@@ -91,12 +103,17 @@ export class VideoDownloadManager {
    * Drop pending jobs for a tab and abort its active downloads.
    */
   cancelTab(tabId: number): void {
+    const queued = this.queue.filter((job) => job.tabId === tabId);
     this.queue = this.queue.filter((job) => job.tabId !== tabId);
+    for (const _job of queued) {
+      this.dependencies.recordDownloadCancelled?.(tabId);
+    }
 
     for (const [jobId, job] of this.active) {
       if (job.tabId !== tabId) continue;
       this.active.delete(jobId);
       this.cancelled.add(jobId);
+      this.dependencies.recordDownloadCancelled?.(tabId);
       void this.sendToOffscreen({ type: 'abort', jobId }).catch((error) => {
         console.warn('[VideoDownload] Failed to abort download:', error);
       });
@@ -125,6 +142,7 @@ export class VideoDownloadManager {
 
       try {
         await this.ensureOffscreen();
+        this.dependencies.recordDownloadStarted?.(job.tabId);
         await this.sendToOffscreen({
           type: 'start',
           job: {
@@ -141,6 +159,14 @@ export class VideoDownloadManager {
         this.active.delete(job.jobId);
         const message = error instanceof Error ? error.message : 'Failed to start download';
         this.dependencies.recordFailed(job.tabId, job.url, message);
+        this.dependencies.recordResult?.({
+          jobId: job.jobId,
+          tabId: job.tabId,
+          url: job.url,
+          capturedAt: job.capturedAt,
+          pageUrl: job.pageUrl,
+          error: message,
+        });
       }
     }
 

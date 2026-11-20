@@ -4,7 +4,7 @@
  * Renders a single media item in the Masonry grid.
  */
 
-import { memo, useEffect, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { CombinedMediaItem } from '../hooks/useCombinedMedia';
 import { getPrimaryTag } from '../../../shared/tag-utils';
@@ -17,13 +17,20 @@ interface MasonryItemProps {
   item?: CombinedMediaItem;
   onClick?: () => void;
   onDelete?: (hash: string) => void;
+  onDeleteRequest?: (hash: string) => void;
 }
 
 /**
  * MasonryItem main component
  */
-const MasonryItem = memo(function MasonryItem({ item, onClick, onDelete }: MasonryItemProps) {
+const MasonryItem = memo(function MasonryItem({
+  item,
+  onClick,
+  onDelete,
+  onDeleteRequest,
+}: MasonryItemProps) {
   const { t } = useTranslation();
+  const imageRef = useRef<HTMLImageElement>(null);
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageError, setImageError] = useState(false);
   const itemHash = item?.hash;
@@ -31,6 +38,19 @@ const MasonryItem = memo(function MasonryItem({ item, onClick, onDelete }: Mason
   useEffect(() => {
     setImageLoaded(false);
     setImageError(false);
+  }, [itemHash]);
+
+  // Cached thumbnails can finish loading before React attaches `onLoad`
+  // (especially after a remount). Pick that state up directly from the element
+  // so cached images never get stranded on the "loading" placeholder.
+  useEffect(() => {
+    const img = imageRef.current;
+    if (!img?.complete) return;
+    if (img.naturalWidth > 0) {
+      setImageLoaded(true);
+    } else {
+      setImageError(true);
+    }
   }, [itemHash]);
 
   if (!item?.hash || !item.mimeType) {
@@ -52,8 +72,12 @@ const MasonryItem = memo(function MasonryItem({ item, onClick, onDelete }: Mason
 
   const handleDelete = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (window.confirm(t('delete.confirm'))) {
-      onDelete?.(item.hash);
+    if (onDeleteRequest) {
+      onDeleteRequest(item.hash);
+      return;
+    }
+    if (onDelete && window.confirm(t('delete.confirm'))) {
+      onDelete(item.hash);
     }
   };
 
@@ -66,18 +90,21 @@ const MasonryItem = memo(function MasonryItem({ item, onClick, onDelete }: Mason
             {isVideo ? <span className={styles.videoIcon}>🎬</span> : '加载失败'}
           </div>
         )}
+        {/* The grid is virtualized, so only visible items are mounted — lazy
+            loading just strands thumbnails that mount in a zero-width pane. */}
         {!imageError && (
           <img
+            ref={imageRef}
             src={thumbnailSrc}
             alt=""
             className={`${styles.thumbnail} ${imageLoaded ? styles.loaded : ''}`}
-            loading="lazy"
+            decoding="async"
             onLoad={handleImageLoad}
             onError={handleImageError}
           />
         )}
         {primaryTag && <span className={styles.tagBadge}>#{primaryTag}</span>}
-        {onDelete && (
+        {(onDelete || onDeleteRequest) && (
           <button
             type="button"
             className={styles.deleteButton}

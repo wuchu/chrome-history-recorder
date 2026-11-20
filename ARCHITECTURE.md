@@ -20,7 +20,7 @@ Chrome Media Recorder 使用 **四层**架构：薄 extension UX 层、长驻 ap
                ▼                                    ▼
 ┌──────────────────────── packages/app（长驻 Node 进程）──────────────┐
 │  bootstrap · 任务调度器 · 配置真源 · 事件总线                        │
-│    ├─ packages/ai：Ollama 分类 / 重命名 / 翻译 / 健康 / 模型          │
+│    ├─ packages/ai：Ollama 分类 / 重命名 / 健康 / 模型          │
 │    └─ packages/vfs：VFSAPI + SQLite/blob/thumbnail + WS/HTTP 服务    │
 └──────────────────────────────┬──────────────────────────────────────┘
                                ▼
@@ -35,11 +35,13 @@ Extension 只保留浏览器专属能力与界面，不再包含业务调度或 
 
 #### Side Panel / Options / Offscreen (UI Layer)
 
-- **职责**: 媒体网格、实时捕获流、任务/服务状态、配置界面、视频下载执行上下文
-- **技术**: React 18, TypeScript, CSS Modules, 扩展 offscreen document
+- **Side Panel（捕获驾驶舱）**: 当前标签页身份、单会话捕获控制、会话指标、实时捕获流、可展开事件日志、会话总结。
+- **Options（控制台）**: `概览 / 媒体库 / 标签 / 任务 / 设置` 五个 Tab；全局媒体库从 Side Panel 迁移到 Options，配置和标签治理在此分组。
+- **Offscreen**: 视频下载执行上下文。
+- **技术**: React 18, TypeScript, Ant Design (Options), CSS Modules, 扩展 offscreen document
 - **主要功能**:
   - 通过 HTTP URL 加载文件和缩略图
-  - 通过 `chrome.runtime` messaging 接收 Background 中继的事件
+  - 通过 `chrome.runtime` messaging 接收 Background 中继的事件和会话快照
   - 通过 Background RPC 读写 app 配置、调度器状态与 Ollama 模型
 
 #### Background Service Worker（薄层）
@@ -50,6 +52,7 @@ Extension 只保留浏览器专属能力与界面，不再包含业务调度或 
   - `VFSWebSocketClient`: 薄 RPC/事件客户端，不再持有调度或 Ollama 逻辑
   - `FileManager`: 捕获入库（图片 `saveFile`、视频 `POST /upload`）
   - `DebuggerCaptureController`: tab-scoped CDP 捕获与视频候选识别
+  - `CaptureSessionStore`: 单捕获会话、计数器、200 条事件日志、`chrome.storage.session` 快照
   - `VideoDownloadManager`: offscreen 下载队列、并发与取消
   - 配置镜像: 启动/重连时从 app 拉取，`config:updated` 时更新；真源在 app
 
@@ -79,7 +82,7 @@ Extension 只保留浏览器专属能力与界面，不再包含业务调度或 
 
 ### 3. AI（`packages/ai`）
 
-- `OllamaClient`: 分类、重命名、翻译、健康检查、模型列表
+- `OllamaClient`: 分类、重命名、健康检查、模型列表
 - 通过注入的 `MediaReader` 直接读取 `VFSAPI` 的缩略图/原图，不再经 WebSocket 传输图片字节
 - 分块 base64 编码，避免阻塞 app 事件循环
 
@@ -330,30 +333,36 @@ Chrome Extension（薄层）:
 ### 捕获流程
 
 ```
-1. 用户在 Side Panel 对当前标签页点击 Start Capture
+1. 用户在 Side Panel 对当前标签页点击「开始捕获」
    ↓
-2. Background DebuggerCaptureController attach 当前 tab
+2. Background 检查全局单会话约束；如有其他会话先停止它
    ↓
-3. CDP Network.enable 监听网络响应
+3. DebuggerCaptureController attach 当前 tab，CaptureSessionStore 创建会话
    ↓
-4. Network.responseReceived 记录候选图片请求并过滤 MIME type/大小
+4. CDP Network.enable 监听网络响应
    ↓
-5. Network.loadingFinished 后调用 Network.getResponseBody
+5. Network.responseReceived 记录候选图片请求并过滤 MIME type/大小
    ↓
-6. 解码 base64/body → buffer
+6. Network.loadingFinished 后调用 Network.getResponseBody
    ↓
-7. Background FileManager.handleCaptureMedia()
+7. 解码 base64/body → buffer
    ↓
-8. VFSWebSocketClient.saveFile() → app（ws://localhost:8765）
+8. Background FileManager.handleCaptureMedia()
    ↓
-9. app: VFS hash、保存 blob、写入 SQLite，并自动 enqueue AI 任务
+9. VFSWebSocketClient.saveFile() → app（ws://localhost:8765）
    ↓
-10. Response: { hash, duplicate, size }
+10. app: VFS hash、保存 blob、写入 SQLite，并自动 enqueue AI 任务
     ↓
-11. app 广播 file:captured；extension 中继给 UI
+11. Response: { hash, duplicate, size }
     ↓
-12. Side Panel 接收事件并通过 HTTP URL 渲染文件/缩略图
+12. app 广播 file:captured；extension 中继给 Options 媒体库
+    ↓
+13. Background 同时把 saved/duplicate/skipped/failed/video/AI 事件写入会话并广播 capture:session
+    ↓
+14. Side Panel 渲染当前会话的实时捕获流与会话指标；事件日志展开后显示原因
 ```
+
+会话快照写入 `chrome.storage.session`，用于 Panel 关闭或 Service Worker 重启后的恢复。会话只属于当前标签页并跨页面导航保留；浏览器重启后清除。
 
 ### AI 任务流程
 
@@ -390,7 +399,7 @@ Chrome Extension（薄层）:
 ### 文件展示流程
 
 ```
-1. DevTools Panel receives file metadata
+1. Options 媒体库或 Side Panel 收到媒体事件
    ↓
 2. Build HTTP URL:
    - Original: http://localhost:8766/files/{hash}
@@ -409,7 +418,7 @@ Chrome Extension（薄层）:
 
 **缓解**:
 
-- DevTools Panel 显示 VFS 连接状态。
+- Options 概览和 Side Panel 显示 VFS 连接状态。
 - WebSocket 客户端支持自动重连。
 - README 明确要求先启动 VFS Service。
 - 服务可独立运行和调试，启动失败更容易观察。
@@ -424,13 +433,13 @@ Chrome Extension（薄层）:
 - 端口选择集中在服务入口，便于调整。
 - 连接状态和错误日志帮助定位问题。
 
-### Risk 3: 多个 DevTools Panel 共享状态
+### Risk 3: 多个 UI 表面共享状态
 
-**风险**: 多个 DevTools Panel 同时打开时，事件和分类调度状态需要保持一致。
+**风险**: Side Panel、Options 概览和媒体库同时打开时，事件、会话和分类调度状态需要保持一致。
 
 **缓解**:
 
-- Background Service Worker 作为中央协调器。
+- Background Service Worker 作为中央协调器，会话快照通过 `capture:session` 广播。
 - VFS Service WebSocket Server 广播事件。
 - 分类队列持久化在 SQLite 中，避免仅依赖 UI 状态。
 
@@ -441,7 +450,7 @@ Chrome Extension（薄层）:
 **缓解**:
 
 - Extension 检测 Ollama 健康状态。
-- Options/DevTools UI 显示 Ollama 状态提示。
+- Options 概览、媒体库和 Side Panel 显示 Ollama 状态提示。
 - 分类失败时保留原文件，仅标记任务失败或保持未分类。
 - 用户可选择不安装 Ollama，仅使用基础捕获功能。
 

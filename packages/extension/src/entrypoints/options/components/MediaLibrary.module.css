@@ -1,0 +1,33 @@
+.library {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.title {
+  margin: 0 0 4px !important;
+}
+
+.mediaSurface {
+  width: 100%;
+  min-height: 420px;
+  border: 1px solid var(--border-color, #e5e5e5);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg-primary, #fff);
+}
+
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 240px;
+}

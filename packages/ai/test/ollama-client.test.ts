@@ -28,9 +28,6 @@ beforeEach(() => {
       if (prompt.includes('文件名')) {
         return jsonResponse({ message: { content: '一只猫' } });
       }
-      if (prompt.includes('翻译')) {
-        return jsonResponse({ message: { content: 'cat,猫' } });
-      }
       return jsonResponse({ message: { content: 'cat\nNEW:fluffy' } });
     }
     return new Response('', { status: 404 });
@@ -74,13 +71,6 @@ describe('OllamaClient', () => {
       suggestedName: '一只猫',
       model: 'llava:7b',
     });
-  });
-
-  it('translates tags', async () => {
-    const client = new OllamaClient({ model: 'llava:7b', media });
-    await client.checkHealth();
-
-    await expect(client.translateTags('cat')).resolves.toBe('cat,猫');
   });
 
   it('falls back to the original file when thumbnails fail', async () => {

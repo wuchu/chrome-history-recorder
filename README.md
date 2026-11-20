@@ -10,7 +10,7 @@
 
 - **Chrome 专属**: 支持 Chrome 88+，使用 Manifest V3、Side Panel API 和 debugger/CDP Network API
 - **WebSocket + HTTP 双通道**: WebSocket 用于实时通信和事件推送，HTTP 用于文件下载和缩略图获取
-- **Side Panel + Options 集成**: 在 Chrome 右侧 Side Panel 中提供媒体捕获和浏览，并通过扩展 Options 页面管理程序配置
+- **Side Panel + Options 分工**: Side Panel 是当前标签页的捕获驾驶舱，Options 是全局媒体库与控制台
 - **智能去重**: 基于 SHA-256 内容哈希，自动防止重复保存
 - **多格式支持**: 图片（JPEG、PNG、WebP、GIF、BMP）和视频（MP4、WebM、MOV、AVI）
 - **AI 分类**: 集成 Ollama，使用视觉模型自动分类和命名文件
@@ -22,7 +22,7 @@ chrome-history-recorder/
 ├── packages/
 │   ├── extension/          # Chrome 扩展（薄 UX 层）→ [详细说明](packages/extension/README.md)
 │   ├── app/                # 长驻后端：启动、调度、配置、事件总线
-│   ├── ai/                 # Ollama 分类 / 重命名 / 翻译 / 健康 / 模型
+│   ├── ai/                 # Ollama 分类 / 重命名 / 健康 / 模型
 │   └── vfs/                # 存储与传输（VFSAPI、SQLite/blob、WS/HTTP）
 ├── openspec/               # 项目规划和规范文档
 ├── package.json            # Monorepo 根配置
@@ -102,11 +102,14 @@ pnpm dev
 
 1. 确保 VFS Service 正在运行
 2. 在任意网页点击扩展图标打开 Chrome 右侧 Side Panel
-3. 查看 VFS 连接状态（绿色 ● 表示已连接）
-4. 点击 "Start Capture" 开始捕获当前标签页的图片
+3. 查看当前标签页身份和 VFS 连接状态（绿色 ● 表示已连接）
+4. 点击「开始捕获」开始捕获当前标签页；全局同时只允许一个捕获会话
 5. 捕获的图片将自动保存到 `~/.vfs-workspace/`
+6. 在 Options 控制台的「媒体库」中浏览和管理全局媒体
 
-捕获启用时，Chrome 会授予扩展 `debugger` 权限并可能显示当前标签页正在被调试的提示。这是 Side Panel 模式下读取图片响应体所需的 Chrome 能力；点击 "Stop Capture" 会释放该标签页的 debugger 会话。当前版本仍保留 DevTools 面板作为迁移期 fallback，但主流程不再要求打开 DevTools。
+Side Panel 只显示当前会话的媒体流和诊断日志；全局历史瀑布流、标签治理、AI 配置和任务队列都在 Options 控制台。切换到其他标签页时，Side Panel 会显示「另一个标签页正在捕获」横幅，并提供切换或停止会话的操作。
+
+捕获启用时，Chrome 会授予扩展 `debugger` 权限并可能显示当前标签页正在被调试的提示。这是 Side Panel 模式下读取图片响应体所需的 Chrome 能力；点击「停止捕获」会释放该标签页的 debugger 会话。
 
 当前 Side Panel 捕获第一版聚焦网络图片响应：暂不支持 Canvas/WebGL 生成的 `data:` 图片、页面内组装的 `blob:` 图片，也不承诺还原复杂视频流、Range 分片或 MSE 播放内容。
 
@@ -126,18 +129,18 @@ ollama pull llava:7b
 ollama serve
 ```
 
-AI 分类会在捕获文件后加入本地 VFS 分类队列。扩展 Options 页面可以从本地 Ollama `/api/tags` 查询已安装模型，并通过下拉框选择用于后续任务的视觉模型；模型选择会立即保存，刷新模型列表不会覆盖当前选择。AI 分类默认暂停，Options 页面和分类进度区域提供开始/暂停控制；暂停只会停止领取新的待处理任务，已经处理中的任务会自然完成或失败。
+AI 分类会在捕获文件后加入本地 VFS 分类队列。扩展 Options 控制台（「设置」和「任务」标签）可以从本地 Ollama `/api/tags` 查询已安装模型，并通过下拉框选择用于后续任务的视觉模型；模型选择会立即保存，刷新模型列表不会覆盖当前选择。AI 分类默认暂停，任务标签提供开始/暂停控制；暂停只会停止领取新的待处理任务，已经处理中的任务会自然完成或失败。
 
 这里的“重命名”指更新 VFS 元数据中的 `ai_filename` 智能文件名，不会物理重命名、移动、导出或删除 hash 存储的原始 blob 文件。用户也可以在媒体详情或卡片快捷操作中将单个图片/视频重新加入分类与智能命名队列。
 
 ## 子模块文档
 
-| 模块      | 说明                                            | 文档                                      |
-| --------- | ----------------------------------------------- | ----------------------------------------- |
-| extension | Chrome 扩展，Side Panel 媒体浏览、CDP 捕获与 UI | [README.md](packages/extension/README.md) |
-| app       | 长驻后端：启动、任务调度、配置真源、事件总线    | `packages/app/`                           |
-| ai        | Ollama 分类 / 重命名 / 翻译 / 健康 / 模型       | `packages/ai/`                            |
-| vfs       | 存储与传输（VFSAPI、SQLite/blob、WS/HTTP）      | `packages/vfs/`                           |
+| 模块      | 说明                                                          | 文档                                      |
+| --------- | ------------------------------------------------------------- | ----------------------------------------- |
+| extension | Chrome 扩展：Side Panel 捕获驾驶舱、Options 控制台与 CDP 捕获 | [README.md](packages/extension/README.md) |
+| app       | 长驻后端：启动、任务调度、配置真源、事件总线                  | `packages/app/`                           |
+| ai        | Ollama 分类 / 重命名 / 健康 / 模型                            | `packages/ai/`                            |
+| vfs       | 存储与传输（VFSAPI、SQLite/blob、WS/HTTP）                    | `packages/vfs/`                           |
 
 ## VFS Service 端点
 

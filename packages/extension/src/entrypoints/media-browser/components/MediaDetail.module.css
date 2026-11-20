@@ -85,6 +85,64 @@
   gap: 8px;
 }
 
+.metadata {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  width: min(360px, calc(100vw - 28px));
+  max-height: 40vh;
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  background: rgba(18, 22, 30, 0.78);
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 11px;
+  line-height: 1.45;
+  backdrop-filter: blur(12px);
+}
+
+.metadataTitle {
+  margin-bottom: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.metadataRow {
+  display: flex;
+  gap: 8px;
+  padding: 1px 0;
+}
+
+.metadataRow > span:first-child {
+  flex: 0 0 64px;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.metadataRow > span:last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.metadataMono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+}
+
+.metadataLink {
+  color: #8ab4f8;
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metadataLink:hover {
+  text-decoration: underline;
+}
+
 .closeButton,
 .deleteButton,
 .refreshButton {
@@ -133,8 +191,61 @@
   border-color: rgba(255, 255, 255, 0.4);
 }
 
+/* Narrow screens: dock the file info below the viewer instead of floating it
+   over the image. The viewer takes the remaining height and the metadata
+   panel scrolls on its own. */
+@media (max-width: 720px) {
+  .content {
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+  }
+
+  .viewerStage {
+    flex: 1 1 0;
+    height: auto;
+    min-height: 0;
+    padding: 56px 12px 10px;
+  }
+
+  .metadata {
+    position: static;
+    flex: 0 0 auto;
+    width: auto;
+    margin: 0 12px 12px;
+    max-height: 38vh;
+    border-radius: 12px;
+    background: rgba(18, 22, 30, 0.94);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
+  }
+
+  /* Keep the title clear of the four toolbar buttons on the right. */
+  .titleBar {
+    max-width: calc(100vw - 198px);
+  }
+}
+
 @media (max-width: 520px) {
   .titleBar {
-    max-width: calc(100vw - 72px);
+    max-width: calc(100vw - 180px);
+  }
+
+  .toolbar {
+    gap: 6px;
+  }
+
+  .closeButton,
+  .deleteButton,
+  .refreshButton {
+    width: 30px;
+    height: 30px;
+  }
+
+  .metadata {
+    max-height: 42vh;
+  }
+
+  .metadataRow > span:first-child {
+    flex-basis: 56px;
   }
 }

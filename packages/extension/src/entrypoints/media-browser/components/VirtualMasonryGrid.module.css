@@ -35,6 +35,6 @@
 }
 
 /* Dark theme adjustments */
-:global(.darkTheme) .loadingIndicator {
+:global([data-theme='dark']) .loadingIndicator {
   background: rgba(255, 255, 255, 0.05);
 }

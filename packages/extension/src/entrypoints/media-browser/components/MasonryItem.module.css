@@ -65,14 +65,14 @@
 }
 
 /* Dark theme adjustments */
-:global(.darkTheme) .deleteButton {
+:global([data-theme='dark']) .deleteButton {
   background: rgba(30, 30, 30, 0.94);
   border-color: rgba(255, 255, 255, 0.18);
   color: var(--error-color, #ff4757);
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
 }
 
-:global(.darkTheme) .deleteButton:hover {
+:global([data-theme='dark']) .deleteButton:hover {
   background: rgba(45, 45, 45, 0.98);
   border-color: rgba(255, 255, 255, 0.28);
 }
@@ -126,14 +126,14 @@
 }
 
 /* Dark theme adjustments */
-:global(.darkTheme) .item {
+:global([data-theme='dark']) .item {
   background: rgba(255, 255, 255, 0.05);
 }
 
-:global(.darkTheme) .thumbnailWrapper {
+:global([data-theme='dark']) .thumbnailWrapper {
   background: rgba(255, 255, 255, 0.03);
 }
 
-:global(.darkTheme) .placeholder {
+:global([data-theme='dark']) .placeholder {
   background: rgba(255, 255, 255, 0.03);
 }

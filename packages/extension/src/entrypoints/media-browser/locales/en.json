@@ -71,5 +71,91 @@
   },
   "language": {
     "label": "Language"
+  },
+  "cockpit": {
+    "loading": "Loading capture session…",
+    "unknownPage": "Unknown page",
+    "unknownHost": "Unknown site",
+    "noUrl": "No page URL",
+    "unsupportedBadge": "Not capturable",
+    "copy": "Copy",
+    "copied": "Copied",
+    "copyUrl": "Copy page URL",
+    "openLibrary": "Open media library",
+    "bannerHint": "This tab is not capturing. Starting here will stop the session in the other tab.",
+    "otherTabTitle": "Another tab is capturing",
+    "savedCount": "Saved {{count}}",
+    "switchToSession": "Switch to tab",
+    "stopSession": "Stop session",
+    "metrics": {
+      "saved": "Saved",
+      "duplicate": "Duplicate",
+      "skipped": "Skipped",
+      "failed": "Failed",
+      "totalSize": "Saved this session",
+      "media": "Media",
+      "ai": "AI",
+      "videoQueue": "Video",
+      "running": "Running {{duration}}",
+      "duration": "Took {{duration}}"
+    },
+    "feed": {
+      "title": "Live captures",
+      "newItems": "{{count}} new",
+      "resume": "Resume",
+      "pause": "Pause",
+      "empty": "Waiting for images or videos on this page…",
+      "exists": "Exists",
+      "duplicate": "Duplicate"
+    },
+    "log": {
+      "title": "Event log",
+      "summary": "Skipped {{skipped}} · failed {{failed}}",
+      "newItems": "+{{count}}",
+      "resume": "Resume",
+      "pause": "Pause",
+      "clear": "Clear",
+      "empty": "No events",
+      "filters": {
+        "all": "All",
+        "saved": "Saved",
+        "duplicate": "Duplicate",
+        "skipped": "Skipped",
+        "failed": "Failed",
+        "video": "Video",
+        "ai": "AI"
+      },
+      "kinds": {
+        "saved": "Saved",
+        "duplicate": "Exists",
+        "skipped": "Skipped",
+        "failed": "Failed",
+        "video:candidate": "Video candidate",
+        "video:result": "Video result",
+        "ai": "AI status"
+      }
+    },
+    "summary": {
+      "title": "Session ended",
+      "size": "Saved size",
+      "media": "Images / videos",
+      "topReasons": "Top skip / failure reasons",
+      "restart": "Start a new capture"
+    },
+    "start": {
+      "title": "Monitor this tab",
+      "unsupportedTitle": "This page cannot be captured",
+      "description": "Capture monitors only the current tab. When the session ends, you get this session's saved, skipped, and failed counts.",
+      "unsupportedDescription": "Chrome does not allow extensions to capture this page. Switch to a regular web page and try again.",
+      "starting": "Starting…",
+      "action": "Start capture",
+      "hint": "Only one capture session can run at a time."
+    },
+    "confirm": {
+      "title": "Switch capture session?",
+      "message": "Another tab is capturing. Starting here will stop it first.",
+      "cancel": "Cancel",
+      "confirm": "Stop and start"
+    }
   }
 }

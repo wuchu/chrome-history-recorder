@@ -71,5 +71,91 @@
   },
   "language": {
     "label": "语言"
+  },
+  "cockpit": {
+    "loading": "加载捕获会话…",
+    "unknownPage": "未知页面",
+    "unknownHost": "未知站点",
+    "noUrl": "无页面地址",
+    "unsupportedBadge": "不可捕获",
+    "copy": "复制",
+    "copied": "已复制",
+    "copyUrl": "复制页面地址",
+    "openLibrary": "打开媒体库",
+    "bannerHint": "当前标签页没有捕获。如果在这里开始，会先停止另一个标签页的会话。",
+    "otherTabTitle": "另一个标签页正在捕获",
+    "savedCount": "已保存 {{count}}",
+    "switchToSession": "切换过去",
+    "stopSession": "停止会话",
+    "metrics": {
+      "saved": "保存",
+      "duplicate": "重复",
+      "skipped": "跳过",
+      "failed": "失败",
+      "totalSize": "本次会话保存大小",
+      "media": "媒体",
+      "ai": "AI",
+      "videoQueue": "视频",
+      "running": "运行 {{duration}}",
+      "duration": "用时 {{duration}}"
+    },
+    "feed": {
+      "title": "实时捕获",
+      "newItems": "{{count}} 个新条目",
+      "resume": "继续",
+      "pause": "暂停",
+      "empty": "等待本页图片或视频…",
+      "exists": "已存在",
+      "duplicate": "重复"
+    },
+    "log": {
+      "title": "事件日志",
+      "summary": "跳过 {{skipped}} · 失败 {{failed}}",
+      "newItems": "+{{count}}",
+      "resume": "继续",
+      "pause": "暂停",
+      "clear": "清空",
+      "empty": "暂无事件",
+      "filters": {
+        "all": "全部",
+        "saved": "保存",
+        "duplicate": "重复",
+        "skipped": "跳过",
+        "failed": "失败",
+        "video": "视频",
+        "ai": "AI"
+      },
+      "kinds": {
+        "saved": "已保存",
+        "duplicate": "已存在",
+        "skipped": "已跳过",
+        "failed": "失败",
+        "video:candidate": "视频候选",
+        "video:result": "视频完成",
+        "ai": "AI 状态"
+      }
+    },
+    "summary": {
+      "title": "本次会话已结束",
+      "size": "保存大小",
+      "media": "图片 / 视频",
+      "topReasons": "主要跳过 / 失败原因",
+      "restart": "重新开始捕获"
+    },
+    "start": {
+      "title": "开始监控这个标签页",
+      "unsupportedTitle": "此页面无法捕获",
+      "description": "捕获只会监控当前标签页，并在会话结束时给出本次的保存、跳过和失败统计。",
+      "unsupportedDescription": "Chrome 不允许扩展捕获此页面。请切换到普通网页后再试。",
+      "starting": "正在开始…",
+      "action": "开始捕获",
+      "hint": "全局同时只会运行一个捕获会话。"
+    },
+    "confirm": {
+      "title": "切换捕获会话？",
+      "message": "另一个标签页正在捕获。在这里开始会先停止它。",
+      "cancel": "取消",
+      "confirm": "停止并开始"
+    }
   }
 }

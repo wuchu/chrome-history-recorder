@@ -46,10 +46,9 @@ describe('resolveTemplate', () => {
 });
 
 describe('DEFAULT_PROMPT_TEMPLATES', () => {
-  it('provides classify, rename, and translate defaults', () => {
+  it('provides classify and rename defaults', () => {
     expect(DEFAULT_PROMPT_TEMPLATES.classify).toContain('{{vocabulary}}');
     expect(DEFAULT_PROMPT_TEMPLATES.rename).toContain('自动选择最合适的描述风格');
-    expect(DEFAULT_PROMPT_TEMPLATES.translate).toContain('{{input}}');
   });
 
   it('bakes the naming style into the rename default without a placeholder', () => {

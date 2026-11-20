@@ -128,6 +128,167 @@ export interface ServiceStatus {
   ollamaAvailable: boolean;
 }
 
+/**
+ * Capture session contracts.
+ *
+ * A session belongs to one browser tab and is global to the extension: at most
+ * one session may be capturing at a time.
+ */
+export type CaptureSessionStatus = 'capturing' | 'stopped' | 'error';
+
+export type SessionAiStatus = 'pending' | 'processing' | 'completed' | 'failed';
+
+export type SessionEventKind =
+  | 'saved'
+  | 'duplicate'
+  | 'skipped'
+  | 'failed'
+  | 'video:candidate'
+  | 'video:result'
+  | 'ai';
+
+export interface SessionCounters {
+  saved: number;
+  duplicate: number;
+  skipped: number;
+  failed: number;
+  bytesSaved: number;
+  imagesSaved: number;
+  videosSaved: number;
+  aiPending: number;
+  aiProcessing: number;
+  aiCompleted: number;
+  aiFailed: number;
+  videosQueued: number;
+  videosDownloading: number;
+}
+
+export interface SessionMediaItem {
+  hash: string;
+  mimeType: string;
+  size: number;
+  sourceUrl?: string;
+  capturedAt: string;
+  aiStatus?: SessionAiStatus;
+  duplicate?: boolean;
+}
+
+export interface SessionEvent {
+  id: string;
+  sessionId: string;
+  tabId: number;
+  pageUrl: string;
+  kind: SessionEventKind;
+  timestamp: string;
+  hash?: string;
+  mimeType?: string;
+  size?: number;
+  sourceUrl?: string;
+  reason?: string;
+  error?: string;
+  aiStatus?: SessionAiStatus;
+  duplicate?: boolean;
+}
+
+export interface SessionEventInput {
+  kind: SessionEventKind;
+  hash?: string;
+  mimeType?: string;
+  size?: number;
+  sourceUrl?: string;
+  reason?: string;
+  error?: string;
+  aiStatus?: SessionAiStatus;
+  timestamp?: string;
+  pageUrl?: string;
+  duplicate?: boolean;
+}
+
+export interface SessionTopReason {
+  reason: string;
+  count: number;
+}
+
+export interface SessionSummary {
+  sessionId: string;
+  tabId: number;
+  tabTitle: string;
+  pageUrl: string;
+  startedAt: string;
+  endedAt: string;
+  durationMs: number;
+  counters: SessionCounters;
+  topReasons: SessionTopReason[];
+  error?: string;
+}
+
+export interface CaptureSession {
+  id: string;
+  tabId: number;
+  windowId?: number;
+  tabTitle: string;
+  pageUrl: string;
+  origin: string;
+  startedAt: string;
+  endedAt?: string;
+  status: CaptureSessionStatus;
+  error?: string;
+  counters: SessionCounters;
+  recentItems: SessionMediaItem[];
+  events: SessionEvent[];
+  savedHashes: string[];
+  aiStatuses: Record<string, SessionAiStatus>;
+}
+
+export interface CaptureSessionSnapshot {
+  session: CaptureSession | null;
+  summary: SessionSummary | null;
+}
+
+export interface CaptureStateData {
+  tabId: number;
+  isEnabled: boolean;
+  status: 'idle' | 'capturing' | 'error';
+  debuggerAttached: boolean;
+  captureCount: number;
+  skippedCount: number;
+  failedCount: number;
+  lastCaptureTime?: string;
+  error?: string;
+}
+
+export interface MediaStats {
+  totalFiles: number;
+  totalSize: number;
+  images: number;
+  videos: number;
+  byCategory: Record<string, number>;
+}
+
+export async function getCaptureSession(): Promise<CaptureSessionSnapshot> {
+  return sendRuntimeMessage<CaptureSessionSnapshot>({ type: 'capture:get-session' });
+}
+
+export async function clearCaptureSessionLog(): Promise<void> {
+  await sendRuntimeMessage<void>({ type: 'capture:clear-log' });
+}
+
+export async function getCaptureState(tabId: number): Promise<CaptureStateData> {
+  return sendRuntimeMessage<CaptureStateData>({ type: 'capture:get-state', tabId });
+}
+
+export async function startCapture(tabId: number): Promise<CaptureStateData> {
+  return sendRuntimeMessage<CaptureStateData>({ type: 'capture:start', tabId });
+}
+
+export async function stopCapture(tabId: number): Promise<CaptureStateData> {
+  return sendRuntimeMessage<CaptureStateData>({ type: 'capture:stop', tabId });
+}
+
+export async function getMediaStats(): Promise<MediaStats> {
+  return sendRuntimeMessage<MediaStats>({ type: 'getStats' });
+}
+
 export interface SyncBlobsToIndexResult {
   scanned: number;
   indexed: number;

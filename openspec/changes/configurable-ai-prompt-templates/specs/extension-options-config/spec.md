@@ -1,11 +1,11 @@
 ## ADDED Requirements
 
 ### Requirement: Prompt templates settings section
-The Options page SHALL provide a section for editing AI prompt templates.
+The Options page SHALL provide editable AI prompt templates.
 
 #### Scenario: Show editable templates
-- **WHEN** the Options page renders the prompt templates section
-- **THEN** it SHALL show one text area per prompt type (`classify`, `rename`, `translate`)
+- **WHEN** the Options page renders the AI task cards
+- **THEN** it SHALL show one text area per prompt type (`classify`, `rename`)
 - **AND** each text area SHALL display its current value, defaulting to the built-in default when unset
 
 #### Scenario: Persist a template edit

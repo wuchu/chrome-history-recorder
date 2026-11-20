@@ -22,6 +22,8 @@ export interface BackgroundEvent {
  */
 interface UseBackgroundMessagingOptions {
   onEvent?: (event: BackgroundEvent) => void;
+  /** When false, events are delivered to onEvent but not accumulated. */
+  collectEvents?: boolean;
 }
 
 /**
@@ -40,6 +42,7 @@ interface UseBackgroundMessagingReturn {
  */
 export function useBackgroundMessaging({
   onEvent,
+  collectEvents = true,
 }: UseBackgroundMessagingOptions = {}): UseBackgroundMessagingReturn {
   const [events, setEvents] = useState<BackgroundEvent[]>([]);
   const [vfsConnected, setVfsConnected] = useState(false);
@@ -88,11 +91,14 @@ export function useBackgroundMessaging({
         setOllamaAvailable(data.available);
       }
 
-      // Add to events array (skip connection status events)
+      // Add to events array (skip connection status events and the large
+      // session snapshots consumed by the cockpit hook).
       if (
+        collectEvents &&
         message.type !== 'vfs:connected' &&
         message.type !== 'vfs:disconnected' &&
-        message.type !== 'ollama:status'
+        message.type !== 'ollama:status' &&
+        message.type !== 'capture:session'
       ) {
         setEvents((prev) => [...prev, message]);
       }
@@ -129,7 +135,7 @@ export function useBackgroundMessaging({
       mountedRef.current = false;
       chrome.runtime.onMessage.removeListener(handleMessage);
     };
-  }, [onEvent, sendMessage]);
+  }, [collectEvents, onEvent, sendMessage]);
 
   return {
     events,

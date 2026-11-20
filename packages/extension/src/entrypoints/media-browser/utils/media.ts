@@ -47,6 +47,7 @@ export interface NormalizedMediaItem {
   classifyStatus?: 'pending' | 'processing' | 'completed' | 'failed';
   url: string;
   thumbnailUrl: string;
+  sourceUrl?: string;
 }
 
 function normalizeTags(tags: VFSRawMediaItem['tags']): string[] | undefined {
@@ -85,7 +86,8 @@ export function normalizeMediaItem(item: VFSRawMediaItem): NormalizedMediaItem |
     classified_at: item.classified_at ?? undefined,
     model_used: item.model_used ?? undefined,
     classifyStatus: item.classifyStatus,
-    url: item.sourceUrl ?? item.source_url ?? buildVfsFileUrl(hash),
+    url: buildVfsFileUrl(hash),
     thumbnailUrl: buildVfsThumbnailUrl(hash),
+    sourceUrl: item.sourceUrl ?? item.source_url ?? undefined,
   };
 }

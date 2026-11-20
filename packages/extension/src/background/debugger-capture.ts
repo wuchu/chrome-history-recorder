@@ -5,6 +5,7 @@ import {
   type ExtensionConfig,
 } from '../shared/extension-runtime';
 import { getExistingVideoDownloadManager } from './video-download';
+import { getCaptureSessionStore } from './capture-session';
 
 type CaptureStatus = 'idle' | 'capturing' | 'error';
 
@@ -27,6 +28,7 @@ interface CandidateRequest {
   mimeType: string;
   size: number;
   capturedAt: string;
+  pageUrl: string;
 }
 
 /**
@@ -39,6 +41,7 @@ export interface VideoCandidate {
   size: number;
   maxBytes: number;
   capturedAt: string;
+  pageUrl?: string;
 }
 
 interface CdpResponse {
@@ -81,6 +84,14 @@ const SUPPORTED_IMAGE_TYPES = new Set([
   'image/x-icon',
   'image/vnd.microsoft.icon',
 ]);
+
+function getOrigin(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return '';
+  }
+}
 
 function normalizeHeaders(headers: Record<string, unknown> | undefined): Record<string, string> {
   const normalized: Record<string, string> = {};
@@ -329,19 +340,80 @@ export class DebuggerCaptureController {
     return this.ensureState(tabId);
   }
 
-  async start(tabId: number): Promise<CaptureState> {
+  /**
+   * Rehydrate the controller after a service-worker restart while the
+   * debugger attachment and capture session are still valid.
+   */
+  restoreActiveSession(tabId: number): void {
     const state = this.ensureState(tabId);
     state.isEnabled = true;
     state.status = 'capturing';
+    state.debuggerAttached = true;
     state.error = undefined;
+    void this.enableNetwork(tabId).catch((error) => {
+      const message =
+        error instanceof Error ? error.message : 'Failed to re-enable Network after restore';
+      state.status = 'error';
+      state.error = message;
+      getCaptureSessionStore().end('error', message);
+      this.broadcastError(tabId, message);
+      this.broadcastState(tabId);
+    });
+    this.broadcastState(tabId);
+  }
+
+  async start(tabId: number): Promise<CaptureState> {
+    const store = getCaptureSessionStore();
+    const activeSession = store.getActiveSession();
+
+    // A new session replaces the current one. The UI asks for confirmation
+    // before sending this request; the Background still enforces the invariant.
+    if (activeSession && activeSession.tabId !== tabId) {
+      await this.stop(activeSession.tabId);
+    }
+
+    const state = this.ensureState(tabId);
+    if (activeSession?.tabId === tabId && state.isEnabled) {
+      return { ...state };
+    }
+
+    state.isEnabled = true;
+    state.status = 'capturing';
+    state.error = undefined;
+    state.captureCount = 0;
+    state.skippedCount = 0;
+    state.failedCount = 0;
+    state.lastCaptureTime = undefined;
 
     try {
       if (!state.debuggerAttached) {
-        await chrome.debugger.attach({ tabId }, DEBUGGER_PROTOCOL_VERSION);
-        state.debuggerAttached = true;
+        try {
+          await chrome.debugger.attach({ tabId }, DEBUGGER_PROTOCOL_VERSION);
+          state.debuggerAttached = true;
+        } catch (attachError) {
+          const attachMessage =
+            attachError instanceof Error ? attachError.message : String(attachError);
+          // After a service-worker restart the attachment may still be live
+          // even though this controller instance no longer has state for it.
+          if (/already attached/i.test(attachMessage)) {
+            state.debuggerAttached = true;
+          } else {
+            throw attachError;
+          }
+        }
       }
 
       await this.enableNetwork(tabId);
+
+      const tab = await chrome.tabs.get(tabId).catch(() => null);
+      const pageUrl = tab?.url ?? '';
+      store.start({
+        tabId,
+        windowId: tab?.windowId,
+        tabTitle: tab?.title ?? '',
+        pageUrl,
+        origin: getOrigin(pageUrl),
+      });
 
       this.broadcastState(tabId);
       return { ...state };
@@ -349,6 +421,13 @@ export class DebuggerCaptureController {
       const message = error instanceof Error ? error.message : 'Failed to start capture';
       state.status = 'error';
       state.error = message;
+      if (state.debuggerAttached) {
+        try {
+          await chrome.debugger.detach({ tabId });
+        } catch {
+          // The attachment may already be gone.
+        }
+      }
       state.debuggerAttached = false;
       state.isEnabled = false;
       this.broadcastError(tabId, message);
@@ -376,6 +455,12 @@ export class DebuggerCaptureController {
     }
 
     state.debuggerAttached = false;
+
+    const store = getCaptureSessionStore();
+    if (store.getActiveSession()?.tabId === tabId) {
+      store.end('stopped');
+    }
+
     this.broadcastState(tabId);
     return { ...state };
   }
@@ -442,6 +527,7 @@ export class DebuggerCaptureController {
       mimeType,
       size,
       capturedAt: new Date().toISOString(),
+      pageUrl: getCaptureSessionStore().getActiveSession()?.pageUrl ?? '',
     });
   }
 
@@ -483,6 +569,7 @@ export class DebuggerCaptureController {
       size: evaluation.totalSize,
       maxBytes: this.config.maxVideoSize,
       capturedAt: new Date().toISOString(),
+      pageUrl: getCaptureSessionStore().getActiveSession()?.pageUrl,
     });
   }
 
@@ -517,6 +604,20 @@ export class DebuggerCaptureController {
         capturedAt: candidate.capturedAt,
       });
 
+      const store = getCaptureSessionStore();
+      if (store.getActiveSession()?.tabId === tabId) {
+        store.applyEvent({
+          kind: result.duplicate ? 'duplicate' : 'saved',
+          hash: result.hash,
+          mimeType: candidate.mimeType,
+          size: buffer.length,
+          sourceUrl: candidate.url,
+          timestamp: candidate.capturedAt,
+          pageUrl: candidate.pageUrl || undefined,
+          reason: result.duplicate ? 'Content already exists' : undefined,
+        });
+      }
+
       // The app auto-enqueues AI tasks when it stores the file.
       const state = this.ensureState(tabId);
       state.captureCount += result.duplicate ? 0 : 1;
@@ -545,7 +646,7 @@ export class DebuggerCaptureController {
 
     if (mimeType === SVG_MIME_TYPE) {
       state.skippedCount += 1;
-      this.broadcastSkipped(tabId, url, 'SVG images are skipped');
+      this.recordSkip(tabId, url, 'SVG images are skipped');
       return false;
     }
 
@@ -555,13 +656,13 @@ export class DebuggerCaptureController {
 
     if (size > 0 && size < MIN_IMAGE_SIZE) {
       state.skippedCount += 1;
-      this.broadcastSkipped(tabId, url, `Image smaller than ${MIN_IMAGE_SIZE} bytes`);
+      this.recordSkip(tabId, url, `Image smaller than ${MIN_IMAGE_SIZE} bytes`);
       return false;
     }
 
     if (size > MAX_IMAGE_SIZE) {
       state.skippedCount += 1;
-      this.broadcastSkipped(tabId, url, `Image larger than ${MAX_IMAGE_SIZE} bytes`);
+      this.recordSkip(tabId, url, `Image larger than ${MAX_IMAGE_SIZE} bytes`);
       return false;
     }
 
@@ -578,10 +679,11 @@ export class DebuggerCaptureController {
     // Adaptive-streaming pages can produce hundreds of partial responses.
     // Count them all, but broadcast only the first few reasons.
     const broadcasts = this.videoSkipEvents.get(tabId) ?? 0;
-    if (broadcasts >= MAX_VIDEO_SKIP_EVENTS_PER_PAGE) return;
+    const shouldBroadcast = broadcasts < MAX_VIDEO_SKIP_EVENTS_PER_PAGE;
+    this.recordSkip(tabId, url, reason, shouldBroadcast, shouldBroadcast);
+    if (!shouldBroadcast) return;
 
     this.videoSkipEvents.set(tabId, broadcasts + 1);
-    this.broadcastSkipped(tabId, url, reason);
     this.broadcastState(tabId);
   }
 
@@ -604,7 +706,11 @@ export class DebuggerCaptureController {
     const state = this.ensureState(tabId);
     state.failedCount += 1;
     state.error = message;
-    this.broadcastError(tabId, message, url);
+    // The video pipeline records the session-scoped `video:result` event
+    // separately; this path only maintains per-tab state and legacy feedback.
+    this.dependencies
+      .getFileManager()
+      .broadcastEvent('capture:error', { tabId, error: message, url });
     this.broadcastState(tabId);
   }
 
@@ -634,6 +740,16 @@ export class DebuggerCaptureController {
     state.error = reason === 'target_closed' ? undefined : `Debugger detached: ${reason}`;
     this.clearCandidatesForTab(source.tabId);
     this.clearVideoUrlsForTab(source.tabId);
+    getExistingVideoDownloadManager()?.cancelTab(source.tabId);
+
+    const store = getCaptureSessionStore();
+    if (store.getActiveSession()?.tabId === source.tabId) {
+      store.end(
+        reason === 'target_closed' ? 'stopped' : 'error',
+        reason === 'target_closed' ? undefined : `Debugger detached: ${reason}`
+      );
+    }
+
     this.broadcastState(source.tabId);
   }
 
@@ -641,14 +757,26 @@ export class DebuggerCaptureController {
     this.clearCandidatesForTab(tabId);
     this.clearVideoUrlsForTab(tabId);
     getExistingVideoDownloadManager()?.cancelTab(tabId);
+
+    const store = getCaptureSessionStore();
+    if (store.getActiveSession()?.tabId === tabId) {
+      store.end('stopped');
+    }
+
     this.states.delete(tabId);
   }
 
   private handleTabUpdated(tabId: number, changeInfo: chrome.tabs.TabChangeInfo): void {
+    if (changeInfo.url || changeInfo.title || changeInfo.status === 'loading') {
+      void this.refreshSessionIdentity(tabId);
+    }
+
     if (changeInfo.status !== 'loading') return;
     const state = this.states.get(tabId);
     if (!state) return;
 
+    // Per-tab page counters reset on navigation; session counters are
+    // intentionally preserved by the CaptureSessionStore.
     state.captureCount = 0;
     state.skippedCount = 0;
     state.failedCount = 0;
@@ -668,6 +796,24 @@ export class DebuggerCaptureController {
       });
     }
     this.broadcastState(tabId);
+  }
+
+  private async refreshSessionIdentity(tabId: number): Promise<void> {
+    const store = getCaptureSessionStore();
+    if (store.getActiveSession()?.tabId !== tabId) return;
+
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      if (!tab.url) return;
+      store.updateIdentity({
+        tabTitle: tab.title ?? '',
+        pageUrl: tab.url,
+        origin: getOrigin(tab.url),
+        windowId: tab.windowId,
+      });
+    } catch {
+      // The tab may have closed between the event and the lookup.
+    }
   }
 
   private async enableNetwork(tabId: number): Promise<void> {
@@ -696,11 +842,22 @@ export class DebuggerCaptureController {
   }
 
   private broadcastError(tabId: number, error: string, url?: string): void {
+    const store = getCaptureSessionStore();
+    if (store.getActiveSession()?.tabId === tabId) {
+      store.applyEvent({ kind: 'failed', error, sourceUrl: url });
+    }
     this.dependencies.getFileManager().broadcastEvent('capture:error', { tabId, error, url });
   }
 
-  private broadcastSkipped(tabId: number, url: string, reason: string): void {
-    this.dependencies.getFileManager().broadcastEvent('capture:skipped', { tabId, url, reason });
+  private recordSkip(tabId: number, url: string, reason: string, notify = true, log = true): void {
+    const store = getCaptureSessionStore();
+    if (store.getActiveSession()?.tabId === tabId) {
+      store.applyEvent({ kind: 'skipped', sourceUrl: url, reason }, notify, log);
+    }
+
+    if (notify) {
+      this.dependencies.getFileManager().broadcastEvent('capture:skipped', { tabId, url, reason });
+    }
   }
 }
 

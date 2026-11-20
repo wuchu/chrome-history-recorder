@@ -16,6 +16,7 @@ interface VirtualMasonryGridProps {
   onLoadMore?: () => void;
   onItemClick?: (item: CombinedMediaItem) => void;
   onItemDelete?: (hash: string) => void;
+  onItemDeleteRequest?: (hash: string) => void;
   hasMore?: boolean;
   loading?: boolean;
 }
@@ -35,10 +36,12 @@ const MasonryItemContent = memo(function MasonryItemContent({
   data,
   onItemClick,
   onItemDelete,
+  onItemDeleteRequest,
 }: {
   data?: CombinedMediaItem;
   onItemClick?: (item: CombinedMediaItem) => void;
   onItemDelete?: (hash: string) => void;
+  onItemDeleteRequest?: (hash: string) => void;
 }) {
   if (!data?.hash) {
     console.warn('[VirtualMasonryGrid] Skipping invalid masonry item:', data);
@@ -47,7 +50,12 @@ const MasonryItemContent = memo(function MasonryItemContent({
 
   return (
     <div className={styles.itemWrapper}>
-      <MasonryItem item={data} onClick={() => onItemClick?.(data)} onDelete={onItemDelete} />
+      <MasonryItem
+        item={data}
+        onClick={() => onItemClick?.(data)}
+        onDelete={onItemDelete}
+        onDeleteRequest={onItemDeleteRequest}
+      />
     </div>
   );
 });
@@ -60,6 +68,7 @@ const VirtualMasonryGrid = memo(function VirtualMasonryGrid({
   onLoadMore,
   onItemClick,
   onItemDelete,
+  onItemDeleteRequest,
   hasMore = false,
   loading = false,
 }: VirtualMasonryGridProps) {
@@ -67,11 +76,15 @@ const VirtualMasonryGrid = memo(function VirtualMasonryGrid({
   const [isNearEnd, setIsNearEnd] = useState(false);
 
   // Responsive column count
-  const { columnCount } = useColumnCount({
+  const { columnCount, containerWidth } = useColumnCount({
     containerRef,
     columnWidth: 200,
     gap: 10,
   });
+  // Don't mount the grid until the container has a real width. Tab panes can be
+  // mounted while hidden (width 0), and measuring/building the masonry at that
+  // width leaves items sized to zero — lazy images then never start loading.
+  const layoutReady = containerWidth > 0;
 
   // Detect page scroll near end for infinite loading.
   const handleScroll = useCallback(() => {
@@ -95,44 +108,60 @@ const VirtualMasonryGrid = memo(function VirtualMasonryGrid({
     };
   }, [handleScroll]);
 
-  // Empty state
-  if (items.length === 0 && !loading) {
-    return (
-      <div className={styles.container}>
-        <div className={styles.empty}>
-          <p>暂无媒体</p>
-        </div>
-      </div>
-    );
-  }
+  const isEmpty = items.length === 0 && !loading;
 
   return (
     <div ref={containerRef} className={styles.container}>
-      <VirtuosoMasonry
-        data={items}
-        columnCount={columnCount}
-        useWindowScroll
-        ItemContent={(props: VirtuosoItemContentProps) => {
-          const item =
-            props.data ??
-            props.item ??
-            (typeof props.index === 'number' ? items[props.index] : undefined);
-          return (
-            <MasonryItemContent data={item} onItemClick={onItemClick} onItemDelete={onItemDelete} />
-          );
-        }}
-        initialItemCount={50}
-      />
+      {isEmpty ? (
+        <div className={styles.empty}>
+          <p>暂无媒体</p>
+        </div>
+      ) : layoutReady ? (
+        <>
+          <VirtuosoMasonry
+            // VirtuosoMasonry builds its layout realm once, with the column
+            // count from the first render. Our column count starts at 1 and is
+            // measured in a layout effect, so the initial realm can be left
+            // observing mismatched column indexes and drops the first resize
+            // batch — which stacks items on top of each other in columns 2+.
+            // Remounting when the column count settles gives the grid a clean
+            // realm.
+            key={columnCount}
+            data={items}
+            columnCount={columnCount}
+            useWindowScroll
+            ItemContent={(props: VirtuosoItemContentProps) => {
+              const item =
+                props.data ??
+                props.item ??
+                (typeof props.index === 'number' ? items[props.index] : undefined);
+              return (
+                <MasonryItemContent
+                  data={item}
+                  onItemClick={onItemClick}
+                  onItemDelete={onItemDelete}
+                  onItemDeleteRequest={onItemDeleteRequest}
+                />
+              );
+            }}
+            initialItemCount={50}
+          />
 
-      {loading && (
+          {loading && (
+            <div className={styles.loadingIndicator}>
+              <span>加载中...</span>
+            </div>
+          )}
+
+          {!hasMore && items.length > 0 && (
+            <div className={styles.endIndicator}>
+              <span>已加载全部 {items.length} 个媒体</span>
+            </div>
+          )}
+        </>
+      ) : (
         <div className={styles.loadingIndicator}>
           <span>加载中...</span>
-        </div>
-      )}
-
-      {!hasMore && items.length > 0 && (
-        <div className={styles.endIndicator}>
-          <span>已加载全部 {items.length} 个媒体</span>
         </div>
       )}
     </div>

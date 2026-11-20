@@ -60,6 +60,20 @@ export function useTheme(): UseThemeReturn {
     });
   }, []);
 
+  // Keep every mounted UI surface in sync when another surface changes the
+  // theme (for example, the Options header and the Media Library).
+  useEffect(() => {
+    const listener = (changes: Record<string, chrome.storage.StorageChange>, areaName: string) => {
+      if (areaName !== 'local') return;
+      const next = changes.themeMode?.newValue;
+      if (next === 'auto' || next === 'light' || next === 'dark') {
+        setThemeMode(next);
+      }
+    };
+    chrome.storage.onChanged.addListener(listener);
+    return () => chrome.storage.onChanged.removeListener(listener);
+  }, []);
+
   return {
     themeMode,
     systemDark,

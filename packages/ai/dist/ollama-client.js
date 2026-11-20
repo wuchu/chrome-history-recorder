@@ -438,37 +438,6 @@ class OllamaClient {
             model: this.config.model ?? '',
         };
     }
-    /**
-     * Translate tag names to Chinese
-     */
-    async translateTags(text) {
-        if (!this.available) {
-            throw new Error('Ollama service not available');
-        }
-        const template = (0, prompt_templates_1.resolveTemplate)(this.config.promptTemplates?.translate, prompt_templates_1.DEFAULT_PROMPT_TEMPLATES.translate);
-        const prompt = (0, prompt_templates_1.renderTemplate)(template, { input: text });
-        try {
-            const response = await fetch(`${this.config.endpoint}/api/chat`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    model: this.config.model,
-                    messages: [{ role: 'user', content: prompt }],
-                    stream: false,
-                }),
-                signal: AbortSignal.timeout(this.config.timeout ?? 60000),
-            });
-            if (!response.ok) {
-                throw new Error(`Ollama API error: ${response.status}`);
-            }
-            const data = (await response.json());
-            return (data.message?.content ?? '').trim();
-        }
-        catch (error) {
-            const message = error instanceof Error ? error.message : 'Unknown error';
-            throw new Error(`Translation failed: ${message}`);
-        }
-    }
 }
 exports.OllamaClient = OllamaClient;
 //# sourceMappingURL=ollama-client.js.map

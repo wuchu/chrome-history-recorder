@@ -47,10 +47,6 @@ function createAppExternalHandler(dependencies) {
             }
             case 'isOllamaAvailable':
                 return { available: ai.isAvailable() };
-            case 'translateTags': {
-                const translated = await ai.translateTags(String(params.text ?? ''));
-                return { translated };
-            }
             /**
              * Scheduler-aware task mutations. The storage dispatcher would handle
              * these too, but the app wants to kick the scheduler immediately.

@@ -19,6 +19,8 @@ import {
   getVideoDownloadManager,
   type VideoDownloadResult,
 } from '../../background/video-download';
+import { initCaptureSessionStore, getCaptureSessionStore } from '../../background/capture-session';
+import type { SessionAiStatus } from '../../shared/extension-runtime';
 import { DEFAULT_EXTENSION_CONFIG, type ExtensionConfig } from '../../shared/extension-runtime';
 
 export default defineBackground(() => {
@@ -36,6 +38,50 @@ export default defineBackground(() => {
     enabledVideoTypes: [...DEFAULT_EXTENSION_CONFIG.enabledVideoTypes],
   };
   let initializationPromise: Promise<void> | null = null;
+
+  /**
+   * Correlate global AI events to the active session by hash.
+   */
+  function recordSessionAiEvent(event: string, data: unknown): void {
+    const payload = data as { hash?: string; task_type?: string; error?: string } | null;
+    const hash = payload?.hash;
+    if (!hash) return;
+
+    let status: SessionAiStatus | null = null;
+    switch (event) {
+      case 'classify:queued':
+        status = 'pending';
+        break;
+      case 'classify:started':
+        status = 'processing';
+        break;
+      case 'classify:complete':
+      case 'file:classified':
+        status = 'completed';
+        break;
+      case 'classify:failed':
+        status = 'failed';
+        break;
+      case 'task:queued':
+        if (payload?.task_type === 'classify') status = 'pending';
+        break;
+      case 'task:started':
+        if (payload?.task_type === 'classify') status = 'processing';
+        break;
+      case 'task:completed':
+        if (payload?.task_type === 'classify') status = 'completed';
+        break;
+      case 'task:failed':
+        if (payload?.task_type === 'classify') status = 'failed';
+        break;
+      default:
+        return;
+    }
+
+    if (!status) return;
+    const store = getCaptureSessionStore();
+    store.recordAiStatus(hash, status, { error: payload?.error });
+  }
 
   /**
    * Update the local configuration mirror and the capture controller.
@@ -91,6 +137,34 @@ export default defineBackground(() => {
       const vfsWsClient = initVFSWebSocketClient();
       initFileManager();
 
+      const sessionStore = initCaptureSessionStore({
+        onChange: (snapshot) => {
+          getFileManager().broadcastEvent('capture:session', snapshot);
+        },
+      });
+      await sessionStore.restore();
+
+      let restoredAttachedTabId: number | null = null;
+      const restoredSession = sessionStore.getActiveSession();
+      if (restoredSession) {
+        try {
+          const targets = await chrome.debugger.getTargets();
+          const attached = targets.some(
+            (target) => target.tabId === restoredSession.tabId && target.attached
+          );
+          if (attached) {
+            restoredAttachedTabId = restoredSession.tabId;
+          } else {
+            sessionStore.end(
+              'error',
+              'Capture stopped because the debugger was no longer attached'
+            );
+          }
+        } catch {
+          // Debugger target lookup is best-effort; keep the restored snapshot.
+        }
+      }
+
       const connectionPromise = new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => {
           reject(new Error('App WebSocket connection timeout'));
@@ -124,6 +198,7 @@ export default defineBackground(() => {
         if (event === 'config:updated') {
           applyConfigMirror(data as ExtensionConfig, true);
         }
+        recordSessionAiEvent(event, data);
         getFileManager().broadcastEvent(event, data);
       });
 
@@ -137,12 +212,48 @@ export default defineBackground(() => {
           getDebuggerCaptureController().recordVideoCaptured(tabId, capturedAt),
         recordFailed: (tabId, url, message) =>
           getDebuggerCaptureController().recordVideoFailed(tabId, url, message),
+        recordDownloadStarted: (tabId) => {
+          const store = getCaptureSessionStore();
+          if (store.getActiveSession()?.tabId === tabId) {
+            store.recordVideoDownloadStarted();
+          }
+        },
+        recordDownloadCancelled: (tabId) => {
+          const store = getCaptureSessionStore();
+          if (store.getActiveSession()?.tabId === tabId) {
+            store.recordVideoDownloadCancelled();
+          }
+        },
+        recordResult: (result) => {
+          const store = getCaptureSessionStore();
+          if (store.getActiveSession()?.tabId !== result.tabId) return;
+          store.recordVideoResult({
+            hash: result.hash,
+            mimeType: result.mimeType,
+            size: result.size,
+            url: result.url,
+            error: result.error,
+            duplicate: result.duplicate,
+            pageUrl: result.pageUrl,
+          });
+        },
       });
 
       initDebuggerCaptureController(
         {
           getFileManager,
-          onVideoCandidate: (candidate) => getVideoDownloadManager().enqueue(candidate),
+          onVideoCandidate: (candidate) => {
+            const store = getCaptureSessionStore();
+            if (store.getActiveSession()?.tabId === candidate.tabId) {
+              store.recordVideoCandidate({
+                url: candidate.url,
+                mimeType: candidate.mimeType,
+                size: candidate.size,
+                pageUrl: candidate.pageUrl,
+              });
+            }
+            getVideoDownloadManager().enqueue(candidate);
+          },
         },
         {
           captureVideos: mirroredConfig.captureVideos,
@@ -150,6 +261,10 @@ export default defineBackground(() => {
           enabledVideoTypes: mirroredConfig.enabledVideoTypes,
         }
       );
+
+      if (restoredAttachedTabId !== null) {
+        getDebuggerCaptureController().restoreActiveSession(restoredAttachedTabId);
+      }
 
       // Remove the retired Ollama DNR rule if an older version installed it.
       try {
@@ -392,12 +507,6 @@ export default defineBackground(() => {
             break;
           }
 
-          case 'translate-tags': {
-            const { translated } = await vfsWsClient.translateTags(message.text);
-            sendResponse({ success: true, translated });
-            break;
-          }
-
           // Tag vocabulary
           case 'getTagCounts': {
             const tagCounts = await vfsWsClient.getTagCounts();
@@ -508,6 +617,19 @@ export default defineBackground(() => {
             }
             const captureState = await getDebuggerCaptureController().stop(tabId);
             sendResponse({ success: true, data: captureState, ...captureState });
+            break;
+          }
+
+          case 'capture:get-session': {
+            const snapshot = getCaptureSessionStore().getSnapshot();
+            sendResponse({ success: true, data: snapshot, snapshot });
+            break;
+          }
+
+          case 'capture:clear-log': {
+            getCaptureSessionStore().clearLog();
+            const snapshot = getCaptureSessionStore().getSnapshot();
+            sendResponse({ success: true, data: snapshot, snapshot });
             break;
           }
 

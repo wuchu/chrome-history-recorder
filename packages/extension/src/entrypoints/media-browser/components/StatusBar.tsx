@@ -20,6 +20,7 @@ interface StatusBarProps {
   onToggleCapture: () => void;
   onOpenOptions: () => void;
   onClearEvents: () => void;
+  disableCaptureToggle?: boolean;
 }
 
 /**
@@ -37,6 +38,7 @@ const StatusBar = memo(function StatusBar({
   onToggleCapture,
   onOpenOptions,
   onClearEvents,
+  disableCaptureToggle,
 }: StatusBarProps) {
   const { t } = useTranslation();
 
@@ -110,7 +112,7 @@ const StatusBar = memo(function StatusBar({
           <button
             onClick={onToggleCapture}
             className={`${styles.iconButton} ${isCapturing ? styles.active : ''}`}
-            disabled={!serviceOnline}
+            disabled={disableCaptureToggle ?? !serviceOnline}
           >
             {isCapturing ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
           </button>

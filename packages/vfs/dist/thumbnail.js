@@ -107,10 +107,14 @@ class ThumbnailStorage {
         }
         return new Promise((resolve, reject) => {
             const args = [
-                '-i', videoPath,
-                '-vf', 'select=eq(n\\,0)',
-                '-vframes', '1',
-                '-q:v', '2',
+                '-i',
+                videoPath,
+                '-vf',
+                'select=eq(n\\,0)',
+                '-vframes',
+                '1',
+                '-q:v',
+                '2',
                 '-y',
                 outputPath,
             ];

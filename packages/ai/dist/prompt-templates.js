@@ -23,14 +23,6 @@ exports.DEFAULT_PROMPT_TEMPLATES = {
 风格要求：根据图片内容和氛围，自动选择最合适的描述风格。
 文件名控制在 15-25 个字以内。
 只输出文件名本身，不要引号、扩展名或任何解释。`.trim(),
-    translate: `请将以下标签翻译成中文，并保留原来的格式（每行一个标签，如果有逗号分隔，左边是英文名称，右边是中文显示名称）。
-
-如果一行只有一个词，请同时生成英文名称和中文显示名称，用逗号分隔。
-
-输入：
-{{input}}
-
-直接输出结果，不要任何其他说明。`.trim(),
 };
 /**
  * Substitute `{{key}}` placeholders in a template. Unknown keys are left

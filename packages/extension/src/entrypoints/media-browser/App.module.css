@@ -39,6 +39,7 @@
 
   background: var(--bg-primary);
   color: var(--text-primary);
+  color-scheme: light;
   min-height: 100vh;
   box-sizing: border-box;
   position: relative;
@@ -72,6 +73,7 @@
   --scrollbar-track: #2d2d30;
   --scrollbar-thumb: #5a5a5a;
   --scrollbar-thumb-hover: #787878;
+  color-scheme: dark;
 }
 
 .lightTheme {

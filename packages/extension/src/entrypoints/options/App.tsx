@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Badge,
@@ -6,10 +6,12 @@ import {
   Card,
   Col,
   ConfigProvider,
+  Dropdown,
   Form,
   Input,
   InputNumber,
   Layout,
+  Menu,
   message,
   Modal,
   Popconfirm,
@@ -20,8 +22,19 @@ import {
   Switch,
   Tag,
   theme,
+  Tooltip,
   Typography,
+  type MenuProps,
 } from 'antd';
+import {
+  DashboardOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
+  PictureOutlined,
+  SettingOutlined,
+  TagsOutlined,
+  ThunderboltOutlined,
+} from '@ant-design/icons';
 import {
   DEFAULT_MAX_VIDEO_SIZE,
   MAX_VIDEO_SIZE_LIMIT,
@@ -35,11 +48,21 @@ import { DEFAULT_PROMPT_TEMPLATES, type PromptTemplates } from '../../shared/pro
 import { useOptionsData } from './hooks/useOptionsData';
 import { useTaskQueue } from './hooks/useTaskQueue';
 import TaskConsole from './components/TaskConsole';
+import OverviewTab from './components/OverviewTab';
+import MediaLibrary from './components/MediaLibrary';
+import { consoleTabHash, isConsoleTab, readConsoleTabFromHash, type ConsoleTab } from './tabs';
 import { useTheme } from '../media-browser/hooks/useTheme';
 
 const { Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
-const { TextArea } = Input;
+
+const NAV_ITEMS: MenuProps['items'] = [
+  { key: 'overview', icon: <DashboardOutlined />, label: '概览' },
+  { key: 'library', icon: <PictureOutlined />, label: '媒体库' },
+  { key: 'tags', icon: <TagsOutlined />, label: '标签' },
+  { key: 'tasks', icon: <ThunderboltOutlined />, label: '任务' },
+  { key: 'settings', icon: <SettingOutlined />, label: '设置' },
+];
 
 const LANGUAGE_OPTIONS = [
   { value: 'zh-CN', label: '中文' },
@@ -54,32 +77,6 @@ const VIDEO_TYPE_OPTIONS = SUPPORTED_VIDEO_MIME_TYPES.map((type) => ({
 const MIN_VIDEO_SIZE_MB = MIN_VIDEO_SIZE_LIMIT / (1024 * 1024);
 const MAX_VIDEO_SIZE_MB = MAX_VIDEO_SIZE_LIMIT / (1024 * 1024);
 const DEFAULT_MAX_VIDEO_SIZE_MB = DEFAULT_MAX_VIDEO_SIZE / (1024 * 1024);
-
-const PROMPT_TEMPLATE_FIELDS: Array<{
-  key: keyof PromptTemplates;
-  label: string;
-  placeholder: string;
-  help: string;
-}> = [
-  {
-    key: 'classify',
-    label: '标签分类（classify）',
-    placeholder: '{{vocabulary}}',
-    help: '生成图片标签。占位符 {{vocabulary}} 会被替换为现有标签词表。',
-  },
-  {
-    key: 'rename',
-    label: '文件重命名（rename）',
-    placeholder: '观察这张图片，为它生成一个简洁生动的文件名…',
-    help: '生成文件名。命名风格直接写在本模板中，无需额外占位符。',
-  },
-  {
-    key: 'translate',
-    label: '标签翻译（translate）',
-    placeholder: '{{input}}',
-    help: '翻译标签。占位符 {{input}} 会被替换为待翻译文本。',
-  },
-];
 
 // 系统标签定义
 const SYSTEM_TAGS: TagDefinition[] = [
@@ -103,6 +100,7 @@ function formatModelSize(size?: number): string | undefined {
 
 function App() {
   const [messageApi, contextHolder] = message.useMessage();
+  const [modal, modalContextHolder] = Modal.useModal();
   const {
     config,
     serviceStatus,
@@ -143,7 +141,6 @@ function App() {
     () => ({
       classify: config.promptTemplates?.classify ?? DEFAULT_PROMPT_TEMPLATES.classify,
       rename: config.promptTemplates?.rename ?? DEFAULT_PROMPT_TEMPLATES.rename,
-      translate: config.promptTemplates?.translate ?? DEFAULT_PROMPT_TEMPLATES.translate,
     })
   );
   const [maxVideoSizeMb, setMaxVideoSizeMb] = useState<number>(DEFAULT_MAX_VIDEO_SIZE_MB);
@@ -164,7 +161,6 @@ function App() {
     setTemplateDrafts({
       classify: config.promptTemplates?.classify ?? DEFAULT_PROMPT_TEMPLATES.classify,
       rename: config.promptTemplates?.rename ?? DEFAULT_PROMPT_TEMPLATES.rename,
-      translate: config.promptTemplates?.translate ?? DEFAULT_PROMPT_TEMPLATES.translate,
     });
   }, [config.promptTemplates]);
 
@@ -365,6 +361,17 @@ function App() {
     }
   };
 
+  const confirmDeleteTag = (tag: VFSTagRecord) => {
+    modal.confirm({
+      title: '删除标签',
+      content: '确定要删除这个标签吗？已分类文件上的同名标签会被移除。',
+      okText: '删除',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: () => handleDeleteTag(tag),
+    });
+  };
+
   const handleRefreshTags = async () => {
     try {
       await refreshTags();
@@ -372,6 +379,29 @@ function App() {
     } catch (refreshError) {
       const text = refreshError instanceof Error ? refreshError.message : '刷新标签失败';
       messageApi.error(text);
+    }
+  };
+
+  const readTabFromHash = useCallback(
+    (): ConsoleTab => readConsoleTabFromHash(window.location.hash),
+    []
+  );
+
+  const [activeTab, setActiveTab] = useState<ConsoleTab>(() => readTabFromHash());
+  const [navCollapsed, setNavCollapsed] = useState(true);
+
+  useEffect(() => {
+    const handleHashChange = () => setActiveTab(readTabFromHash());
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, [readTabFromHash]);
+
+  const handleTabChange = (key: string) => {
+    const next = isConsoleTab(key) ? key : 'overview';
+    setActiveTab(next);
+    const hash = consoleTabHash(next);
+    if (window.location.hash !== hash) {
+      window.history.replaceState(null, '', hash);
     }
   };
 
@@ -386,385 +416,421 @@ function App() {
       }}
     >
       {contextHolder}
-      <Layout className="options-shell" data-theme={isDark ? 'dark' : 'light'}>
-        <Content className="options-content">
-          <div className="options-header">
-            <div>
-              <Title level={2}>Media Recorder 设置</Title>
-              <Paragraph className="options-subtitle">
-                配置本地 VFS、Ollama AI 分类、文件名风格和分类队列。AI
-                分类默认暂停，捕获的媒体可以先进入待处理队列。
-              </Paragraph>
+      {modalContextHolder}
+      <Layout hasSider className="options-shell" data-theme={isDark ? 'dark' : 'light'}>
+        <aside className={`options-nav ${navCollapsed ? 'options-navCollapsed' : ''}`}>
+          <div className="options-navHeader">
+            <div className="options-brand">
+              <span className="options-brandMark" aria-hidden="true">
+                MR
+              </span>
+              {!navCollapsed && <span className="options-brandText">Media Recorder</span>}
             </div>
-            <Select
-              value={themeMode}
-              onChange={(value) => changeTheme(value as 'auto' | 'light' | 'dark')}
-              style={{ width: 140 }}
-              options={[
-                { value: 'auto', label: '主题：自动' },
-                { value: 'light', label: '主题：亮色' },
-                { value: 'dark', label: '主题：暗色' },
-              ]}
-            />
+            <Tooltip title={navCollapsed ? '展开导航' : '收起导航'} placement="right">
+              <button
+                type="button"
+                className="options-navToggle"
+                aria-label={navCollapsed ? '展开导航' : '收起导航'}
+                aria-expanded={!navCollapsed}
+                onClick={() => setNavCollapsed((collapsed) => !collapsed)}
+              >
+                {navCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+              </button>
+            </Tooltip>
           </div>
+          <Menu
+            mode="inline"
+            inlineCollapsed={navCollapsed}
+            className="options-menu"
+            selectedKeys={[activeTab]}
+            onClick={({ key }) => handleTabChange(key)}
+            items={NAV_ITEMS}
+          />
+        </aside>
 
+        <Content className="options-content">
           {error && <Alert type="error" showIcon message={error} style={{ marginBottom: 16 }} />}
 
           <Spin spinning={loading} tip="加载配置中...">
-            <Space direction="vertical" size="large" className="full-width">
-              <Card
-                className="options-card"
-                title="服务状态"
-                extra={<Button onClick={refreshAll}>全部刷新</Button>}
-              >
-                <Row gutter={[16, 16]}>
-                  <Col xs={24} md={12}>
-                    <div className="status-row">
-                      <Space direction="vertical" size={2}>
-                        <Text strong>VFS WebSocket</Text>
-                        <Badge
-                          status={serviceStatus.vfsConnected ? 'success' : 'error'}
-                          text={serviceStatus.vfsConnected ? '已连接' : '未连接'}
-                        />
-                      </Space>
-                      <Button loading={saving.vfsReconnect} onClick={reconnectVfsService}>
-                        重连 VFS
-                      </Button>
-                    </div>
-                  </Col>
-                  <Col xs={24} md={12}>
-                    <div className="status-row">
-                      <Space direction="vertical" size={2}>
-                        <Text strong>Ollama</Text>
-                        <Badge
-                          status={serviceStatus.ollamaAvailable ? 'success' : 'error'}
-                          text={serviceStatus.ollamaAvailable ? '可用' : '不可用'}
-                        />
-                      </Space>
-                      <Button loading={saving.ollamaHealth} onClick={refreshOllamaHealth}>
-                        检查 Ollama
-                      </Button>
-                    </div>
-                  </Col>
-                </Row>
-              </Card>
-
-              <Card className="options-card" title="媒体索引维护">
-                <div className="status-row">
-                  <Space direction="vertical" size={2}>
-                    <Text strong>原始媒体索引</Text>
-                    <Badge
-                      status={serviceStatus.vfsConnected ? 'success' : 'error'}
-                      text={serviceStatus.vfsConnected ? 'VFS 已连接' : 'VFS 未连接'}
-                    />
-                  </Space>
-                  <Space>
-                    <Popconfirm
-                      title="清空索引"
-                      description="确定要清空所有索引吗？物理文件不会被删除，你可以随后重新同步。"
-                      onConfirm={handleClearIndex}
-                      okText="清空"
-                      cancelText="取消"
+            {[
+              {
+                key: 'overview',
+                label: '概览',
+                children: (
+                  <OverviewTab
+                    serviceStatus={serviceStatus}
+                    queueStatus={taskQueue.status}
+                    onRefresh={refreshAll}
+                    onOpenLibrary={() => handleTabChange('library')}
+                  />
+                ),
+              },
+              {
+                key: 'library',
+                label: '媒体库',
+                children: <MediaLibrary />,
+              },
+              {
+                key: 'tags',
+                label: '标签',
+                children: (
+                  <Space direction="vertical" size="large" className="full-width">
+                    <Card
+                      className="options-card"
+                      title="AI 标签治理"
+                      extra={<Button onClick={handleRefreshTags}>刷新标签</Button>}
                     >
-                      <Button
-                        danger
-                        loading={saving.clearIndex}
-                        disabled={!serviceStatus.vfsConnected}
-                      >
-                        清空索引
-                      </Button>
-                    </Popconfirm>
-                    <Button
-                      type="primary"
-                      loading={saving.syncBlobsToIndex}
-                      disabled={!serviceStatus.vfsConnected}
-                      onClick={handleSyncMediaIndex}
-                    >
-                      同步原始媒体到索引
-                    </Button>
-                  </Space>
-                </div>
-              </Card>
-
-              <Card className="options-card" title="视频捕获">
-                <Paragraph type="secondary" style={{ marginBottom: 16 }}>
-                  捕获直链视频（如 MP4/WebM
-                  文件）。开启后，侧边栏中的捕获会话会把识别到的完整视频下载到本地
-                  VFS。流媒体分片（MSE/blob）暂不支持。
-                </Paragraph>
-                <Form layout="vertical">
-                  <Form.Item label="启用视频捕获">
-                    <Switch
-                      checked={config.captureVideos}
-                      loading={saving.videoCapture}
-                      onChange={handleVideoCaptureToggle}
-                      checkedChildren="开启"
-                      unCheckedChildren="关闭"
-                    />
-                  </Form.Item>
-
-                  <Form.Item
-                    label="单个视频大小上限"
-                    extra={`范围 ${MIN_VIDEO_SIZE_MB}–${MAX_VIDEO_SIZE_MB} MB。超过上限的视频会被跳过。`}
-                  >
-                    <InputNumber
-                      min={MIN_VIDEO_SIZE_MB}
-                      max={MAX_VIDEO_SIZE_MB}
-                      step={10}
-                      value={maxVideoSizeMb}
-                      addonAfter="MB"
-                      style={{ width: 200 }}
-                      onChange={(value) =>
-                        setMaxVideoSizeMb(
-                          typeof value === 'number' ? value : DEFAULT_MAX_VIDEO_SIZE_MB
-                        )
-                      }
-                      onBlur={handleMaxVideoSizeSave}
-                      onPressEnter={handleMaxVideoSizeSave}
-                    />
-                  </Form.Item>
-
-                  <Form.Item label="捕获格式" extra="仅这些 MIME 类型的视频会被识别为下载候选。">
-                    <Select
-                      mode="multiple"
-                      value={config.enabledVideoTypes}
-                      options={VIDEO_TYPE_OPTIONS}
-                      loading={saving.videoCapture}
-                      onChange={handleVideoFormatsChange}
-                      placeholder="选择至少一种视频格式"
-                    />
-                  </Form.Item>
-                </Form>
-              </Card>
-
-              <Card className="options-card" title="Ollama 设置">
-                <Form layout="vertical">
-                  <Form.Item
-                    label="Ollama 地址"
-                    extra="修改后失焦或按 Enter 保存，并用于后续健康检查和分类请求。"
-                  >
-                    <Input.Search
-                      value={endpointDraft}
-                      enterButton="保存"
-                      loading={saving.ollamaEndpoint}
-                      placeholder="http://localhost:11434"
-                      onChange={(event) => setEndpointDraft(event.target.value)}
-                      onBlur={handleEndpointSave}
-                      onSearch={handleEndpointSave}
-                    />
-                  </Form.Item>
-
-                  <Form.Item
-                    label="视觉模型"
-                    validateStatus={
-                      config.visionModel && !configuredModelAvailable ? 'warning' : undefined
-                    }
-                    help={
-                      config.visionModel && !configuredModelAvailable
-                        ? `当前配置的模型 ${config.visionModel} 不在已发现的 Ollama 模型中`
-                        : undefined
-                    }
-                    extra="选择后立即保存。刷新模型只更新列表，不会覆盖当前选择。"
-                  >
-                    <Space.Compact className="full-width">
-                      <Select
-                        className="full-width"
-                        showSearch
-                        placeholder={!config.visionModel ? '请选择模型' : undefined}
-                        value={config.visionModel}
-                        loading={saving.visionModel}
-                        onChange={handleModelChange}
-                        optionFilterProp="label"
-                        options={[
-                          ...(config.visionModel && !configuredModelAvailable
-                            ? [{ value: config.visionModel, label: config.visionModel }]
-                            : []),
-                          ...ollamaModels.map((model) => ({
-                            value: model.name,
-                            label: model.name,
-                            title: model.name,
-                          })),
-                        ]}
-                        optionRender={(option) => {
-                          const model = ollamaModels.find((item) => item.name === option.value);
-                          const detail = model
-                            ? [
-                                model.parameterSize,
-                                model.quantizationLevel,
-                                formatModelSize(model.size),
-                              ]
-                                .filter(Boolean)
-                                .join(' · ')
-                            : '当前配置值';
-                          return (
-                            <Space direction="vertical" size={0}>
-                              <span>{option.label}</span>
-                              {detail && <span className="model-option-meta">{detail}</span>}
-                            </Space>
-                          );
-                        }}
-                      />
-                      <Button onClick={handleRefreshModels}>刷新模型</Button>
-                    </Space.Compact>
-                  </Form.Item>
-
-                  <Form.Item label="输出语言">
-                    <Select
-                      value={config.language}
-                      options={LANGUAGE_OPTIONS}
-                      onChange={(language) => saveSetting({ language }, 'config', '语言设置已保存')}
-                    />
-                  </Form.Item>
-                </Form>
-              </Card>
-
-              <Card
-                className="options-card"
-                title="AI 标签治理"
-                extra={<Button onClick={handleRefreshTags}>刷新标签</Button>}
-              >
-                <div style={{ marginBottom: 16 }}>
-                  <Title level={5} style={{ marginBottom: 8 }}>
-                    系统标签（只读）
-                  </Title>
-                  <Space wrap>
-                    {SYSTEM_TAGS.map((tag) => (
-                      <Tag key={tag.id} color="blue">
-                        {tag.label}
-                      </Tag>
-                    ))}
-                  </Space>
-                </div>
-
-                <div>
-                  <Title level={5} style={{ marginBottom: 8 }}>
-                    AI 标签词表
-                  </Title>
-                  <Paragraph type="secondary" style={{ marginBottom: 8 }}>
-                    标签由 AI 分类时自动创建和归并。这里可以修正名称、合并近义标签、删除或置顶。
-                  </Paragraph>
-                  {tags.length === 0 ? (
-                    <Text type="secondary">暂无标签。运行 AI 分类后，标签会自动出现在这里。</Text>
-                  ) : (
-                    <Space direction="vertical" style={{ width: '100%' }}>
-                      {tags.map((tag) => (
-                        <div
-                          key={tag.id}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            padding: '8px 12px',
-                            backgroundColor: '#fafafa',
-                            borderRadius: 4,
-                          }}
-                        >
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <Tag color={tag.is_pinned ? 'gold' : 'cyan'}>
-                              {tag.label || tag.name}
+                      <div style={{ marginBottom: 16 }}>
+                        <Title level={5} style={{ marginBottom: 8 }}>
+                          系统标签（只读）
+                        </Title>
+                        <Space wrap>
+                          {SYSTEM_TAGS.map((tag) => (
+                            <Tag key={tag.id} color="blue">
+                              {tag.label}
                             </Tag>
-                            <Text type="secondary" style={{ fontSize: 12 }}>
-                              ({tag.name}) · 使用 {tag.usage_count} 次
-                            </Text>
-                          </div>
-                          <Space>
-                            <Button
-                              type="text"
-                              size="small"
-                              disabled={saving.tags}
-                              onClick={() => handleTogglePinned(tag, tag.is_pinned !== 1)}
-                            >
-                              {tag.is_pinned ? '取消置顶' : '置顶'}
-                            </Button>
-                            <Button
-                              type="text"
-                              size="small"
-                              disabled={saving.tags}
-                              onClick={() => openRenameTagModal(tag)}
-                            >
-                              重命名
-                            </Button>
-                            <Button
-                              type="text"
-                              size="small"
-                              disabled={saving.tags || tags.length < 2}
-                              onClick={() => openMergeTagModal(tag)}
-                            >
-                              合并
-                            </Button>
-                            <Popconfirm
-                              title="删除标签"
-                              description="确定要删除这个标签吗？已分类文件上的同名标签会被移除。"
-                              okText="删除"
-                              cancelText="取消"
-                              onConfirm={() => handleDeleteTag(tag)}
-                            >
-                              <Button type="text" danger size="small" disabled={saving.tags}>
-                                删除
-                              </Button>
-                            </Popconfirm>
-                          </Space>
-                        </div>
-                      ))}
-                    </Space>
-                  )}
-                </div>
-              </Card>
-
-              <TaskConsole
-                status={taskQueue.status}
-                loading={taskQueue.loading}
-                busy={taskQueue.busy}
-                concurrency={config.classificationConcurrency}
-                onStart={handleStart}
-                onPause={handlePause}
-                onRetryFailed={handleRetryFailed}
-                onClearQueue={handleClearQueue}
-                onRescan={handleRescan}
-                onConcurrencyChange={handleConcurrencyChange}
-              />
-
-              <Card className="options-card" title="AI 提示词模板">
-                <Paragraph type="secondary" style={{ marginBottom: 16 }}>
-                  自定义发送给 Ollama 的提示词模板，使用 {'{{占位符}}'}{' '}
-                  注入动态内容。留空时使用内置默认模板。
-                </Paragraph>
-                <Space direction="vertical" size="middle" className="full-width">
-                  {PROMPT_TEMPLATE_FIELDS.map((field) => (
-                    <div key={field.key}>
-                      <div
-                        style={{
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                          marginBottom: 8,
-                        }}
-                      >
-                        <Text strong>{field.label}</Text>
-                        <Button size="small" onClick={() => handleTemplateReset(field.key)}>
-                          恢复默认
-                        </Button>
+                          ))}
+                        </Space>
                       </div>
-                      <TextArea
-                        rows={4}
-                        value={templateDrafts[field.key]}
-                        onChange={(event) =>
-                          setTemplateDrafts((prev) => ({
-                            ...prev,
-                            [field.key]: event.target.value,
-                          }))
-                        }
-                        onBlur={() => handleTemplateSave(field.key)}
-                        placeholder={field.placeholder}
-                      />
-                      <Text type="secondary" style={{ fontSize: 12 }}>
-                        {field.help}
-                      </Text>
-                    </div>
-                  ))}
-                </Space>
-              </Card>
-            </Space>
+
+                      <div>
+                        <Title level={5} style={{ marginBottom: 8 }}>
+                          AI 标签词表
+                        </Title>
+                        <Paragraph type="secondary" style={{ marginBottom: 8 }}>
+                          标签由 AI 分类时自动创建和归并。点击标签可置顶、重命名或合并；点击 ×
+                          删除。
+                        </Paragraph>
+                        {tags.length === 0 ? (
+                          <Text type="secondary">
+                            暂无标签。运行 AI 分类后，标签会自动出现在这里。
+                          </Text>
+                        ) : (
+                          <Space wrap size={[8, 8]}>
+                            {tags.map((tag) => {
+                              const label = tag.label || tag.name;
+                              return (
+                                <Dropdown
+                                  key={tag.id}
+                                  trigger={['click']}
+                                  menu={{
+                                    items: [
+                                      {
+                                        key: 'pin',
+                                        label: tag.is_pinned ? '取消置顶' : '置顶',
+                                        disabled: saving.tags,
+                                      },
+                                      {
+                                        key: 'rename',
+                                        label: '重命名',
+                                        disabled: saving.tags,
+                                      },
+                                      {
+                                        key: 'merge',
+                                        label: '合并到…',
+                                        disabled: saving.tags || tags.length < 2,
+                                      },
+                                    ],
+                                    onClick: ({ key }) => {
+                                      if (key === 'pin') {
+                                        void handleTogglePinned(tag, tag.is_pinned !== 1);
+                                      } else if (key === 'rename') {
+                                        openRenameTagModal(tag);
+                                      } else if (key === 'merge') {
+                                        openMergeTagModal(tag);
+                                      }
+                                    },
+                                  }}
+                                >
+                                  <Tag
+                                    className="tag-chip"
+                                    color={tag.is_pinned ? 'gold' : 'cyan'}
+                                    closable
+                                    title={`${tag.name} · 使用 ${tag.usage_count} 次`}
+                                    onClose={(event) => {
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      confirmDeleteTag(tag);
+                                    }}
+                                  >
+                                    {tag.is_pinned ? `📌 ${label}` : label}
+                                  </Tag>
+                                </Dropdown>
+                              );
+                            })}
+                          </Space>
+                        )}
+                      </div>
+                    </Card>
+                  </Space>
+                ),
+              },
+              {
+                key: 'tasks',
+                label: '任务',
+                children: (
+                  <TaskConsole
+                    status={taskQueue.status}
+                    loading={taskQueue.loading}
+                    busy={taskQueue.busy}
+                    concurrency={config.classificationConcurrency}
+                    templateDrafts={templateDrafts}
+                    onStart={handleStart}
+                    onPause={handlePause}
+                    onRetryFailed={handleRetryFailed}
+                    onClearQueue={handleClearQueue}
+                    onRescan={handleRescan}
+                    onConcurrencyChange={handleConcurrencyChange}
+                    onTemplateChange={(key, value) =>
+                      setTemplateDrafts((prev) => ({ ...prev, [key]: value }))
+                    }
+                    onTemplateSave={(key) => void handleTemplateSave(key)}
+                    onTemplateReset={(key) => void handleTemplateReset(key)}
+                  />
+                ),
+              },
+              {
+                key: 'settings',
+                label: '设置',
+                children: (
+                  <Space direction="vertical" size="large" className="full-width">
+                    <Card
+                      className="options-card"
+                      title="服务状态"
+                      extra={<Button onClick={refreshAll}>全部刷新</Button>}
+                    >
+                      <Row gutter={[16, 16]}>
+                        <Col xs={24} md={12}>
+                          <div className="status-row">
+                            <Space direction="vertical" size={2}>
+                              <Text strong>VFS WebSocket</Text>
+                              <Badge
+                                status={serviceStatus.vfsConnected ? 'success' : 'error'}
+                                text={serviceStatus.vfsConnected ? '已连接' : '未连接'}
+                              />
+                            </Space>
+                            <Button loading={saving.vfsReconnect} onClick={reconnectVfsService}>
+                              重连 VFS
+                            </Button>
+                          </div>
+                        </Col>
+                        <Col xs={24} md={12}>
+                          <div className="status-row">
+                            <Space direction="vertical" size={2}>
+                              <Text strong>Ollama</Text>
+                              <Badge
+                                status={serviceStatus.ollamaAvailable ? 'success' : 'error'}
+                                text={serviceStatus.ollamaAvailable ? '可用' : '不可用'}
+                              />
+                            </Space>
+                            <Button loading={saving.ollamaHealth} onClick={refreshOllamaHealth}>
+                              检查 Ollama
+                            </Button>
+                          </div>
+                        </Col>
+                      </Row>
+                    </Card>
+
+                    <Card className="options-card" title="媒体索引维护">
+                      <div className="status-row">
+                        <Space direction="vertical" size={2}>
+                          <Text strong>原始媒体索引</Text>
+                          <Badge
+                            status={serviceStatus.vfsConnected ? 'success' : 'error'}
+                            text={serviceStatus.vfsConnected ? 'VFS 已连接' : 'VFS 未连接'}
+                          />
+                        </Space>
+                        <Space>
+                          <Popconfirm
+                            title="清空索引"
+                            description="确定要清空所有索引吗？物理文件不会被删除，你可以随后重新同步。"
+                            onConfirm={handleClearIndex}
+                            okText="清空"
+                            cancelText="取消"
+                          >
+                            <Button
+                              danger
+                              loading={saving.clearIndex}
+                              disabled={!serviceStatus.vfsConnected}
+                            >
+                              清空索引
+                            </Button>
+                          </Popconfirm>
+                          <Button
+                            type="primary"
+                            loading={saving.syncBlobsToIndex}
+                            disabled={!serviceStatus.vfsConnected}
+                            onClick={handleSyncMediaIndex}
+                          >
+                            同步原始媒体到索引
+                          </Button>
+                        </Space>
+                      </div>
+                    </Card>
+
+                    <Card className="options-card" title="视频捕获">
+                      <Paragraph type="secondary" style={{ marginBottom: 16 }}>
+                        捕获直链视频（如 MP4/WebM
+                        文件）。开启后，侧边栏中的捕获会话会把识别到的完整视频下载到本地
+                        VFS。流媒体分片（MSE/blob）暂不支持。
+                      </Paragraph>
+                      <Form layout="vertical">
+                        <Form.Item label="启用视频捕获">
+                          <Switch
+                            checked={config.captureVideos}
+                            loading={saving.videoCapture}
+                            onChange={handleVideoCaptureToggle}
+                            checkedChildren="开启"
+                            unCheckedChildren="关闭"
+                          />
+                        </Form.Item>
+
+                        <Form.Item
+                          label="单个视频大小上限"
+                          extra={`范围 ${MIN_VIDEO_SIZE_MB}–${MAX_VIDEO_SIZE_MB} MB。超过上限的视频会被跳过。`}
+                        >
+                          <InputNumber
+                            min={MIN_VIDEO_SIZE_MB}
+                            max={MAX_VIDEO_SIZE_MB}
+                            step={10}
+                            value={maxVideoSizeMb}
+                            addonAfter="MB"
+                            style={{ width: 200 }}
+                            onChange={(value) =>
+                              setMaxVideoSizeMb(
+                                typeof value === 'number' ? value : DEFAULT_MAX_VIDEO_SIZE_MB
+                              )
+                            }
+                            onBlur={handleMaxVideoSizeSave}
+                            onPressEnter={handleMaxVideoSizeSave}
+                          />
+                        </Form.Item>
+
+                        <Form.Item
+                          label="捕获格式"
+                          extra="仅这些 MIME 类型的视频会被识别为下载候选。"
+                        >
+                          <Select
+                            mode="multiple"
+                            value={config.enabledVideoTypes}
+                            options={VIDEO_TYPE_OPTIONS}
+                            loading={saving.videoCapture}
+                            onChange={handleVideoFormatsChange}
+                            placeholder="选择至少一种视频格式"
+                          />
+                        </Form.Item>
+                      </Form>
+                    </Card>
+
+                    <Card className="options-card" title="Ollama 设置">
+                      <Form layout="vertical">
+                        <Form.Item
+                          label="Ollama 地址"
+                          extra="修改后失焦或按 Enter 保存，并用于后续健康检查和分类请求。"
+                        >
+                          <Input.Search
+                            value={endpointDraft}
+                            enterButton="保存"
+                            loading={saving.ollamaEndpoint}
+                            placeholder="http://localhost:11434"
+                            onChange={(event) => setEndpointDraft(event.target.value)}
+                            onBlur={handleEndpointSave}
+                            onSearch={handleEndpointSave}
+                          />
+                        </Form.Item>
+
+                        <Form.Item
+                          label="视觉模型"
+                          validateStatus={
+                            config.visionModel && !configuredModelAvailable ? 'warning' : undefined
+                          }
+                          help={
+                            config.visionModel && !configuredModelAvailable
+                              ? `当前配置的模型 ${config.visionModel} 不在已发现的 Ollama 模型中`
+                              : undefined
+                          }
+                          extra="选择后立即保存。刷新模型只更新列表，不会覆盖当前选择。"
+                        >
+                          <Space.Compact className="full-width">
+                            <Select
+                              className="full-width"
+                              showSearch
+                              placeholder={!config.visionModel ? '请选择模型' : undefined}
+                              value={config.visionModel}
+                              loading={saving.visionModel}
+                              onChange={handleModelChange}
+                              optionFilterProp="label"
+                              options={[
+                                ...(config.visionModel && !configuredModelAvailable
+                                  ? [{ value: config.visionModel, label: config.visionModel }]
+                                  : []),
+                                ...ollamaModels.map((model) => ({
+                                  value: model.name,
+                                  label: model.name,
+                                  title: model.name,
+                                })),
+                              ]}
+                              optionRender={(option) => {
+                                const model = ollamaModels.find(
+                                  (item) => item.name === option.value
+                                );
+                                const detail = model
+                                  ? [
+                                      model.parameterSize,
+                                      model.quantizationLevel,
+                                      formatModelSize(model.size),
+                                    ]
+                                      .filter(Boolean)
+                                      .join(' · ')
+                                  : '当前配置值';
+                                return (
+                                  <Space direction="vertical" size={0}>
+                                    <span>{option.label}</span>
+                                    {detail && <span className="model-option-meta">{detail}</span>}
+                                  </Space>
+                                );
+                              }}
+                            />
+                            <Button onClick={handleRefreshModels}>刷新模型</Button>
+                          </Space.Compact>
+                        </Form.Item>
+
+                        <Form.Item label="输出语言">
+                          <Select
+                            value={config.language}
+                            options={LANGUAGE_OPTIONS}
+                            onChange={(language) =>
+                              saveSetting({ language }, 'config', '语言设置已保存')
+                            }
+                          />
+                        </Form.Item>
+                      </Form>
+                    </Card>
+
+                    <Card className="options-card" title="外观">
+                      <div className="status-row">
+                        <Space direction="vertical" size={2}>
+                          <Text strong>主题</Text>
+                          <Text type="secondary" style={{ fontSize: 12 }}>
+                            跟随系统，或固定为亮色 / 暗色。
+                          </Text>
+                        </Space>
+                        <Select
+                          value={themeMode}
+                          onChange={(value) => changeTheme(value as 'auto' | 'light' | 'dark')}
+                          style={{ width: 160 }}
+                          options={[
+                            { value: 'auto', label: '主题：自动' },
+                            { value: 'light', label: '主题：亮色' },
+                            { value: 'dark', label: '主题：暗色' },
+                          ]}
+                        />
+                      </div>
+                    </Card>
+                  </Space>
+                ),
+              },
+            ].find((item) => item.key === activeTab)?.children ?? null}
           </Spin>
         </Content>
       </Layout>

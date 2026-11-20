@@ -564,10 +564,6 @@ export class VFSWebSocketClient {
     return this.send('isOllamaAvailable');
   }
 
-  async translateTags(text: string): Promise<{ translated: string }> {
-    return this.send('translateTags', { text });
-  }
-
   /**
    * Enqueue classification
    */
