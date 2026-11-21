@@ -62,6 +62,7 @@ function createAppExternalHandler(dependencies) {
                     enabled: typeof params.enabled === 'boolean' ? params.enabled : undefined,
                     targetPath: typeof params.targetPath === 'string' ? params.targetPath : undefined,
                     intervalMinutes: typeof params.intervalMinutes === 'number' ? params.intervalMinutes : undefined,
+                    concurrency: typeof params.concurrency === 'number' ? params.concurrency : undefined,
                 });
             case 'runMediaArchiveNow':
                 return mediaArchive.runNow();
@@ -77,13 +78,25 @@ function createAppExternalHandler(dependencies) {
             case 'getClassificationControlStatus':
                 return scheduler.getSchedulerStatus();
             case 'startClassification':
-                scheduler.start();
-                store.update({ classificationPaused: false });
+                store.update({ classifyPaused: false, renamePaused: false });
+                scheduler.updatePaused('classify', false);
+                scheduler.updatePaused('rename', false);
                 return scheduler.getSchedulerStatus();
             case 'pauseClassification':
-                scheduler.pause();
-                store.update({ classificationPaused: true });
+                store.update({ classifyPaused: true, renamePaused: true });
+                scheduler.updatePaused('classify', true);
+                scheduler.updatePaused('rename', true);
                 return scheduler.getSchedulerStatus();
+            case 'setTaskPaused': {
+                const taskType = params.taskType;
+                if (taskType !== 'classify' && taskType !== 'rename') {
+                    return { success: false, error: 'Unsupported task type' };
+                }
+                const paused = params.paused === true;
+                store.update(taskType === 'classify' ? { classifyPaused: paused } : { renamePaused: paused });
+                scheduler.updatePaused(taskType, paused);
+                return scheduler.getSchedulerStatus();
+            }
             case 'listOllamaModels': {
                 const models = await ai.listModels();
                 return {

@@ -4,7 +4,7 @@
  * Persists the app's runtime configuration in the workspace. The app is the
  * source of truth; the extension keeps a mirror.
  */
-import { type AppConfig } from './types';
+import { type AppConfig, type LegacySchedulingConfig } from './types';
 export declare class ConfigStore {
     private readonly configPath;
     private readonly authoritativeMarkerPath;
@@ -37,7 +37,7 @@ export declare class ConfigStore {
      * One-time import of legacy extension configuration. Returns false when the
      * app already has authoritative configuration.
      */
-    importLegacy(legacy: Partial<AppConfig>): boolean;
+    importLegacy(legacy: Partial<AppConfig> & LegacySchedulingConfig): boolean;
     onChange(listener: (config: AppConfig) => void): () => void;
     private markAuthoritative;
     private persist;

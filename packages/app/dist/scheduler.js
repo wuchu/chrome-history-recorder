@@ -16,8 +16,10 @@ class Scheduler {
     ai;
     events;
     pollInterval;
-    concurrency;
+    concurrencyByType = new Map();
+    pausedByType = new Map();
     processing = new Set();
+    processingCountByType = new Map();
     running = false;
     ticking = false;
     intervalId = null;
@@ -28,7 +30,11 @@ class Scheduler {
         this.ai = dependencies.ai;
         this.events = dependencies.events;
         this.pollInterval = dependencies.pollInterval ?? 5000;
-        this.concurrency = dependencies.config.get().classificationConcurrency;
+        const config = dependencies.config.get();
+        this.concurrencyByType.set('classify', config.classifyConcurrency);
+        this.concurrencyByType.set('rename', config.renameConcurrency);
+        this.pausedByType.set('classify', config.classifyPaused);
+        this.pausedByType.set('rename', config.renamePaused);
         this.gate = new media_eligibility_1.MediaEligibilityGate(this.api);
         this.registerHandler('classify', (task) => this.handleClassify(task));
         this.registerHandler('rename', (task) => this.handleRename(task));
@@ -57,13 +63,17 @@ class Scheduler {
         this.broadcastSchedulerStatus();
     }
     pause() {
-        this.stop();
+        for (const taskType of this.handlers.keys()) {
+            this.setPaused(taskType, true);
+        }
     }
     resume() {
-        this.start();
+        for (const taskType of this.handlers.keys()) {
+            this.setPaused(taskType, false);
+        }
     }
     isRunning() {
-        return this.running;
+        return this.getSchedulerStatus().running;
     }
     kick() {
         void this.tick();
@@ -75,17 +85,65 @@ class Scheduler {
         await this.tick();
     }
     getSchedulerStatus() {
+        const byType = {};
+        let anyRunning = false;
+        let processing = 0;
+        for (const taskType of this.handlers.keys()) {
+            const state = this.isTaskTypePaused(taskType) ? 'paused' : 'running';
+            const typeProcessing = this.processingCount(taskType);
+            processing += typeProcessing;
+            byType[taskType] = {
+                state,
+                processing: typeProcessing,
+                concurrency: this.getConcurrency(taskType),
+            };
+            if (state === 'running')
+                anyRunning = true;
+        }
         return {
-            state: this.running ? 'running' : 'paused',
-            running: this.running,
-            processing: this.processing.size,
-            concurrency: this.concurrency,
+            state: anyRunning ? 'running' : 'paused',
+            running: anyRunning,
+            processing,
+            byType,
         };
     }
-    updateConcurrency(concurrency) {
-        this.concurrency = Math.max(1, Math.floor(concurrency));
+    updateConcurrency(taskType, concurrency) {
+        this.concurrencyByType.set(taskType, Math.max(1, Math.floor(concurrency)));
         this.broadcastSchedulerStatus();
         void this.tick();
+    }
+    updatePaused(taskType, paused) {
+        this.setPaused(taskType, paused);
+    }
+    setPaused(taskType, paused) {
+        this.pausedByType.set(taskType, paused);
+        this.broadcastSchedulerStatus();
+        if (!paused) {
+            void this.tick();
+        }
+    }
+    getConcurrency(taskType) {
+        return this.concurrencyByType.get(taskType) ?? 1;
+    }
+    isTaskTypePaused(taskType) {
+        return this.pausedByType.get(taskType) === true;
+    }
+    processingCount(taskType) {
+        return this.processingCountByType.get(taskType) ?? 0;
+    }
+    beginProcessing(taskType, hash) {
+        const key = `${taskType}:${hash}`;
+        if (this.processing.has(key))
+            return false;
+        this.processing.add(key);
+        this.processingCountByType.set(taskType, this.processingCount(taskType) + 1);
+        return true;
+    }
+    endProcessing(taskType, hash) {
+        const key = `${taskType}:${hash}`;
+        if (!this.processing.delete(key))
+            return;
+        this.processingCountByType.set(taskType, Math.max(0, this.processingCount(taskType) - 1));
     }
     getQueueStatus() {
         return this.api.getQueueStatus();
@@ -212,28 +270,35 @@ class Scheduler {
             return;
         if (!this.ai.isAvailable())
             return;
-        const free = this.concurrency - this.processing.size;
-        if (free <= 0)
-            return;
         this.ticking = true;
         try {
             // Only claim task types this scheduler owns. The media archive runner
             // claims its own `archive` tasks so AI pause/Ollama availability cannot
             // block archiving.
-            const tasks = this.api.claimTasks(free, Array.from(this.handlers.keys()));
-            for (const task of tasks) {
-                const key = `${task.task_type}:${task.target_hash}`;
-                if (this.processing.has(key))
+            let claimedAny = false;
+            for (const taskType of this.handlers.keys()) {
+                if (this.isTaskTypePaused(taskType))
                     continue;
-                this.processing.add(key);
-                this.broadcastSchedulerStatus();
-                void this.runTask(task).finally(() => {
-                    this.processing.delete(key);
+                const free = this.getConcurrency(taskType) - this.processingCount(taskType);
+                if (free <= 0)
+                    continue;
+                const tasks = this.api.claimTasks(free, [taskType]);
+                if (tasks.length === 0)
+                    continue;
+                claimedAny = true;
+                for (const task of tasks) {
+                    const hash = task.target_hash;
+                    if (!this.beginProcessing(taskType, hash))
+                        continue;
                     this.broadcastSchedulerStatus();
-                    void this.tick();
-                });
+                    void this.runTask(task).finally(() => {
+                        this.endProcessing(taskType, hash);
+                        this.broadcastSchedulerStatus();
+                        void this.tick();
+                    });
+                }
             }
-            if (tasks.length > 0) {
+            if (claimedAny) {
                 this.broadcastQueueUpdated();
             }
         }

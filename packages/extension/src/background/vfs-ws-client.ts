@@ -666,6 +666,10 @@ export class VFSWebSocketClient {
     return this.send('pauseClassification');
   }
 
+  async setTaskPaused(taskType: 'classify' | 'rename', paused: boolean): Promise<SchedulerStatus> {
+    return this.send('setTaskPaused', { taskType, paused });
+  }
+
   async listOllamaModels(): Promise<{
     models: OllamaModel[];
     selectedModel?: string;

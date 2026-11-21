@@ -10,11 +10,16 @@ import type { ConfigStore } from './config-store';
 import type { EventBus } from './event-bus';
 import { type EnqueueOptions } from './media-eligibility';
 export type SchedulerState = 'running' | 'paused';
+export interface SchedulerTaskTypeStatus {
+    state: SchedulerState;
+    processing: number;
+    concurrency: number;
+}
 export interface SchedulerStatus {
     state: SchedulerState;
     running: boolean;
     processing: number;
-    concurrency: number;
+    byType: Record<string, SchedulerTaskTypeStatus>;
 }
 export interface SchedulerDependencies {
     api: VFSAPI;
@@ -30,8 +35,10 @@ export declare class Scheduler {
     private readonly ai;
     private readonly events;
     private readonly pollInterval;
-    private concurrency;
-    private processing;
+    private readonly concurrencyByType;
+    private readonly pausedByType;
+    private readonly processing;
+    private readonly processingCountByType;
     private running;
     private ticking;
     private intervalId;
@@ -50,7 +57,14 @@ export declare class Scheduler {
      */
     runOnce(): Promise<void>;
     getSchedulerStatus(): SchedulerStatus;
-    updateConcurrency(concurrency: number): void;
+    updateConcurrency(taskType: string, concurrency: number): void;
+    updatePaused(taskType: string, paused: boolean): void;
+    private setPaused;
+    private getConcurrency;
+    private isTaskTypePaused;
+    private processingCount;
+    private beginProcessing;
+    private endProcessing;
     getQueueStatus(): QueueStatus;
     enqueueTask(taskType: TaskType, hash: string, options?: EnqueueOptions): Promise<boolean>;
     enqueue(hash: string, priority?: number): Promise<boolean>;

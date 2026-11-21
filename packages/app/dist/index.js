@@ -63,6 +63,7 @@ async function main() {
         model: store.get().visionModel,
         language: store.get().language,
         promptTemplates: store.get().promptTemplates,
+        maxConcurrency: store.get().ollamaMaxConcurrency,
         media: {
             getMediaInfo: (hash) => {
                 const metadata = api.getMetadata(hash);
@@ -136,14 +137,12 @@ async function main() {
             model: next.visionModel,
             language: next.language,
             promptTemplates: next.promptTemplates,
+            maxConcurrency: next.ollamaMaxConcurrency,
         });
-        scheduler.updateConcurrency(next.classificationConcurrency);
-        if (next.classificationPaused) {
-            scheduler.pause();
-        }
-        else {
-            scheduler.start();
-        }
+        scheduler.updateConcurrency('classify', next.classifyConcurrency);
+        scheduler.updateConcurrency('rename', next.renameConcurrency);
+        scheduler.updatePaused('classify', next.classifyPaused);
+        scheduler.updatePaused('rename', next.renamePaused);
     };
     store.onChange((next) => {
         applyConfig(next);
@@ -200,9 +199,9 @@ async function main() {
     catch (error) {
         console.warn('[App] Failed to reconcile ineligible AI tasks:', error);
     }
-    if (!store.get().classificationPaused) {
-        scheduler.start();
-    }
+    // The loop always runs; per-task pause state controls which types are
+    // claimed. This keeps the archive runner and both AI switches independent.
+    scheduler.start();
     const shutdown = () => {
         console.error('\nShutting down app...');
         mediaArchive.stop();

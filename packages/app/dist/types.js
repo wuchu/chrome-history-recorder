@@ -3,7 +3,9 @@
  * App configuration types and defaults.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULT_APP_CONFIG = exports.DEFAULT_MEDIA_ARCHIVE_INTERVAL_MINUTES = exports.MAX_MEDIA_ARCHIVE_INTERVAL_MINUTES = exports.MIN_MEDIA_ARCHIVE_INTERVAL_MINUTES = exports.SUPPORTED_VIDEO_MIME_TYPES = exports.DEFAULT_ENABLED_VIDEO_TYPES = exports.DEFAULT_MAX_VIDEO_SIZE = exports.MAX_VIDEO_SIZE_LIMIT = exports.MIN_VIDEO_SIZE_LIMIT = void 0;
+exports.DEFAULT_APP_CONFIG = exports.DEFAULT_TASK_CONCURRENCY = exports.MAX_TASK_CONCURRENCY = exports.MIN_TASK_CONCURRENCY = exports.DEFAULT_MEDIA_ARCHIVE_INTERVAL_MINUTES = exports.MAX_MEDIA_ARCHIVE_INTERVAL_MINUTES = exports.MIN_MEDIA_ARCHIVE_INTERVAL_MINUTES = exports.SUPPORTED_VIDEO_MIME_TYPES = exports.DEFAULT_ENABLED_VIDEO_TYPES = exports.DEFAULT_MAX_VIDEO_SIZE = exports.MAX_VIDEO_SIZE_LIMIT = exports.MIN_VIDEO_SIZE_LIMIT = void 0;
+exports.normalizeConcurrency = normalizeConcurrency;
+exports.migrateLegacyScheduling = migrateLegacyScheduling;
 exports.normalizeAppConfig = normalizeAppConfig;
 exports.MIN_VIDEO_SIZE_LIMIT = 1 * 1024 * 1024;
 exports.MAX_VIDEO_SIZE_LIMIT = 2 * 1024 * 1024 * 1024;
@@ -20,11 +22,17 @@ exports.SUPPORTED_VIDEO_MIME_TYPES = [
 exports.MIN_MEDIA_ARCHIVE_INTERVAL_MINUTES = 1;
 exports.MAX_MEDIA_ARCHIVE_INTERVAL_MINUTES = 1440;
 exports.DEFAULT_MEDIA_ARCHIVE_INTERVAL_MINUTES = 5;
+exports.MIN_TASK_CONCURRENCY = 1;
+exports.MAX_TASK_CONCURRENCY = 8;
+exports.DEFAULT_TASK_CONCURRENCY = 1;
 exports.DEFAULT_APP_CONFIG = {
     ollamaEndpoint: 'http://localhost:11434',
     language: 'zh-CN',
-    classificationConcurrency: 1,
-    classificationPaused: true,
+    ollamaMaxConcurrency: exports.DEFAULT_TASK_CONCURRENCY,
+    classifyConcurrency: exports.DEFAULT_TASK_CONCURRENCY,
+    renameConcurrency: exports.DEFAULT_TASK_CONCURRENCY,
+    classifyPaused: true,
+    renamePaused: true,
     maxFileSize: 50 * 1024 * 1024,
     captureVideos: true,
     maxVideoSize: exports.DEFAULT_MAX_VIDEO_SIZE,
@@ -32,7 +40,33 @@ exports.DEFAULT_APP_CONFIG = {
     mediaArchiveEnabled: false,
     mediaArchiveTargetPath: '',
     mediaArchiveIntervalMinutes: exports.DEFAULT_MEDIA_ARCHIVE_INTERVAL_MINUTES,
+    mediaArchiveConcurrency: exports.DEFAULT_TASK_CONCURRENCY,
 };
+function normalizeConcurrency(value) {
+    return typeof value === 'number' && Number.isFinite(value)
+        ? Math.min(exports.MAX_TASK_CONCURRENCY, Math.max(exports.MIN_TASK_CONCURRENCY, Math.floor(value)))
+        : exports.DEFAULT_TASK_CONCURRENCY;
+}
+/**
+ * Map legacy global scheduling settings onto the new per-task fields. The
+ * caller must run this before merging defaults so a persisted `false` is not
+ * shadowed by a default `true`.
+ */
+function migrateLegacyScheduling(config) {
+    const migrated = { ...config };
+    if (migrated.ollamaMaxConcurrency === undefined) {
+        migrated.ollamaMaxConcurrency = migrated.classificationConcurrency;
+    }
+    if (migrated.classifyPaused === undefined) {
+        migrated.classifyPaused = migrated.classificationPaused;
+    }
+    if (migrated.renamePaused === undefined) {
+        migrated.renamePaused = migrated.classificationPaused;
+    }
+    delete migrated.classificationConcurrency;
+    delete migrated.classificationPaused;
+    return migrated;
+}
 /**
  * Clamp and sanitize values loaded from disk or updated by the UI.
  */
@@ -50,13 +84,18 @@ function normalizeAppConfig(config) {
         : exports.DEFAULT_MEDIA_ARCHIVE_INTERVAL_MINUTES;
     return {
         ...config,
-        classificationConcurrency: Math.max(1, Math.floor(config.classificationConcurrency || 1)),
+        ollamaMaxConcurrency: normalizeConcurrency(config.ollamaMaxConcurrency),
+        classifyConcurrency: normalizeConcurrency(config.classifyConcurrency),
+        renameConcurrency: normalizeConcurrency(config.renameConcurrency),
+        classifyPaused: config.classifyPaused !== false,
+        renamePaused: config.renamePaused !== false,
         captureVideos: config.captureVideos !== false,
         maxVideoSize,
         enabledVideoTypes: enabledVideoTypes.length > 0 ? enabledVideoTypes : [...exports.DEFAULT_ENABLED_VIDEO_TYPES],
         mediaArchiveEnabled: config.mediaArchiveEnabled === true,
         mediaArchiveTargetPath: typeof config.mediaArchiveTargetPath === 'string' ? config.mediaArchiveTargetPath.trim() : '',
         mediaArchiveIntervalMinutes,
+        mediaArchiveConcurrency: normalizeConcurrency(config.mediaArchiveConcurrency),
     };
 }
 //# sourceMappingURL=types.js.map

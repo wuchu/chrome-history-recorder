@@ -14,6 +14,7 @@ import {
 import { encodeBase64Async } from './base64';
 import { evaluateMediaEligibility, isNativeVisionMimeType, normalizeMimeType } from './eligibility';
 import { UnprocessableMediaError } from './errors';
+import { AsyncSemaphore } from './semaphore';
 
 /**
  * Media access needed by the classifier. Implemented by the app with VFSAPI.
@@ -83,6 +84,11 @@ export interface OllamaClientConfig {
   language?: string;
   promptTemplates?: PromptTemplates;
   timeout?: number;
+  /**
+   * Maximum number of concurrent `/api/chat` requests. Health checks and
+   * model listings are not limited. Defaults to 1.
+   */
+  maxConcurrency?: number;
   media: MediaReader;
 }
 
@@ -333,6 +339,7 @@ export class OllamaClient {
   private onStatusCallback?: (available: boolean) => void;
   private healthCheckInterval?: ReturnType<typeof setInterval>;
   private lastHealthStatus?: boolean;
+  private readonly chatSemaphore: AsyncSemaphore;
 
   constructor(config: OllamaClientConfig) {
     this.config = {
@@ -341,9 +348,11 @@ export class OllamaClient {
       language: config.language ?? 'zh-CN',
       promptTemplates: config.promptTemplates,
       timeout: config.timeout ?? 60000,
+      maxConcurrency: config.maxConcurrency ?? 1,
       media: config.media,
     };
     this.media = config.media;
+    this.chatSemaphore = new AsyncSemaphore(this.config.maxConcurrency ?? 1);
   }
 
   /**
@@ -454,6 +463,9 @@ export class OllamaClient {
    * Update configuration
    */
   updateConfig(config: Partial<Omit<OllamaClientConfig, 'media'>>): void {
+    if (config.maxConcurrency !== undefined) {
+      this.chatSemaphore.setCapacity(config.maxConcurrency);
+    }
     this.config = {
       ...this.config,
       ...config,
@@ -548,44 +560,51 @@ export class OllamaClient {
     }
 
     const base64Image = await encodeBase64Async(new Uint8Array(buffer));
+    const release = await this.chatSemaphore.acquire();
 
-    const response = await fetch(`${this.config.endpoint}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: this.config.model,
-        messages: [
-          {
-            role: 'user',
-            content: prompt,
-            images: [base64Image],
-          },
-        ],
-        stream: false,
-      }),
-      signal: AbortSignal.timeout(this.config.timeout ?? 60000),
-    });
+    try {
+      const response = await fetch(`${this.config.endpoint}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: this.config.model,
+          messages: [
+            {
+              role: 'user',
+              content: prompt,
+              images: [base64Image],
+            },
+          ],
+          stream: false,
+        }),
+        // Start the timeout after acquiring the slot so queued time does not
+        // count against the request budget.
+        signal: AbortSignal.timeout(this.config.timeout ?? 60000),
+      });
 
-    if (!response.ok) {
-      const responseText = await response.text().catch(() => '');
-      const detail = responseText ? `: ${responseText}` : '';
-      if (response.status === 404) {
-        throw new Error(
-          `Ollama model not found or chat endpoint unavailable for model "${this.config.model}"${detail}. ` +
-            `Select an installed vision model from the model dropdown or run: ollama pull ${this.config.model}`
-        );
+      if (!response.ok) {
+        const responseText = await response.text().catch(() => '');
+        const detail = responseText ? `: ${responseText}` : '';
+        if (response.status === 404) {
+          throw new Error(
+            `Ollama model not found or chat endpoint unavailable for model "${this.config.model}"${detail}. ` +
+              `Select an installed vision model from the model dropdown or run: ollama pull ${this.config.model}`
+          );
+        }
+        if (response.status === 400) {
+          throw new Error(
+            `Ollama rejected the image request for model "${this.config.model}"${detail}. ` +
+              'This usually means the selected model does not support images. Select a vision model such as llava:7b.'
+          );
+        }
+        throw new Error(`Ollama API error: ${response.status}${detail}`);
       }
-      if (response.status === 400) {
-        throw new Error(
-          `Ollama rejected the image request for model "${this.config.model}"${detail}. ` +
-            'This usually means the selected model does not support images. Select a vision model such as llava:7b.'
-        );
-      }
-      throw new Error(`Ollama API error: ${response.status}${detail}`);
+
+      const data = (await response.json()) as { message?: { content?: string } };
+      return data.message?.content ?? '';
+    } finally {
+      release();
     }
-
-    const data = (await response.json()) as { message?: { content?: string } };
-    return data.message?.content ?? '';
   }
 
   /**

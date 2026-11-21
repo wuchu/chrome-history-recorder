@@ -7,7 +7,8 @@
  * classify/rename, with pending/processing/completed state.
  *
  * Archive tasks are claimed by a dedicated runner rather than the AI scheduler:
- * `classificationPaused` and Ollama availability must not stop archiving.
+ * `classifyPaused`, `renamePaused`, and Ollama availability must not stop
+ * archiving.
  *
  * The destination directory is the source of truth: a file named
  * `<hash>.<ext>` with a matching size is already archived. The companion state
@@ -42,6 +43,7 @@ export interface MediaArchiveStatus {
     enabled: boolean;
     targetPath: string;
     intervalMinutes: number;
+    concurrency: number;
     running: boolean;
     lastRunAt?: string;
     pendingCount: number;
@@ -52,6 +54,7 @@ export interface MediaArchiveConfigUpdate {
     enabled?: boolean;
     targetPath?: string;
     intervalMinutes?: number;
+    concurrency?: number;
 }
 export type MediaArchiveTargetErrorCode = 'invalid-path' | 'forbidden-path' | 'not-found' | 'not-a-directory' | 'not-writable' | 'volume-missing';
 export declare class MediaArchiveTargetError extends Error {
@@ -147,6 +150,7 @@ export declare class MediaArchiveWorker {
     runOnce(): Promise<MediaArchiveStatus>;
     /**
      * Process due archive tasks until the queue is empty or the limit is hit.
+     * Copies run concurrently up to `mediaArchiveConcurrency`.
      */
     drainTasks(limit?: number): Promise<void>;
     private kick;

@@ -7,7 +7,7 @@
  * no transport or storage dependency at runtime.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.bytesToBase64Chunked = exports.encodeBase64Async = exports.resolveTemplate = exports.renderTemplate = exports.DEFAULT_PROMPT_TEMPLATES = exports.isUnprocessableMediaError = exports.UnprocessableMediaError = exports.normalizeMimeType = exports.isNativeVisionMimeType = exports.evaluateMediaEligibility = exports.NATIVE_VISION_MIME_TYPES = exports.selectPreferredOllamaModel = exports.DEFAULT_PREFERRED_MODEL = exports.OllamaClient = void 0;
+exports.AsyncSemaphore = exports.bytesToBase64Chunked = exports.encodeBase64Async = exports.resolveTemplate = exports.renderTemplate = exports.DEFAULT_PROMPT_TEMPLATES = exports.isUnprocessableMediaError = exports.UnprocessableMediaError = exports.normalizeMimeType = exports.isNativeVisionMimeType = exports.evaluateMediaEligibility = exports.NATIVE_VISION_MIME_TYPES = exports.selectPreferredOllamaModel = exports.DEFAULT_PREFERRED_MODEL = exports.OllamaClient = void 0;
 var ollama_client_1 = require("./ollama-client");
 Object.defineProperty(exports, "OllamaClient", { enumerable: true, get: function () { return ollama_client_1.OllamaClient; } });
 Object.defineProperty(exports, "DEFAULT_PREFERRED_MODEL", { enumerable: true, get: function () { return ollama_client_1.DEFAULT_PREFERRED_MODEL; } });
@@ -27,4 +27,6 @@ Object.defineProperty(exports, "resolveTemplate", { enumerable: true, get: funct
 var base64_1 = require("./base64");
 Object.defineProperty(exports, "encodeBase64Async", { enumerable: true, get: function () { return base64_1.encodeBase64Async; } });
 Object.defineProperty(exports, "bytesToBase64Chunked", { enumerable: true, get: function () { return base64_1.bytesToBase64Chunked; } });
+var semaphore_1 = require("./semaphore");
+Object.defineProperty(exports, "AsyncSemaphore", { enumerable: true, get: function () { return semaphore_1.AsyncSemaphore; } });
 //# sourceMappingURL=index.js.map

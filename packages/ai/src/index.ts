@@ -36,3 +36,4 @@ export {
   type PromptTemplates,
 } from './prompt-templates';
 export { encodeBase64Async, bytesToBase64Chunked } from './base64';
+export { AsyncSemaphore } from './semaphore';

@@ -54,6 +54,44 @@ describe('media archive tasks', () => {
     return fs.readdirSync(dir).filter((name) => !name.endsWith('.part'));
   }
 
+  function controlledCopies() {
+    const resolvers: Array<() => void> = [];
+    const state = { started: 0, inFlight: 0, maxInFlight: 0 };
+
+    return {
+      state,
+      resolvers,
+      copyFile: async (source: string, destination: string): Promise<void> => {
+        state.started += 1;
+        state.inFlight += 1;
+        state.maxInFlight = Math.max(state.maxInFlight, state.inFlight);
+        await new Promise<void>((resolve) => resolvers.push(resolve));
+        await fs.promises.copyFile(source, destination);
+        state.inFlight -= 1;
+      },
+    };
+  }
+
+  async function startControlledArchive(concurrency?: number) {
+    vi.useRealTimers();
+    enableArchive();
+    if (concurrency !== undefined) {
+      store.update({ mediaArchiveConcurrency: concurrency });
+    }
+
+    const control = controlledCopies();
+    worker = new MediaArchiveWorker({
+      api,
+      store,
+      events,
+      workspacePath: workspace,
+      copyFile: control.copyFile,
+    });
+    // Establish the activation baseline before the test creates files.
+    await worker.runOnce();
+    return control;
+  }
+
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(START);
@@ -102,6 +140,69 @@ describe('media archive tasks', () => {
     );
     expect(archiveSummary().completed).toBe(1);
     expect(worker.getStatus().pendingCount).toBe(0);
+  });
+
+  it('processes archive tasks serially by default', async () => {
+    const control = await startControlledArchive();
+    const archiveWorker = worker as MediaArchiveWorker;
+
+    saveImage('serial-a');
+    saveImage('serial-b');
+    const run = archiveWorker.runOnce();
+
+    await vi.waitFor(() => expect(control.state.started).toBe(1));
+    expect(control.state.maxInFlight).toBe(1);
+
+    control.resolvers.shift()?.();
+    await vi.waitFor(() => expect(control.state.started).toBe(2));
+    control.resolvers.splice(0).forEach((resolve) => resolve());
+    await run;
+
+    expect(archiveSummary().completed).toBe(2);
+    expect(control.state.maxInFlight).toBe(1);
+  });
+
+  it('processes archive tasks concurrently up to the configured limit', async () => {
+    const control = await startControlledArchive(2);
+    const archiveWorker = worker as MediaArchiveWorker;
+
+    saveImage('concurrent-a');
+    saveImage('concurrent-b');
+    saveImage('concurrent-c');
+    const run = archiveWorker.runOnce();
+
+    await vi.waitFor(() => expect(control.state.started).toBe(2));
+    expect(control.state.maxInFlight).toBe(2);
+    expect(archiveWorker.getStatus().running).toBe(true);
+
+    control.resolvers.shift()?.();
+    await vi.waitFor(() => expect(control.state.started).toBe(3));
+    control.resolvers.splice(0).forEach((resolve) => resolve());
+    await run;
+
+    expect(archiveSummary().completed).toBe(3);
+    expect(control.state.maxInFlight).toBe(2);
+    expect(archiveWorker.getStatus().running).toBe(false);
+  });
+
+  it('stops claiming new archive tasks when disabled and lets in-flight copies finish', async () => {
+    const control = await startControlledArchive(2);
+    const archiveWorker = worker as MediaArchiveWorker;
+
+    saveImage('disable-a');
+    saveImage('disable-b');
+    saveImage('disable-c');
+    const run = archiveWorker.runOnce();
+
+    await vi.waitFor(() => expect(control.state.started).toBe(2));
+    store.update({ mediaArchiveEnabled: false });
+
+    control.resolvers.splice(0).forEach((resolve) => resolve());
+    await run;
+
+    expect(archiveSummary().completed).toBe(2);
+    expect(archiveSummary().pending).toBe(1);
+    expect(archiveWorker.getStatus().running).toBe(false);
   });
 
   it('does not enqueue files created before activation', async () => {

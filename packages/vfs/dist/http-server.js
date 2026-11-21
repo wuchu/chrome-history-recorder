@@ -61,7 +61,10 @@ function sanitizeDownloadName(raw) {
     return name.slice(0, 120) || 'media';
 }
 function sanitizeExtension(raw) {
-    return raw.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 10) || 'bin';
+    return (raw
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, '')
+        .slice(0, 10) || 'bin');
 }
 /**
  * Build a readable download name from AI metadata with a hash fallback.

@@ -29,8 +29,13 @@ export interface MediaArchiveCardProps {
   savingSave: boolean;
   savingRun: boolean;
   onRefresh: () => void;
-  onToggle: (enabled: boolean, targetPath: string, intervalMinutes: number) => void;
-  onSave: (targetPath: string, intervalMinutes: number) => void;
+  onToggle: (
+    enabled: boolean,
+    targetPath: string,
+    intervalMinutes: number,
+    concurrency: number
+  ) => void;
+  onSave: (targetPath: string, intervalMinutes: number, concurrency: number) => void;
   onRun: () => void;
 }
 
@@ -46,6 +51,7 @@ export default function MediaArchiveCard({
 }: MediaArchiveCardProps) {
   const [targetDraft, setTargetDraft] = useState(status?.targetPath ?? '');
   const [intervalDraft, setIntervalDraft] = useState(status?.intervalMinutes ?? 5);
+  const [concurrencyDraft, setConcurrencyDraft] = useState(status?.concurrency ?? 1);
 
   useEffect(() => {
     setTargetDraft(status?.targetPath ?? '');
@@ -56,6 +62,12 @@ export default function MediaArchiveCard({
       setIntervalDraft(status.intervalMinutes);
     }
   }, [status?.intervalMinutes]);
+
+  useEffect(() => {
+    if (status) {
+      setConcurrencyDraft(status.concurrency);
+    }
+  }, [status?.concurrency]);
 
   return (
     <Card
@@ -81,11 +93,16 @@ export default function MediaArchiveCard({
         />
       ) : (
         <Form layout="vertical">
-          <Form.Item label="启用归档">
+          <Form.Item
+            label="启用归档"
+            extra="关闭后停止领取归档任务，也不再为新捕获文件入队；重新启用时会补上关闭期间的文件。"
+          >
             <Switch
               checked={status.enabled}
               loading={savingSave}
-              onChange={(checked) => onToggle(checked, targetDraft.trim(), intervalDraft)}
+              onChange={(checked) =>
+                onToggle(checked, targetDraft.trim(), intervalDraft, concurrencyDraft)
+              }
             />
           </Form.Item>
 
@@ -99,12 +116,12 @@ export default function MediaArchiveCard({
                 value={targetDraft}
                 placeholder="例如 /Volumes/personal_folder/Private/VFS-media"
                 onChange={(event) => setTargetDraft(event.target.value)}
-                onPressEnter={() => onSave(targetDraft.trim(), intervalDraft)}
+                onPressEnter={() => onSave(targetDraft.trim(), intervalDraft, concurrencyDraft)}
               />
               <Button
                 type="primary"
                 loading={savingSave}
-                onClick={() => onSave(targetDraft.trim(), intervalDraft)}
+                onClick={() => onSave(targetDraft.trim(), intervalDraft, concurrencyDraft)}
               >
                 保存
               </Button>
@@ -119,6 +136,20 @@ export default function MediaArchiveCard({
               value={intervalDraft}
               style={{ width: 160 }}
               onChange={(value) => setIntervalDraft(typeof value === 'number' ? value : 5)}
+            />
+          </Form.Item>
+
+          <Form.Item
+            label="最大并发数"
+            extra="同时复制的文件数量，范围 1–8。默认 1；NAS 或机械盘建议保持较低值。"
+          >
+            <InputNumber
+              aria-label="归档并发数"
+              min={1}
+              max={8}
+              value={concurrencyDraft}
+              style={{ width: 160 }}
+              onChange={(value) => setConcurrencyDraft(typeof value === 'number' ? value : 1)}
             />
           </Form.Item>
 

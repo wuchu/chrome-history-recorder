@@ -12,6 +12,7 @@ const prompt_templates_1 = require("./prompt-templates");
 const base64_1 = require("./base64");
 const eligibility_1 = require("./eligibility");
 const errors_1 = require("./errors");
+const semaphore_1 = require("./semaphore");
 /**
  * Build the tag classification prompt from a user-editable template. The
  * vocabulary is a bounded top-N window; the model may reuse an existing
@@ -227,6 +228,7 @@ class OllamaClient {
     onStatusCallback;
     healthCheckInterval;
     lastHealthStatus;
+    chatSemaphore;
     constructor(config) {
         this.config = {
             endpoint: config.endpoint ?? 'http://localhost:11434',
@@ -234,9 +236,11 @@ class OllamaClient {
             language: config.language ?? 'zh-CN',
             promptTemplates: config.promptTemplates,
             timeout: config.timeout ?? 60000,
+            maxConcurrency: config.maxConcurrency ?? 1,
             media: config.media,
         };
         this.media = config.media;
+        this.chatSemaphore = new semaphore_1.AsyncSemaphore(this.config.maxConcurrency ?? 1);
     }
     /**
      * Check Ollama health
@@ -330,6 +334,9 @@ class OllamaClient {
      * Update configuration
      */
     updateConfig(config) {
+        if (config.maxConcurrency !== undefined) {
+            this.chatSemaphore.setCapacity(config.maxConcurrency);
+        }
         this.config = {
             ...this.config,
             ...config,
@@ -406,37 +413,45 @@ class OllamaClient {
             throw new Error('Ollama service not available');
         }
         const base64Image = await (0, base64_1.encodeBase64Async)(new Uint8Array(buffer));
-        const response = await fetch(`${this.config.endpoint}/api/chat`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                model: this.config.model,
-                messages: [
-                    {
-                        role: 'user',
-                        content: prompt,
-                        images: [base64Image],
-                    },
-                ],
-                stream: false,
-            }),
-            signal: AbortSignal.timeout(this.config.timeout ?? 60000),
-        });
-        if (!response.ok) {
-            const responseText = await response.text().catch(() => '');
-            const detail = responseText ? `: ${responseText}` : '';
-            if (response.status === 404) {
-                throw new Error(`Ollama model not found or chat endpoint unavailable for model "${this.config.model}"${detail}. ` +
-                    `Select an installed vision model from the model dropdown or run: ollama pull ${this.config.model}`);
+        const release = await this.chatSemaphore.acquire();
+        try {
+            const response = await fetch(`${this.config.endpoint}/api/chat`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    model: this.config.model,
+                    messages: [
+                        {
+                            role: 'user',
+                            content: prompt,
+                            images: [base64Image],
+                        },
+                    ],
+                    stream: false,
+                }),
+                // Start the timeout after acquiring the slot so queued time does not
+                // count against the request budget.
+                signal: AbortSignal.timeout(this.config.timeout ?? 60000),
+            });
+            if (!response.ok) {
+                const responseText = await response.text().catch(() => '');
+                const detail = responseText ? `: ${responseText}` : '';
+                if (response.status === 404) {
+                    throw new Error(`Ollama model not found or chat endpoint unavailable for model "${this.config.model}"${detail}. ` +
+                        `Select an installed vision model from the model dropdown or run: ollama pull ${this.config.model}`);
+                }
+                if (response.status === 400) {
+                    throw new Error(`Ollama rejected the image request for model "${this.config.model}"${detail}. ` +
+                        'This usually means the selected model does not support images. Select a vision model such as llava:7b.');
+                }
+                throw new Error(`Ollama API error: ${response.status}${detail}`);
             }
-            if (response.status === 400) {
-                throw new Error(`Ollama rejected the image request for model "${this.config.model}"${detail}. ` +
-                    'This usually means the selected model does not support images. Select a vision model such as llava:7b.');
-            }
-            throw new Error(`Ollama API error: ${response.status}${detail}`);
+            const data = (await response.json());
+            return data.message?.content ?? '';
         }
-        const data = (await response.json());
-        return data.message?.content ?? '';
+        finally {
+            release();
+        }
     }
     /**
      * Classification task: one vision call that generates tags and canonicalizes

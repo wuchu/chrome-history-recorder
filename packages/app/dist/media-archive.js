@@ -8,7 +8,8 @@
  * classify/rename, with pending/processing/completed state.
  *
  * Archive tasks are claimed by a dedicated runner rather than the AI scheduler:
- * `classificationPaused` and Ollama availability must not stop archiving.
+ * `classifyPaused`, `renamePaused`, and Ollama availability must not stop
+ * archiving.
  *
  * The destination directory is the source of truth: a file named
  * `<hash>.<ext>` with a matching size is already archived. The companion state
@@ -26,6 +27,7 @@ const fs_1 = __importDefault(require("fs"));
 const os_1 = __importDefault(require("os"));
 const path_1 = __importDefault(require("path"));
 const vfs_1 = require("vfs");
+const types_1 = require("./types");
 exports.MEDIA_ARCHIVE_STATE_FILE = 'media-archive-state.json';
 exports.MEDIA_ARCHIVE_STATE_VERSION = 1;
 exports.MEDIA_ARCHIVE_EVENT = 'media-archive:status';
@@ -121,6 +123,11 @@ function emptyState() {
         cursor: { createdAt: '', hash: '' },
         requeuePending: false,
     };
+}
+function normalizeArchiveConcurrency(value) {
+    return Number.isFinite(value)
+        ? Math.min(types_1.MAX_TASK_CONCURRENCY, Math.max(types_1.MIN_TASK_CONCURRENCY, Math.floor(value)))
+        : types_1.DEFAULT_TASK_CONCURRENCY;
 }
 /**
  * Tolerant state reader: a corrupt file never blocks archiving. Valid fields
@@ -261,6 +268,7 @@ class MediaArchiveWorker {
         const enabled = update.enabled ?? current.mediaArchiveEnabled;
         const rawTarget = update.targetPath ?? current.mediaArchiveTargetPath;
         const intervalMinutes = update.intervalMinutes ?? current.mediaArchiveIntervalMinutes;
+        const concurrency = normalizeArchiveConcurrency(update.concurrency ?? current.mediaArchiveConcurrency);
         let target = typeof rawTarget === 'string' ? rawTarget.trim() : '';
         if (enabled) {
             target = validateMediaArchiveTarget(target, { workspacePath: this.workspacePath });
@@ -269,6 +277,7 @@ class MediaArchiveWorker {
             mediaArchiveEnabled: enabled,
             mediaArchiveTargetPath: target,
             mediaArchiveIntervalMinutes: intervalMinutes,
+            mediaArchiveConcurrency: concurrency,
         });
         this.reconfigure();
         return this.getStatus();
@@ -280,6 +289,7 @@ class MediaArchiveWorker {
             enabled: config.mediaArchiveEnabled === true,
             targetPath: config.mediaArchiveTargetPath,
             intervalMinutes: config.mediaArchiveIntervalMinutes,
+            concurrency: config.mediaArchiveConcurrency,
             running: this.running,
             lastRunAt: this.lastRunAt,
             pendingCount: summary.pending + summary.processing,
@@ -372,6 +382,7 @@ class MediaArchiveWorker {
     }
     /**
      * Process due archive tasks until the queue is empty or the limit is hit.
+     * Copies run concurrently up to `mediaArchiveConcurrency`.
      */
     async drainTasks(limit = this.maxTasksPerDrain) {
         if (this.running) {
@@ -395,19 +406,45 @@ class MediaArchiveWorker {
         }
         this.running = true;
         this.emitStatus();
+        const inFlight = new Map();
         let processed = 0;
         try {
             while (processed < limit) {
-                if (this.store.get().mediaArchiveEnabled !== true) {
+                const current = this.store.get();
+                if (current.mediaArchiveEnabled !== true) {
                     break;
                 }
-                const [task] = this.api.claimTasks(1, [exports.ARCHIVE_TASK_TYPE]);
-                if (!task) {
-                    break;
+                const concurrency = normalizeArchiveConcurrency(current.mediaArchiveConcurrency);
+                const free = concurrency - inFlight.size;
+                if (free <= 0) {
+                    await Promise.race(Array.from(inFlight.values()));
+                    continue;
                 }
-                await this.processTask(task, target);
-                processed += 1;
+                const tasks = this.api.claimTasks(Math.min(free, limit - processed), [exports.ARCHIVE_TASK_TYPE]);
+                if (tasks.length === 0) {
+                    if (inFlight.size === 0) {
+                        break;
+                    }
+                    await Promise.race(Array.from(inFlight.values()));
+                    continue;
+                }
+                processed += tasks.length;
+                for (const task of tasks) {
+                    const hash = task.target_hash;
+                    const promise = this.processTask(task, target)
+                        .catch((error) => {
+                        this.lastError = error instanceof Error ? error.message : String(error);
+                        this.logger.warn('[MediaArchive] Task processing failed:', this.lastError);
+                    })
+                        .finally(() => {
+                        inFlight.delete(hash);
+                        this.emitQueueUpdated();
+                        this.emitStatus();
+                    });
+                    inFlight.set(hash, promise);
+                }
             }
+            await Promise.allSettled(Array.from(inFlight.values()));
         }
         catch (error) {
             this.lastError = error instanceof Error ? error.message : String(error);

@@ -61,6 +61,11 @@ export interface OllamaClientConfig {
     language?: string;
     promptTemplates?: PromptTemplates;
     timeout?: number;
+    /**
+     * Maximum number of concurrent `/api/chat` requests. Health checks and
+     * model listings are not limited. Defaults to 1.
+     */
+    maxConcurrency?: number;
     media: MediaReader;
 }
 /**
@@ -78,6 +83,7 @@ export declare class OllamaClient {
     private onStatusCallback?;
     private healthCheckInterval?;
     private lastHealthStatus?;
+    private readonly chatSemaphore;
     constructor(config: OllamaClientConfig);
     /**
      * Check Ollama health

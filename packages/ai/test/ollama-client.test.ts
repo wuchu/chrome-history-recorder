@@ -19,6 +19,30 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+}
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
+
+/**
+ * Call the private vision request directly so queue-order tests do not depend
+ * on media preparation timing.
+ */
+function callChat(client: OllamaClient, prompt: string): Promise<string> {
+  const internal = client as unknown as {
+    callVision(prompt: string, buffer: ArrayBuffer): Promise<string>;
+  };
+  return internal.callVision(prompt, new ArrayBuffer(1));
+}
+
 let fetchMock: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
@@ -161,5 +185,161 @@ describe('OllamaClient', () => {
     const error = await client.classifyTagsByHash('missing-hash').catch((caught) => caught);
     expect(error).toBeInstanceOf(Error);
     expect(isUnprocessableMediaError(error)).toBe(false);
+  });
+
+  it('limits concurrent chat requests to one by default', async () => {
+    const client = new OllamaClient({ model: 'llava:7b', media });
+    await client.checkHealth();
+
+    const gates: Deferred<Response>[] = [];
+    fetchMock.mockImplementation(async (url: string | URL) => {
+      if (String(url).endsWith('/api/tags')) return jsonResponse({ models: [] });
+      const gate = deferred<Response>();
+      gates.push(gate);
+      return gate.promise;
+    });
+
+    const first = callChat(client, 'FIRST');
+    const second = callChat(client, 'SECOND');
+
+    await vi.waitFor(() => expect(gates).toHaveLength(1));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(gates).toHaveLength(1);
+
+    gates[0].resolve(jsonResponse({ message: { content: 'ok' } }));
+    await expect(first).resolves.toBe('ok');
+
+    await vi.waitFor(() => expect(gates).toHaveLength(2));
+    gates[1].resolve(jsonResponse({ message: { content: 'ok' } }));
+    await expect(second).resolves.toBe('ok');
+  });
+
+  it('admits queued chat requests in arrival order', async () => {
+    const client = new OllamaClient({ model: 'llava:7b', media });
+    await client.checkHealth();
+
+    const prompts: string[] = [];
+    const gates: Deferred<Response>[] = [];
+    fetchMock.mockImplementation(async (url: string | URL, init?: RequestInit) => {
+      if (String(url).endsWith('/api/tags')) return jsonResponse({ models: [] });
+      const body = JSON.parse(String(init?.body)) as {
+        messages?: Array<{ content?: string }>;
+      };
+      prompts.push(body.messages?.[0]?.content ?? '');
+      const gate = deferred<Response>();
+      gates.push(gate);
+      return gate.promise;
+    });
+
+    const first = callChat(client, 'FIRST');
+    const second = callChat(client, 'SECOND');
+
+    await vi.waitFor(() => expect(gates).toHaveLength(1));
+    gates[0].resolve(jsonResponse({ message: { content: 'ok' } }));
+    await first;
+
+    await vi.waitFor(() => expect(gates).toHaveLength(2));
+    expect(prompts).toEqual(['FIRST', 'SECOND']);
+    gates[1].resolve(jsonResponse({ message: { content: 'ok' } }));
+    await second;
+  });
+
+  it('does not make health checks or model listings wait for a chat slot', async () => {
+    const client = new OllamaClient({ model: 'llava:7b', media });
+    await client.checkHealth();
+
+    const chatGate = deferred<Response>();
+    fetchMock.mockImplementation(async (url: string | URL) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({ models: [{ name: 'llava:7b' }] });
+      }
+      return chatGate.promise;
+    });
+
+    const chat = callChat(client, 'FIRST');
+    await vi.waitFor(() =>
+      expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/api/chat'))).toBe(true)
+    );
+
+    const models = await client.listModels();
+    expect(models.map((model) => model.name)).toEqual(['llava:7b']);
+
+    chatGate.resolve(jsonResponse({ message: { content: 'ok' } }));
+    await expect(chat).resolves.toBe('ok');
+  });
+
+  it('starts the request timeout only after a chat slot is acquired', async () => {
+    const client = new OllamaClient({ model: 'llava:7b', media });
+    await client.checkHealth();
+
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+    const gates: Deferred<Response>[] = [];
+    fetchMock.mockImplementation(async (url: string | URL) => {
+      if (String(url).endsWith('/api/tags')) return jsonResponse({ models: [] });
+      const gate = deferred<Response>();
+      gates.push(gate);
+      return gate.promise;
+    });
+
+    const first = callChat(client, 'FIRST');
+    await vi.waitFor(() => expect(gates).toHaveLength(1));
+    expect(timeoutSpy).toHaveBeenCalledTimes(1);
+
+    const second = callChat(client, 'SECOND');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(timeoutSpy).toHaveBeenCalledTimes(1);
+
+    gates[0].resolve(jsonResponse({ message: { content: 'ok' } }));
+    await first;
+
+    await vi.waitFor(() => expect(gates).toHaveLength(2));
+    expect(timeoutSpy).toHaveBeenCalledTimes(2);
+
+    gates[1].resolve(jsonResponse({ message: { content: 'ok' } }));
+    await second;
+  });
+
+  it('releases the chat slot when a request fails', async () => {
+    const client = new OllamaClient({ model: 'llava:7b', media });
+    await client.checkHealth();
+
+    let chatCalls = 0;
+    fetchMock.mockImplementation(async (url: string | URL) => {
+      if (String(url).endsWith('/api/tags')) return jsonResponse({ models: [] });
+      chatCalls += 1;
+      if (chatCalls === 1) return new Response('boom', { status: 500 });
+      return jsonResponse({ message: { content: 'ok' } });
+    });
+
+    const first = callChat(client, 'FIRST');
+    const second = callChat(client, 'SECOND');
+
+    await expect(first).rejects.toThrow('Ollama API error: 500');
+    await expect(second).resolves.toBe('ok');
+    expect(chatCalls).toBe(2);
+  });
+
+  it('applies an increased chat concurrency to queued requests', async () => {
+    const client = new OllamaClient({ model: 'llava:7b', media });
+    await client.checkHealth();
+
+    const gates: Deferred<Response>[] = [];
+    fetchMock.mockImplementation(async (url: string | URL) => {
+      if (String(url).endsWith('/api/tags')) return jsonResponse({ models: [] });
+      const gate = deferred<Response>();
+      gates.push(gate);
+      return gate.promise;
+    });
+
+    const first = callChat(client, 'FIRST');
+    const second = callChat(client, 'SECOND');
+
+    await vi.waitFor(() => expect(gates).toHaveLength(1));
+    client.updateConfig({ maxConcurrency: 2 });
+    await vi.waitFor(() => expect(gates).toHaveLength(2));
+
+    gates[0].resolve(jsonResponse({ message: { content: 'ok' } }));
+    gates[1].resolve(jsonResponse({ message: { content: 'ok' } }));
+    await expect(Promise.all([first, second])).resolves.toEqual(['ok', 'ok']);
   });
 });

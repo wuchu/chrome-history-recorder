@@ -7,7 +7,13 @@
 
 import fs from 'fs';
 import path from 'path';
-import { DEFAULT_APP_CONFIG, normalizeAppConfig, type AppConfig } from './types';
+import {
+  DEFAULT_APP_CONFIG,
+  migrateLegacyScheduling,
+  normalizeAppConfig,
+  type AppConfig,
+  type LegacySchedulingConfig,
+} from './types';
 
 export class ConfigStore {
   private readonly configPath: string;
@@ -28,8 +34,12 @@ export class ConfigStore {
     this.authoritative = fs.existsSync(this.authoritativeMarkerPath);
     try {
       if (fs.existsSync(this.configPath)) {
-        const parsed = JSON.parse(fs.readFileSync(this.configPath, 'utf-8')) as Partial<AppConfig>;
-        this.config = normalizeAppConfig({ ...DEFAULT_APP_CONFIG, ...parsed });
+        const parsed = JSON.parse(fs.readFileSync(this.configPath, 'utf-8')) as Partial<AppConfig> &
+          LegacySchedulingConfig;
+        this.config = normalizeAppConfig({
+          ...DEFAULT_APP_CONFIG,
+          ...migrateLegacyScheduling(parsed),
+        } as AppConfig);
       }
     } catch (error) {
       console.warn('[ConfigStore] Failed to load config, using defaults:', error);
@@ -85,12 +95,15 @@ export class ConfigStore {
    * One-time import of legacy extension configuration. Returns false when the
    * app already has authoritative configuration.
    */
-  importLegacy(legacy: Partial<AppConfig>): boolean {
+  importLegacy(legacy: Partial<AppConfig> & LegacySchedulingConfig): boolean {
     if (this.authoritative) {
       return false;
     }
 
-    this.config = normalizeAppConfig({ ...this.config, ...legacy });
+    this.config = normalizeAppConfig({
+      ...this.config,
+      ...migrateLegacyScheduling(legacy),
+    } as AppConfig);
     this.persist();
     this.markAuthoritative();
     this.notify();

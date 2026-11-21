@@ -24,17 +24,6 @@ The system SHALL model AI work as typed tasks that share one queue, where each t
 - **THEN** the system SHALL mark the task failed with an actionable error message
 - **AND** it SHALL continue processing other tasks
 
-### Requirement: Global concurrency limit across task types
-The system SHALL apply a single global concurrency limit to all task types so that local AI model load is bounded regardless of how many task types are queued.
-
-#### Scenario: Concurrency shared between types
-- **WHEN** the global concurrency limit is N and N tasks of any type are processing
-- **THEN** the engine SHALL NOT claim additional tasks of any type until a slot frees
-
-#### Scenario: Adjust concurrency
-- **WHEN** the user changes the concurrency setting
-- **THEN** the engine SHALL apply the new limit to subsequent claims without restarting the queue
-
 ### Requirement: Queue persistence
 
 The system SHALL persist typed task state in the VFS Service storage layer so task status can be resumed and reported after app or browser restart.
@@ -54,14 +43,15 @@ The system SHALL persist typed task state in the VFS Service storage layer so ta
 
 ### Requirement: Queue operations
 The system SHALL support typed task operations for media hashes captured and stored in VFS.
+The engine SHALL claim tasks according to the pause state and concurrency limit of each task type.
 
 #### Scenario: Add to queue
 - **WHEN** a new media file is captured and saved to VFS
 - **THEN** the system SHALL add its hash to the pending task queue for each configured task type
 
 #### Scenario: Claim next task
-- **WHEN** the engine is running and a concurrency slot is free
-- **THEN** the system SHALL atomically claim a pending task of any type for processing
+- **WHEN** a task type is not paused and a slot for that task type is free
+- **THEN** the system SHALL atomically claim a pending task of that type for processing
 - **AND** a claimed task SHALL move from `pending` to `processing`
 
 #### Scenario: Mark complete
@@ -115,13 +105,13 @@ The system SHALL support priority-based processing for VFS classification queue 
 
 ### Requirement: Queue status
 
-The system SHALL provide queue status information that includes per-type counts and scheduler state.
+The system SHALL provide queue status information that includes per-type counts and per-type scheduler state.
 
 #### Scenario: Show queue status
 - **WHEN** the UI requests queue status
 - **THEN** the system SHALL return pending, processing, completed, failed, and skipped counts
 - **AND** it SHALL include a per-task-type breakdown
-- **AND** it SHALL include engine running or paused state
+- **AND** it SHALL include the running or paused state, processing count, and concurrency limit for each task type
 - **AND** `total` SHALL include skipped rows
 
 #### Scenario: Refresh queue after actions
@@ -141,60 +131,75 @@ The system SHALL tolerate missing or unavailable queue storage without exposing 
 
 ### Requirement: Scheduler running state
 
-The system SHALL track whether task processing is running or paused and SHALL persist the user's start/pause intent in app configuration.
+The system SHALL track whether each task type is running or paused and SHALL persist the user's start/pause intent per task type in app configuration.
 
 #### Scenario: Start processing
-- **WHEN** the user starts processing
-- **THEN** the system SHALL mark the scheduler as running
-- **AND** pending tasks SHALL be eligible for processing
-- **AND** app configuration SHALL record processing as active
+- **WHEN** the user starts a task type
+- **THEN** the system SHALL mark that task type as running
+- **AND** pending tasks of that type SHALL be eligible for processing
+- **AND** app configuration SHALL record that task type as active
 
 #### Scenario: Pause processing
-- **WHEN** the user pauses processing
-- **THEN** the system SHALL mark the scheduler as paused
-- **AND** the scheduler SHALL stop claiming new pending tasks
-- **AND** active tasks SHALL be allowed to complete or fail
-- **AND** app configuration SHALL record processing as paused
+- **WHEN** the user pauses a task type
+- **THEN** the system SHALL mark that task type as paused
+- **AND** the engine SHALL stop claiming new pending tasks of that type
+- **AND** active tasks of that type SHALL be allowed to complete or fail
+- **AND** app configuration SHALL record that task type as paused
+
+#### Scenario: Independent task-type state
+- **WHEN** one task type is paused and another is running
+- **THEN** the paused type SHALL NOT claim tasks
+- **AND** the running type SHALL continue claiming tasks
 
 #### Scenario: Report engine state
 - **WHEN** queue status is requested
-- **THEN** the system SHALL include engine running or paused state with queue counts
+- **THEN** the system SHALL include the running or paused state for each task type with queue counts
 
 ### Requirement: Default paused classification processing
 
-The system SHALL default AI classification queue processing to paused for new/default app configuration.
+The system SHALL default both AI task types to paused for new/default app configuration.
 
 #### Scenario: Initialize with default paused state
-- **WHEN** the app initializes without a saved classification pause setting
-- **THEN** the scheduler SHALL initialize in paused state
-- **AND** it SHALL NOT claim pending classification tasks until explicitly started
+- **WHEN** the app initializes without saved per-type pause settings
+- **THEN** the scheduler SHALL initialize `classify` and `rename` as paused
+- **AND** it SHALL NOT claim pending tasks of either type until explicitly started
 
 #### Scenario: Respect saved running state
-- **WHEN** the app initializes with saved configuration indicating classification is not paused
-- **THEN** the scheduler SHALL initialize in running state
-- **AND** pending tasks SHALL be eligible for processing
+- **WHEN** the app initializes with saved configuration indicating a task type is not paused
+- **THEN** the scheduler SHALL initialize that task type as running
+- **AND** pending tasks of that type SHALL be eligible for processing
 
 #### Scenario: Respect saved paused state
-- **WHEN** the app initializes with saved configuration indicating classification is paused
-- **THEN** the scheduler SHALL initialize in paused state
-- **AND** pending tasks SHALL NOT be processed until the user starts classification
+- **WHEN** the app initializes with saved configuration indicating a task type is paused
+- **THEN** the scheduler SHALL initialize that task type as paused
+- **AND** pending tasks of that type SHALL NOT be processed until the user starts it
+
+#### Scenario: Mixed saved state
+- **WHEN** the app initializes with one AI task type running and the other paused
+- **THEN** the scheduler SHALL claim tasks only for the running type
 
 ### Requirement: Paused scheduler queueing semantics
-The system SHALL allow media to be queued while classification processing is paused, without consuming pending tasks.
+
+The system SHALL allow media to be queued while a task type is paused, without consuming pending tasks of that type.
 
 #### Scenario: Capture media while paused
-- **WHEN** media is captured while the scheduler is paused
-- **THEN** the system SHALL be allowed to enqueue the media for classification
-- **AND** the queued task SHALL remain pending until classification processing is started
+- **WHEN** media is captured while one or both AI task types are paused
+- **THEN** the system SHALL be allowed to enqueue the media for those task types
+- **AND** the queued tasks SHALL remain pending until the corresponding task type is started
 
 #### Scenario: Manual requeue while paused
-- **WHEN** the user requeues a media item while the scheduler is paused
+- **WHEN** the user requeues a media item while its task type is paused
 - **THEN** the system SHALL add or reset the task as pending
-- **AND** the scheduler SHALL NOT process the task until classification processing is started
+- **AND** the scheduler SHALL NOT process the task until that task type is started
 
 #### Scenario: Start processing queued tasks
-- **WHEN** the user starts classification after tasks have accumulated while paused
-- **THEN** the scheduler SHALL begin processing pending tasks subject to concurrency and Ollama availability
+- **WHEN** the user starts a task type after tasks have accumulated while paused
+- **THEN** the scheduler SHALL begin processing pending tasks of that type subject to its concurrency limit and Ollama availability
+
+#### Scenario: Pause one type does not block the other
+- **WHEN** `classify` is paused and `rename` is running
+- **THEN** pending `rename` tasks SHALL continue to be processed
+- **AND** pending `classify` tasks SHALL remain pending
 
 ### Requirement: User-triggered requeue
 The system SHALL allow an existing media item to be requeued per task type.
@@ -234,7 +239,7 @@ The system SHALL provide a full rescan that requeues all eligible media for one 
 
 #### Scenario: Full rescan respects concurrency
 - **WHEN** a full rescan enqueues many tasks
-- **THEN** the engine SHALL process them subject to the global concurrency limit
+- **THEN** the engine SHALL process them subject to each task type's concurrency limit
 
 ### Requirement: Queue status events
 The system SHALL publish queue and task status changes to connected extension clients.
@@ -288,3 +293,24 @@ The task queue SHALL suspend tasks whose target file is in the trash instead of 
 - **WHEN** the app restarts with pending tasks for trashed files
 - **THEN** those tasks SHALL remain persisted and suspended
 - **AND** stale-task recovery SHALL NOT process them while the target is trashed
+
+### Requirement: Per-task-type concurrency limits
+
+The engine SHALL apply an independent concurrency limit to each AI task type.
+
+#### Scenario: Concurrency applies within a type
+- **WHEN** a task type's concurrency limit is `N` and `N` tasks of that type are processing
+- **THEN** the engine SHALL NOT claim additional tasks of that type until a slot frees
+
+#### Scenario: Concurrency does not apply across types
+- **WHEN** all slots of one task type are busy
+- **THEN** the engine MAY still claim tasks of another type while its own slots are free
+
+#### Scenario: Adjust concurrency
+- **WHEN** the user changes a task type's concurrency setting
+- **THEN** the engine SHALL apply the new limit to subsequent claims of that type without restarting the queue
+
+#### Scenario: Skipped task releases a slot
+- **WHEN** a task becomes `skipped`
+- **THEN** it SHALL release its task-type slot
+- **AND** it SHALL NOT count against the concurrency limit

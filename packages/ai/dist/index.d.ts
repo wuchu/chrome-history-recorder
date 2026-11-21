@@ -10,4 +10,5 @@ export { NATIVE_VISION_MIME_TYPES, evaluateMediaEligibility, isNativeVisionMimeT
 export { UnprocessableMediaError, isUnprocessableMediaError, type UnprocessableMediaReason, } from './errors';
 export { DEFAULT_PROMPT_TEMPLATES, renderTemplate, resolveTemplate, type PromptTemplates, } from './prompt-templates';
 export { encodeBase64Async, bytesToBase64Chunked } from './base64';
+export { AsyncSemaphore } from './semaphore';
 //# sourceMappingURL=index.d.ts.map

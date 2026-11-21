@@ -38,8 +38,11 @@ export interface ExtensionConfig {
   visionModel?: string;
   language: string;
   promptTemplates?: PromptTemplates;
-  classificationConcurrency: number;
-  classificationPaused: boolean;
+  ollamaMaxConcurrency: number;
+  classifyConcurrency: number;
+  renameConcurrency: number;
+  classifyPaused: boolean;
+  renamePaused: boolean;
   maxFileSize: number;
   captureVideos: boolean;
   maxVideoSize: number;
@@ -47,6 +50,7 @@ export interface ExtensionConfig {
   mediaArchiveEnabled: boolean;
   mediaArchiveTargetPath: string;
   mediaArchiveIntervalMinutes: number;
+  mediaArchiveConcurrency: number;
 }
 
 /**
@@ -55,8 +59,11 @@ export interface ExtensionConfig {
 export const DEFAULT_EXTENSION_CONFIG: ExtensionConfig = {
   ollamaEndpoint: 'http://localhost:11434',
   language: 'zh-CN',
-  classificationConcurrency: 1,
-  classificationPaused: true,
+  ollamaMaxConcurrency: 1,
+  classifyConcurrency: 1,
+  renameConcurrency: 1,
+  classifyPaused: true,
+  renamePaused: true,
   maxFileSize: 50 * 1024 * 1024,
   captureVideos: true,
   maxVideoSize: DEFAULT_MAX_VIDEO_SIZE,
@@ -64,6 +71,7 @@ export const DEFAULT_EXTENSION_CONFIG: ExtensionConfig = {
   mediaArchiveEnabled: false,
   mediaArchiveTargetPath: '',
   mediaArchiveIntervalMinutes: 5,
+  mediaArchiveConcurrency: 1,
 };
 
 export interface OllamaModel {
@@ -75,11 +83,17 @@ export interface OllamaModel {
   quantizationLevel?: string;
 }
 
+export interface SchedulerTaskTypeStatus {
+  state: 'running' | 'paused';
+  processing: number;
+  concurrency: number;
+}
+
 export interface SchedulerStatus {
   state: 'running' | 'paused';
   running: boolean;
   processing: number;
-  concurrency: number;
+  byType: Record<string, SchedulerTaskTypeStatus>;
 }
 
 /**
@@ -105,6 +119,7 @@ export interface MediaArchiveStatus {
   enabled: boolean;
   targetPath: string;
   intervalMinutes: number;
+  concurrency: number;
   running: boolean;
   lastRunAt?: string;
   pendingCount: number;
@@ -116,6 +131,7 @@ export interface MediaArchiveConfigUpdate {
   enabled?: boolean;
   targetPath?: string;
   intervalMinutes?: number;
+  concurrency?: number;
 }
 
 export type TaskType = 'classify' | 'rename' | (string & {});
@@ -438,6 +454,10 @@ export async function startClassification(): Promise<SchedulerStatus> {
 
 export async function pauseClassification(): Promise<SchedulerStatus> {
   return sendRuntimeMessage<SchedulerStatus>({ type: 'pauseClassification' });
+}
+
+export async function setTaskPaused(taskType: TaskType, paused: boolean): Promise<SchedulerStatus> {
+  return sendRuntimeMessage<SchedulerStatus>({ type: 'setTaskPaused', taskType, paused });
 }
 
 export async function retryFailedTasks(taskType?: TaskType): Promise<{ count: number }> {

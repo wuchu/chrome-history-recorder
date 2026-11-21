@@ -13,11 +13,17 @@ import { MediaEligibilityGate, type EnqueueOptions } from './media-eligibility';
 
 export type SchedulerState = 'running' | 'paused';
 
+export interface SchedulerTaskTypeStatus {
+  state: SchedulerState;
+  processing: number;
+  concurrency: number;
+}
+
 export interface SchedulerStatus {
   state: SchedulerState;
   running: boolean;
   processing: number;
-  concurrency: number;
+  byType: Record<string, SchedulerTaskTypeStatus>;
 }
 
 export interface SchedulerDependencies {
@@ -39,8 +45,10 @@ export class Scheduler {
   private readonly ai: OllamaClient;
   private readonly events: EventBus;
   private readonly pollInterval: number;
-  private concurrency: number;
-  private processing = new Set<string>();
+  private readonly concurrencyByType = new Map<string, number>();
+  private readonly pausedByType = new Map<string, boolean>();
+  private readonly processing = new Set<string>();
+  private readonly processingCountByType = new Map<string, number>();
   private running = false;
   private ticking = false;
   private intervalId: ReturnType<typeof setInterval> | null = null;
@@ -52,7 +60,11 @@ export class Scheduler {
     this.ai = dependencies.ai;
     this.events = dependencies.events;
     this.pollInterval = dependencies.pollInterval ?? 5000;
-    this.concurrency = dependencies.config.get().classificationConcurrency;
+    const config = dependencies.config.get();
+    this.concurrencyByType.set('classify', config.classifyConcurrency);
+    this.concurrencyByType.set('rename', config.renameConcurrency);
+    this.pausedByType.set('classify', config.classifyPaused);
+    this.pausedByType.set('rename', config.renamePaused);
     this.gate = new MediaEligibilityGate(this.api);
 
     this.registerHandler('classify', (task) => this.handleClassify(task));
@@ -85,15 +97,19 @@ export class Scheduler {
   }
 
   pause(): void {
-    this.stop();
+    for (const taskType of this.handlers.keys()) {
+      this.setPaused(taskType, true);
+    }
   }
 
   resume(): void {
-    this.start();
+    for (const taskType of this.handlers.keys()) {
+      this.setPaused(taskType, false);
+    }
   }
 
   isRunning(): boolean {
-    return this.running;
+    return this.getSchedulerStatus().running;
   }
 
   kick(): void {
@@ -108,18 +124,72 @@ export class Scheduler {
   }
 
   getSchedulerStatus(): SchedulerStatus {
+    const byType: Record<string, SchedulerTaskTypeStatus> = {};
+    let anyRunning = false;
+    let processing = 0;
+
+    for (const taskType of this.handlers.keys()) {
+      const state: SchedulerState = this.isTaskTypePaused(taskType) ? 'paused' : 'running';
+      const typeProcessing = this.processingCount(taskType);
+      processing += typeProcessing;
+      byType[taskType] = {
+        state,
+        processing: typeProcessing,
+        concurrency: this.getConcurrency(taskType),
+      };
+      if (state === 'running') anyRunning = true;
+    }
+
     return {
-      state: this.running ? 'running' : 'paused',
-      running: this.running,
-      processing: this.processing.size,
-      concurrency: this.concurrency,
+      state: anyRunning ? 'running' : 'paused',
+      running: anyRunning,
+      processing,
+      byType,
     };
   }
 
-  updateConcurrency(concurrency: number): void {
-    this.concurrency = Math.max(1, Math.floor(concurrency));
+  updateConcurrency(taskType: string, concurrency: number): void {
+    this.concurrencyByType.set(taskType, Math.max(1, Math.floor(concurrency)));
     this.broadcastSchedulerStatus();
     void this.tick();
+  }
+
+  updatePaused(taskType: string, paused: boolean): void {
+    this.setPaused(taskType, paused);
+  }
+
+  private setPaused(taskType: string, paused: boolean): void {
+    this.pausedByType.set(taskType, paused);
+    this.broadcastSchedulerStatus();
+    if (!paused) {
+      void this.tick();
+    }
+  }
+
+  private getConcurrency(taskType: string): number {
+    return this.concurrencyByType.get(taskType) ?? 1;
+  }
+
+  private isTaskTypePaused(taskType: string): boolean {
+    return this.pausedByType.get(taskType) === true;
+  }
+
+  private processingCount(taskType: string): number {
+    return this.processingCountByType.get(taskType) ?? 0;
+  }
+
+  private beginProcessing(taskType: string, hash: string): boolean {
+    const key = `${taskType}:${hash}`;
+    if (this.processing.has(key)) return false;
+    this.processing.add(key);
+    this.processingCountByType.set(taskType, this.processingCount(taskType) + 1);
+    return true;
+  }
+
+  private endProcessing(taskType: string, hash: string): void {
+    const key = `${taskType}:${hash}`;
+    if (!this.processing.delete(key)) return;
+    this.processingCountByType.set(taskType, Math.max(0, this.processingCount(taskType) - 1));
   }
 
   getQueueStatus(): QueueStatus {
@@ -270,28 +340,36 @@ export class Scheduler {
     if (!this.running || this.ticking) return;
     if (!this.ai.isAvailable()) return;
 
-    const free = this.concurrency - this.processing.size;
-    if (free <= 0) return;
-
     this.ticking = true;
     try {
       // Only claim task types this scheduler owns. The media archive runner
       // claims its own `archive` tasks so AI pause/Ollama availability cannot
       // block archiving.
-      const tasks = this.api.claimTasks(free, Array.from(this.handlers.keys()));
-      for (const task of tasks) {
-        const key = `${task.task_type}:${task.target_hash}`;
-        if (this.processing.has(key)) continue;
-        this.processing.add(key);
-        this.broadcastSchedulerStatus();
-        void this.runTask(task).finally(() => {
-          this.processing.delete(key);
+      let claimedAny = false;
+
+      for (const taskType of this.handlers.keys()) {
+        if (this.isTaskTypePaused(taskType)) continue;
+
+        const free = this.getConcurrency(taskType) - this.processingCount(taskType);
+        if (free <= 0) continue;
+
+        const tasks = this.api.claimTasks(free, [taskType as TaskType]);
+        if (tasks.length === 0) continue;
+        claimedAny = true;
+
+        for (const task of tasks) {
+          const hash = task.target_hash;
+          if (!this.beginProcessing(taskType, hash)) continue;
           this.broadcastSchedulerStatus();
-          void this.tick();
-        });
+          void this.runTask(task).finally(() => {
+            this.endProcessing(taskType, hash);
+            this.broadcastSchedulerStatus();
+            void this.tick();
+          });
+        }
       }
 
-      if (tasks.length > 0) {
+      if (claimedAny) {
         this.broadcastQueueUpdated();
       }
     } catch (error) {

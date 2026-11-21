@@ -8,6 +8,7 @@ const status: MediaArchiveStatus = {
   enabled: true,
   targetPath: '/Volumes/archive',
   intervalMinutes: 5,
+  concurrency: 2,
   running: false,
   pendingCount: 0,
   failedCount: 0,
@@ -79,7 +80,17 @@ describe('MediaArchiveCard', () => {
     fireEvent.change(input, { target: { value: '/Volumes/new-archive' } });
     fireEvent.click(screen.getByRole('button', { name: /保\s*存/ }));
 
-    expect(onSave).toHaveBeenCalledWith('/Volumes/new-archive', 5);
+    expect(onSave).toHaveBeenCalledWith('/Volumes/new-archive', 5, 2);
+  });
+
+  it('saves the edited concurrency', () => {
+    const { onSave } = renderCard();
+    const input = screen.getByLabelText('归档并发数');
+
+    fireEvent.change(input, { target: { value: '4' } });
+    fireEvent.click(screen.getByRole('button', { name: /保\s*存/ }));
+
+    expect(onSave).toHaveBeenCalledWith('/Volumes/archive', 5, 4);
   });
 
   it('toggles archiving off with the current draft', () => {
@@ -87,7 +98,7 @@ describe('MediaArchiveCard', () => {
 
     fireEvent.click(screen.getByRole('switch'));
 
-    expect(onToggle).toHaveBeenCalledWith(false, '/Volumes/archive', 5);
+    expect(onToggle).toHaveBeenCalledWith(false, '/Volumes/archive', 5, 2);
   });
 
   it('disables the manual action while running', () => {

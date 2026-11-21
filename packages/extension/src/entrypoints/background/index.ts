@@ -641,7 +641,7 @@ export default defineBackground(() => {
           case 'startClassification':
           case 'start-classification': {
             const status = await vfsWsClient.startClassification();
-            applyConfigMirror({ classificationPaused: false }, true);
+            applyConfigMirror({ classifyPaused: false, renamePaused: false }, true);
             sendResponse({ success: true, data: status, ...status });
             break;
           }
@@ -649,7 +649,24 @@ export default defineBackground(() => {
           case 'pauseClassification':
           case 'pause-classification': {
             const status = await vfsWsClient.pauseClassification();
-            applyConfigMirror({ classificationPaused: true }, true);
+            applyConfigMirror({ classifyPaused: true, renamePaused: true }, true);
+            sendResponse({ success: true, data: status, ...status });
+            break;
+          }
+
+          case 'setTaskPaused':
+          case 'set-task-paused': {
+            const taskType = message.taskType;
+            if (taskType !== 'classify' && taskType !== 'rename') {
+              sendResponse({ success: false, error: 'Unsupported task type' });
+              break;
+            }
+            const paused = message.paused === true;
+            const status = await vfsWsClient.setTaskPaused(taskType, paused);
+            applyConfigMirror(
+              taskType === 'classify' ? { classifyPaused: paused } : { renamePaused: paused },
+              true
+            );
             sendResponse({ success: true, data: status, ...status });
             break;
           }

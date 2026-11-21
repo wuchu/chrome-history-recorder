@@ -31,7 +31,10 @@ class ConfigStore {
         try {
             if (fs_1.default.existsSync(this.configPath)) {
                 const parsed = JSON.parse(fs_1.default.readFileSync(this.configPath, 'utf-8'));
-                this.config = (0, types_1.normalizeAppConfig)({ ...types_1.DEFAULT_APP_CONFIG, ...parsed });
+                this.config = (0, types_1.normalizeAppConfig)({
+                    ...types_1.DEFAULT_APP_CONFIG,
+                    ...(0, types_1.migrateLegacyScheduling)(parsed),
+                });
             }
         }
         catch (error) {
@@ -86,7 +89,10 @@ class ConfigStore {
         if (this.authoritative) {
             return false;
         }
-        this.config = (0, types_1.normalizeAppConfig)({ ...this.config, ...legacy });
+        this.config = (0, types_1.normalizeAppConfig)({
+            ...this.config,
+            ...(0, types_1.migrateLegacyScheduling)(legacy),
+        });
         this.persist();
         this.markAuthoritative();
         this.notify();

@@ -2,12 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   clearQueue as clearQueueRequest,
   getQueueStatus,
-  pauseClassification,
   QueueStatus,
   refreshAllTasks,
   retryFailedTasks,
   SchedulerStatus,
-  startClassification,
+  setTaskPaused,
   TaskType,
 } from '../../../shared/extension-runtime';
 
@@ -20,17 +19,22 @@ const DEFAULT_STATUS: QueueStatus = {
   total: 0,
 };
 
-export type TaskActionKey = 'start' | 'pause' | 'retry' | 'clear' | 'rescan';
+export type AiTaskType = 'classify' | 'rename';
+export type TaskActionType = 'start' | 'pause' | 'retry' | 'clear' | 'rescan';
+export type TaskActionKey = `${AiTaskType}:${TaskActionType}`;
+
+const AI_TASK_TYPES: AiTaskType[] = ['classify', 'rename'];
+const TASK_ACTIONS: TaskActionType[] = ['start', 'pause', 'retry', 'clear', 'rescan'];
 
 export interface UseTaskQueueReturn {
   status: QueueStatus;
   loading: boolean;
   busy: Record<TaskActionKey, boolean>;
-  start: () => Promise<void>;
-  pause: () => Promise<void>;
-  retryFailed: () => Promise<void>;
-  clearQueue: () => Promise<void>;
-  requeueAll: (taskTypes?: TaskType[]) => Promise<number>;
+  start: (taskType: AiTaskType) => Promise<void>;
+  pause: (taskType: AiTaskType) => Promise<void>;
+  retryFailed: (taskType: AiTaskType) => Promise<void>;
+  clearQueue: (taskType: AiTaskType) => Promise<void>;
+  requeueAll: (taskTypes?: AiTaskType[]) => Promise<number>;
   refresh: () => Promise<void>;
 }
 
@@ -44,7 +48,7 @@ export interface UseTaskQueueReturn {
 export function useTaskQueue(): UseTaskQueueReturn {
   const [status, setStatus] = useState<QueueStatus>(DEFAULT_STATUS);
   const [loading, setLoading] = useState(true);
-  const [busyAction, setBusyAction] = useState<TaskActionKey | null>(null);
+  const [busyAction, setBusyAction] = useState<string | null>(null);
   const mountedRef = useRef(true);
 
   const refresh = useCallback(async () => {
@@ -113,39 +117,53 @@ export function useTaskQueue(): UseTaskQueueReturn {
     }
   }, []);
 
-  const start = useCallback(async () => {
-    await run('start', async () => {
-      const scheduler = await startClassification();
-      setStatus((prev) => ({ ...prev, scheduler }));
-    });
-  }, [run]);
+  const start = useCallback(
+    async (taskType: AiTaskType) => {
+      await run(`${taskType}:start`, async () => {
+        const scheduler = await setTaskPaused(taskType, false);
+        setStatus((prev) => ({ ...prev, scheduler }));
+      });
+    },
+    [run]
+  );
 
-  const pause = useCallback(async () => {
-    await run('pause', async () => {
-      const scheduler = await pauseClassification();
-      setStatus((prev) => ({ ...prev, scheduler }));
-    });
-  }, [run]);
+  const pause = useCallback(
+    async (taskType: AiTaskType) => {
+      await run(`${taskType}:pause`, async () => {
+        const scheduler = await setTaskPaused(taskType, true);
+        setStatus((prev) => ({ ...prev, scheduler }));
+      });
+    },
+    [run]
+  );
 
-  const retryFailed = useCallback(async () => {
-    await run('retry', async () => {
-      await retryFailedTasks();
-      await refresh();
-    });
-  }, [run, refresh]);
+  const retryFailed = useCallback(
+    async (taskType: AiTaskType) => {
+      await run(`${taskType}:retry`, async () => {
+        await retryFailedTasks(taskType as TaskType);
+        await refresh();
+      });
+    },
+    [run, refresh]
+  );
 
-  const clearQueue = useCallback(async () => {
-    await run('clear', async () => {
-      await clearQueueRequest();
-      await refresh();
-    });
-  }, [run, refresh]);
+  const clearQueue = useCallback(
+    async (taskType: AiTaskType) => {
+      await run(`${taskType}:clear`, async () => {
+        await clearQueueRequest(taskType as TaskType);
+        await refresh();
+      });
+    },
+    [run, refresh]
+  );
 
   const requeueAll = useCallback(
-    async (taskTypes: TaskType[] = ['classify', 'rename']): Promise<number> => {
+    async (taskTypes: AiTaskType[] = ['classify', 'rename']): Promise<number> => {
       let count = 0;
-      await run('rescan', async () => {
-        count = await refreshAllTasks(taskTypes);
+      const key: TaskActionKey =
+        taskTypes.length === 1 ? `${taskTypes[0]}:rescan` : 'classify:rescan';
+      await run(key, async () => {
+        count = await refreshAllTasks(taskTypes as TaskType[]);
         await refresh();
       });
       return count;
@@ -153,16 +171,15 @@ export function useTaskQueue(): UseTaskQueueReturn {
     [run, refresh]
   );
 
-  const busy = useMemo<Record<TaskActionKey, boolean>>(
-    () => ({
-      start: busyAction === 'start',
-      pause: busyAction === 'pause',
-      retry: busyAction === 'retry',
-      clear: busyAction === 'clear',
-      rescan: busyAction === 'rescan',
-    }),
-    [busyAction]
-  );
+  const busy = useMemo(() => {
+    const result = {} as Record<TaskActionKey, boolean>;
+    for (const taskType of AI_TASK_TYPES) {
+      for (const action of TASK_ACTIONS) {
+        result[`${taskType}:${action}`] = busyAction === `${taskType}:${action}`;
+      }
+    }
+    return result;
+  }, [busyAction]);
 
   return { status, loading, busy, start, pause, retryFailed, clearQueue, requeueAll, refresh };
 }

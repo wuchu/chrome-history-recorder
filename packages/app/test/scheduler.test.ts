@@ -92,6 +92,8 @@ describe('App Scheduler', () => {
 
     // Enqueue while paused so both tasks are pending before processing starts.
     await scheduler.enqueuePair(saved.hash);
+    scheduler.updatePaused('classify', false);
+    scheduler.updatePaused('rename', false);
 
     const completed = new Set<string>();
     const done = new Promise<void>((resolve) => {
@@ -172,6 +174,7 @@ describe('App Scheduler', () => {
     });
     api.enqueueTask({ taskType: 'classify', hash: saved.hash });
 
+    localScheduler.updatePaused('classify', false);
     localScheduler.start();
     await localScheduler.runOnce();
 
@@ -199,6 +202,7 @@ describe('App Scheduler', () => {
     });
     api.enqueueTask({ taskType: 'classify', hash: saved.hash });
 
+    localScheduler.updatePaused('classify', false);
     localScheduler.start();
     await localScheduler.runOnce();
 
@@ -209,5 +213,110 @@ describe('App Scheduler', () => {
     });
 
     localScheduler.stop();
+  });
+
+  it('pauses AI task types independently', async () => {
+    const saved = api.saveFile({
+      buffer: Buffer.from('independent-pause'),
+      mimeType: 'image/jpeg',
+    });
+    await scheduler.enqueuePair(saved.hash);
+
+    scheduler.updatePaused('classify', false);
+    scheduler.updatePaused('rename', true);
+    scheduler.start();
+
+    await vi.waitFor(() => {
+      const classify = api.getTasksByHash(saved.hash).find((task) => task.task_type === 'classify');
+      expect(classify?.status).toBe('completed');
+    });
+
+    const rename = api.getTasksByHash(saved.hash).find((task) => task.task_type === 'rename');
+    expect(rename?.status).toBe('pending');
+
+    const renameDone = new Promise<void>((resolve) => {
+      events.subscribe((event, data) => {
+        if (event !== 'task:completed') return;
+        if ((data as { task_type: string }).task_type === 'rename') resolve();
+      });
+    });
+
+    scheduler.updatePaused('rename', false);
+    await renameDone;
+
+    expect(api.getTasksByHash(saved.hash).find((task) => task.task_type === 'rename')?.status).toBe(
+      'completed'
+    );
+  });
+
+  it('applies concurrency limits per task type', async () => {
+    const savedA = api.saveFile({ buffer: Buffer.from('quota-a'), mimeType: 'image/jpeg' });
+    const savedB = api.saveFile({ buffer: Buffer.from('quota-b'), mimeType: 'image/jpeg' });
+    await scheduler.enqueuePair(savedA.hash);
+    await scheduler.enqueuePair(savedB.hash);
+
+    let classifyInFlight = 0;
+    let renameInFlight = 0;
+    let maxClassify = 0;
+    let maxRename = 0;
+
+    const slowAi = {
+      isAvailable: () => true,
+      classifyTagsByHash: async () => {
+        classifyInFlight += 1;
+        maxClassify = Math.max(maxClassify, classifyInFlight);
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        classifyInFlight -= 1;
+        return { tags: ['cat'], aliases: {}, confidence: 0.9, model: 'fake-model' };
+      },
+      renameByHash: async () => {
+        renameInFlight += 1;
+        maxRename = Math.max(maxRename, renameInFlight);
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        renameInFlight -= 1;
+        return { suggestedName: 'cute_cat', model: 'fake-model' };
+      },
+    } as unknown as OllamaClient;
+
+    store.update({ classifyConcurrency: 1, renameConcurrency: 2 });
+    const localScheduler = new Scheduler({ api, ai: slowAi, config: store, events });
+    localScheduler.updatePaused('classify', false);
+    localScheduler.updatePaused('rename', false);
+    localScheduler.start();
+
+    await vi.waitFor(
+      () => {
+        expect(api.getQueueStatus().completed).toBe(4);
+      },
+      { timeout: 5000 }
+    );
+
+    expect(maxClassify).toBe(1);
+    expect(maxRename).toBe(2);
+    localScheduler.stop();
+  });
+
+  it('reports per-type scheduler status and concurrency', () => {
+    store.update({
+      classifyConcurrency: 3,
+      renameConcurrency: 2,
+      classifyPaused: false,
+      renamePaused: true,
+    });
+    const localScheduler = new Scheduler({ api, ai: createFakeAi(), config: store, events });
+
+    const status = localScheduler.getSchedulerStatus();
+
+    expect(status.state).toBe('running');
+    expect(status.byType.classify).toEqual({
+      state: 'running',
+      processing: 0,
+      concurrency: 3,
+    });
+    expect(status.byType.rename).toEqual({
+      state: 'paused',
+      processing: 0,
+      concurrency: 2,
+    });
   });
 });

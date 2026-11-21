@@ -21,10 +21,12 @@ The app SHALL run the AI task scheduler as a long-lived loop independent of any 
 ### Requirement: Claim and dispatch typed tasks
 
 The app scheduler SHALL atomically claim pending tasks, dispatch them to the `classify` and `rename` handlers in the `ai` package, and record completion, failure, or inapplicability.
+Claims SHALL respect the pause state and concurrency limit of the task type being claimed.
 
 #### Scenario: Claim a pending task
-- **WHEN** a concurrency slot is free and a pending task exists
+- **WHEN** a task type is not paused, a slot for that task type is free, and a pending task of that type exists
 - **THEN** the scheduler SHALL claim it in-process via `VFSAPI` and mark it `processing`
+- **AND** tasks of other types SHALL NOT consume that task type's slot
 
 #### Scenario: Run a classify handler
 - **WHEN** a claimed `classify` task runs
@@ -38,19 +40,27 @@ The app scheduler SHALL atomically claim pending tasks, dispatch them to the `cl
 - **WHEN** a handler throws a permanent unprocessable-media error
 - **THEN** the scheduler SHALL mark the task `skipped` with the reason
 - **AND** it SHALL NOT increment attempts or schedule a retry
-- **AND** it SHALL release the concurrency slot so other tasks continue
+- **AND** it SHALL release the task-type slot so other tasks continue
 
-### Requirement: Global concurrency limit
+### Requirement: Per-task-type concurrency limits
 
-The app scheduler SHALL apply a single concurrency limit across all task types.
+The app scheduler SHALL apply an independent concurrency limit to each AI task type it owns.
 
-#### Scenario: Concurrency shared across types
-- **WHEN** the concurrency limit is N and N tasks are processing
-- **THEN** the scheduler SHALL NOT claim additional tasks of any type until a slot frees
+#### Scenario: Limit applies within a task type
+- **WHEN** `classifyConcurrency` is `2` and two `classify` tasks are processing
+- **THEN** the scheduler SHALL NOT claim a third `classify` task until one finishes
 
-#### Scenario: Adjust concurrency
-- **WHEN** the concurrency setting changes
-- **THEN** the scheduler SHALL apply the new limit to subsequent claims without restarting
+#### Scenario: One task type does not consume another type's slots
+- **WHEN** `renameConcurrency` slots are all busy
+- **THEN** the scheduler MAY still claim a `classify` task while its own slots are free
+
+#### Scenario: Adjust one task type
+- **WHEN** the user changes `classifyConcurrency` or `renameConcurrency`
+- **THEN** the scheduler SHALL apply the new limit to subsequent claims of that type without restarting
+
+#### Scenario: No cross-type starvation
+- **WHEN** one task type has a large backlog and the other has a small backlog
+- **THEN** each task type SHALL continue to receive claims up to its own limit
 
 ### Requirement: Retry with backoff
 
@@ -78,19 +88,26 @@ The app SHALL recover tasks left in `processing` by a previous app instance.
 
 ### Requirement: Paused and running intent
 
-The app SHALL persist the scheduler's running or paused intent in app configuration and honor it across restarts.
+The app SHALL persist the running or paused intent for each AI task type in app configuration and honor it across restarts.
 
-#### Scenario: Start processing
-- **WHEN** the user starts processing
-- **THEN** the app SHALL persist running intent and begin claiming tasks
+#### Scenario: Start a task type
+- **WHEN** the user starts `classify` or `rename`
+- **THEN** the app SHALL persist that task type as not paused
+- **AND** pending tasks of that type SHALL become eligible for processing
 
-#### Scenario: Pause processing
-- **WHEN** the user pauses processing
-- **THEN** the app SHALL persist paused intent, stop claiming new tasks, and let active tasks finish
+#### Scenario: Pause a task type
+- **WHEN** the user pauses `classify` or `rename`
+- **THEN** the app SHALL persist that task type as paused
+- **AND** the scheduler SHALL stop claiming new tasks of that type
+- **AND** tasks of that type already processing SHALL be allowed to finish normally
+
+#### Scenario: Pause task types independently
+- **WHEN** one AI task type is paused and the other is running
+- **THEN** the scheduler SHALL continue claiming tasks of the running type
 
 #### Scenario: Restore intent on startup
-- **WHEN** the app restarts with persisted intent
-- **THEN** the scheduler SHALL resume running or paused accordingly
+- **WHEN** the app restarts with persisted per-type pause state
+- **THEN** the scheduler SHALL resume claiming only the task types whose persisted state is not paused
 
 ### Requirement: Auto-enqueue on ingest
 

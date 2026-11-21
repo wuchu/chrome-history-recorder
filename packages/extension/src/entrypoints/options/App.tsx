@@ -48,7 +48,7 @@ import {
 } from '../../shared/extension-runtime';
 import { DEFAULT_PROMPT_TEMPLATES, type PromptTemplates } from '../../shared/prompt-templates';
 import { useOptionsData } from './hooks/useOptionsData';
-import { useTaskQueue } from './hooks/useTaskQueue';
+import { useTaskQueue, type AiTaskType } from './hooks/useTaskQueue';
 import TaskConsole from './components/TaskConsole';
 import OverviewTab from './components/OverviewTab';
 import MediaLibrary from './components/MediaLibrary';
@@ -73,6 +73,11 @@ const LANGUAGE_OPTIONS = [
   { value: 'zh-CN', label: '中文' },
   { value: 'en-US', label: 'English' },
 ];
+
+const AI_TASK_LABELS: Record<AiTaskType, string> = {
+  classify: 'AI 分类',
+  rename: 'AI 重命名',
+};
 
 const WORKSPACE_SOURCE_LABELS: Record<WorkspaceConfigInfo['source'], string> = {
   cli: '启动参数 (--workspace)',
@@ -164,6 +169,9 @@ function App() {
     })
   );
   const [maxVideoSizeMb, setMaxVideoSizeMb] = useState<number>(DEFAULT_MAX_VIDEO_SIZE_MB);
+  const [ollamaConcurrencyDraft, setOllamaConcurrencyDraft] = useState<number>(
+    config.ollamaMaxConcurrency
+  );
   const [workspaceDraft, setWorkspaceDraft] = useState('');
   const [renamingTag, setRenamingTag] = useState<VFSTagRecord | null>(null);
   const [mergingTag, setMergingTag] = useState<VFSTagRecord | null>(null);
@@ -177,6 +185,10 @@ function App() {
   useEffect(() => {
     setMaxVideoSizeMb(Math.round(config.maxVideoSize / (1024 * 1024)));
   }, [config.maxVideoSize]);
+
+  useEffect(() => {
+    setOllamaConcurrencyDraft(config.ollamaMaxConcurrency);
+  }, [config.ollamaMaxConcurrency]);
 
   useEffect(() => {
     setWorkspaceDraft(workspaceInfo?.pendingPath ?? workspaceInfo?.path ?? '');
@@ -219,6 +231,17 @@ function App() {
     await refreshOllamaHealth();
   };
 
+  const handleOllamaConcurrencySave = async () => {
+    const value = Math.floor(ollamaConcurrencyDraft);
+    if (!Number.isFinite(value) || value < 1 || value > 8) {
+      messageApi.error('Chat 最大并发数需在 1–8 之间');
+      setOllamaConcurrencyDraft(config.ollamaMaxConcurrency);
+      return;
+    }
+    if (value === config.ollamaMaxConcurrency) return;
+    await saveSetting({ ollamaMaxConcurrency: value }, 'ollamaMaxConcurrency', 'Chat 并发数已保存');
+  };
+
   const handleRefreshModels = async () => {
     try {
       await refreshOllamaModels();
@@ -251,13 +274,15 @@ function App() {
   const handleMediaArchiveToggle = async (
     enabled: boolean,
     targetPath: string,
-    intervalMinutes: number
+    intervalMinutes: number,
+    concurrency: number
   ) => {
     try {
       await saveMediaArchiveConfig({
         enabled,
         targetPath: enabled ? targetPath : (mediaArchiveStatus?.targetPath ?? targetPath),
         intervalMinutes,
+        concurrency,
       });
       messageApi.success(enabled ? '媒体归档已启用' : '媒体归档已停用');
     } catch (toggleError) {
@@ -265,14 +290,18 @@ function App() {
     }
   };
 
-  const handleMediaArchiveSave = async (targetPath: string, intervalMinutes: number) => {
+  const handleMediaArchiveSave = async (
+    targetPath: string,
+    intervalMinutes: number,
+    concurrency: number
+  ) => {
     if (!targetPath) {
       messageApi.error('请输入归档目标目录');
       return;
     }
 
     try {
-      await saveMediaArchiveConfig({ targetPath, intervalMinutes });
+      await saveMediaArchiveConfig({ targetPath, intervalMinutes, concurrency });
       messageApi.success('媒体归档设置已保存');
     } catch (saveError) {
       messageApi.error(saveError instanceof Error ? saveError.message : '保存归档设置失败');
@@ -345,36 +374,36 @@ function App() {
     messageApi.success('已恢复默认提示词');
   };
 
-  const handleStart = async () => {
-    await taskQueue.start();
-    messageApi.success('AI 任务已开始');
+  const handleStart = async (taskType: AiTaskType) => {
+    await taskQueue.start(taskType);
+    messageApi.success(`${AI_TASK_LABELS[taskType]}已开始`);
   };
 
-  const handlePause = async () => {
-    await taskQueue.pause();
-    messageApi.success('AI 任务已暂停');
+  const handlePause = async (taskType: AiTaskType) => {
+    await taskQueue.pause(taskType);
+    messageApi.success(`${AI_TASK_LABELS[taskType]}已暂停`);
   };
 
-  const handleRetryFailed = async () => {
-    await taskQueue.retryFailed();
-    messageApi.success('失败任务已重新入队');
+  const handleRetryFailed = async (taskType: AiTaskType) => {
+    await taskQueue.retryFailed(taskType);
+    messageApi.success(`${AI_TASK_LABELS[taskType]}失败任务已重新入队`);
   };
 
-  const handleClearQueue = async () => {
-    await taskQueue.clearQueue();
-    messageApi.success('队列已清空');
+  const handleClearQueue = async (taskType: AiTaskType) => {
+    await taskQueue.clearQueue(taskType);
+    messageApi.success(`${AI_TASK_LABELS[taskType]}队列已清空`);
   };
 
-  const handleRescan = async () => {
-    const count = await taskQueue.requeueAll(['classify', 'rename']);
-    messageApi.success(`已重新入队 ${count} 个任务`);
+  const handleRescan = async (taskType: AiTaskType) => {
+    const count = await taskQueue.requeueAll([taskType]);
+    messageApi.success(`已重新入队 ${count} 个${AI_TASK_LABELS[taskType]}任务`);
   };
 
-  const handleConcurrencyChange = (value: number) => {
+  const handleTaskConcurrencyChange = (taskType: AiTaskType, value: number) => {
     void saveSetting(
-      { classificationConcurrency: value },
-      'classificationConcurrency',
-      '并发数已保存'
+      taskType === 'classify' ? { classifyConcurrency: value } : { renameConcurrency: value },
+      taskType === 'classify' ? 'classifyConcurrency' : 'renameConcurrency',
+      `${AI_TASK_LABELS[taskType]}并发数已保存`
     );
   };
 
@@ -702,11 +731,16 @@ function App() {
                       savingSave={saving.mediaArchive}
                       savingRun={saving.mediaArchiveRun}
                       onRefresh={() => void handleRefreshMediaArchive()}
-                      onToggle={(enabled, targetPath, intervalMinutes) =>
-                        void handleMediaArchiveToggle(enabled, targetPath, intervalMinutes)
+                      onToggle={(enabled, targetPath, intervalMinutes, concurrency) =>
+                        void handleMediaArchiveToggle(
+                          enabled,
+                          targetPath,
+                          intervalMinutes,
+                          concurrency
+                        )
                       }
-                      onSave={(targetPath, intervalMinutes) =>
-                        void handleMediaArchiveSave(targetPath, intervalMinutes)
+                      onSave={(targetPath, intervalMinutes, concurrency) =>
+                        void handleMediaArchiveSave(targetPath, intervalMinutes, concurrency)
                       }
                       onRun={() => void handleMediaArchiveRun()}
                     />
@@ -714,14 +748,17 @@ function App() {
                       status={taskQueue.status}
                       loading={taskQueue.loading}
                       busy={taskQueue.busy}
-                      concurrency={config.classificationConcurrency}
+                      concurrency={{
+                        classify: config.classifyConcurrency,
+                        rename: config.renameConcurrency,
+                      }}
                       templateDrafts={templateDrafts}
                       onStart={handleStart}
                       onPause={handlePause}
                       onRetryFailed={handleRetryFailed}
                       onClearQueue={handleClearQueue}
                       onRescan={handleRescan}
-                      onConcurrencyChange={handleConcurrencyChange}
+                      onConcurrencyChange={handleTaskConcurrencyChange}
                       onTemplateChange={(key, value) =>
                         setTemplateDrafts((prev) => ({ ...prev, [key]: value }))
                       }
@@ -758,20 +795,6 @@ function App() {
                             </Space>
                             <Button loading={saving.vfsReconnect} onClick={reconnectVfsService}>
                               重连 VFS
-                            </Button>
-                          </div>
-                        </Col>
-                        <Col xs={24} md={12}>
-                          <div className="status-row">
-                            <Space direction="vertical" size={2}>
-                              <Text strong>Ollama</Text>
-                              <Badge
-                                status={serviceStatus.ollamaAvailable ? 'success' : 'error'}
-                                text={serviceStatus.ollamaAvailable ? '可用' : '不可用'}
-                              />
-                            </Space>
-                            <Button loading={saving.ollamaHealth} onClick={refreshOllamaHealth}>
-                              检查 Ollama
                             </Button>
                           </div>
                         </Col>
@@ -962,6 +985,19 @@ function App() {
                     </Card>
 
                     <Card className="options-card" title="Ollama 设置">
+                      <div className="status-row" style={{ marginBottom: 16 }}>
+                        <Space direction="vertical" size={2}>
+                          <Text strong>Ollama 状态</Text>
+                          <Badge
+                            status={serviceStatus.ollamaAvailable ? 'success' : 'error'}
+                            text={serviceStatus.ollamaAvailable ? '可用' : '不可用'}
+                          />
+                        </Space>
+                        <Button loading={saving.ollamaHealth} onClick={refreshOllamaHealth}>
+                          检查 Ollama
+                        </Button>
+                      </div>
+
                       <Form layout="vertical">
                         <Form.Item
                           label="Ollama 地址"
@@ -1041,6 +1077,27 @@ function App() {
                             onChange={(language) =>
                               saveSetting({ language }, 'config', '语言设置已保存')
                             }
+                          />
+                        </Form.Item>
+
+                        <Form.Item
+                          label="Chat 最大并发数"
+                          extra="仅限制 /api/chat 请求；健康检查和模型列表不受此限制。范围 1–8，默认 1。修改后失焦或按 Enter 保存。"
+                        >
+                          <InputNumber
+                            min={1}
+                            max={8}
+                            value={ollamaConcurrencyDraft}
+                            addonAfter="并发"
+                            aria-label="Ollama Chat 最大并发数"
+                            style={{ width: 200 }}
+                            onChange={(value) =>
+                              setOllamaConcurrencyDraft(
+                                typeof value === 'number' ? value : config.ollamaMaxConcurrency
+                              )
+                            }
+                            onBlur={handleOllamaConcurrencySave}
+                            onPressEnter={handleOllamaConcurrencySave}
                           />
                         </Form.Item>
                       </Form>

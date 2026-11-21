@@ -21,13 +21,20 @@ export const MIN_MEDIA_ARCHIVE_INTERVAL_MINUTES = 1;
 export const MAX_MEDIA_ARCHIVE_INTERVAL_MINUTES = 1440;
 export const DEFAULT_MEDIA_ARCHIVE_INTERVAL_MINUTES = 5;
 
+export const MIN_TASK_CONCURRENCY = 1;
+export const MAX_TASK_CONCURRENCY = 8;
+export const DEFAULT_TASK_CONCURRENCY = 1;
+
 export interface AppConfig {
   ollamaEndpoint: string;
   visionModel?: string;
   language: string;
   promptTemplates?: PromptTemplates;
-  classificationConcurrency: number;
-  classificationPaused: boolean;
+  ollamaMaxConcurrency: number;
+  classifyConcurrency: number;
+  renameConcurrency: number;
+  classifyPaused: boolean;
+  renamePaused: boolean;
   maxFileSize: number;
   captureVideos: boolean;
   maxVideoSize: number;
@@ -35,13 +42,17 @@ export interface AppConfig {
   mediaArchiveEnabled: boolean;
   mediaArchiveTargetPath: string;
   mediaArchiveIntervalMinutes: number;
+  mediaArchiveConcurrency: number;
 }
 
 export const DEFAULT_APP_CONFIG: AppConfig = {
   ollamaEndpoint: 'http://localhost:11434',
   language: 'zh-CN',
-  classificationConcurrency: 1,
-  classificationPaused: true,
+  ollamaMaxConcurrency: DEFAULT_TASK_CONCURRENCY,
+  classifyConcurrency: DEFAULT_TASK_CONCURRENCY,
+  renameConcurrency: DEFAULT_TASK_CONCURRENCY,
+  classifyPaused: true,
+  renamePaused: true,
   maxFileSize: 50 * 1024 * 1024,
   captureVideos: true,
   maxVideoSize: DEFAULT_MAX_VIDEO_SIZE,
@@ -49,7 +60,48 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   mediaArchiveEnabled: false,
   mediaArchiveTargetPath: '',
   mediaArchiveIntervalMinutes: DEFAULT_MEDIA_ARCHIVE_INTERVAL_MINUTES,
+  mediaArchiveConcurrency: DEFAULT_TASK_CONCURRENCY,
 };
+
+/**
+ * Legacy scheduling fields that existed before per-task controls. They are
+ * read once during migration and never persisted again.
+ */
+export interface LegacySchedulingConfig {
+  classificationConcurrency?: number;
+  classificationPaused?: boolean;
+}
+
+export function normalizeConcurrency(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.min(MAX_TASK_CONCURRENCY, Math.max(MIN_TASK_CONCURRENCY, Math.floor(value)))
+    : DEFAULT_TASK_CONCURRENCY;
+}
+
+/**
+ * Map legacy global scheduling settings onto the new per-task fields. The
+ * caller must run this before merging defaults so a persisted `false` is not
+ * shadowed by a default `true`.
+ */
+export function migrateLegacyScheduling<T extends Partial<AppConfig> & LegacySchedulingConfig>(
+  config: T
+): Partial<AppConfig> {
+  const migrated: Partial<AppConfig> & LegacySchedulingConfig = { ...config };
+
+  if (migrated.ollamaMaxConcurrency === undefined) {
+    migrated.ollamaMaxConcurrency = migrated.classificationConcurrency;
+  }
+  if (migrated.classifyPaused === undefined) {
+    migrated.classifyPaused = migrated.classificationPaused;
+  }
+  if (migrated.renamePaused === undefined) {
+    migrated.renamePaused = migrated.classificationPaused;
+  }
+
+  delete migrated.classificationConcurrency;
+  delete migrated.classificationPaused;
+  return migrated;
+}
 
 /**
  * Clamp and sanitize values loaded from disk or updated by the UI.
@@ -77,7 +129,11 @@ export function normalizeAppConfig(config: AppConfig): AppConfig {
 
   return {
     ...config,
-    classificationConcurrency: Math.max(1, Math.floor(config.classificationConcurrency || 1)),
+    ollamaMaxConcurrency: normalizeConcurrency(config.ollamaMaxConcurrency),
+    classifyConcurrency: normalizeConcurrency(config.classifyConcurrency),
+    renameConcurrency: normalizeConcurrency(config.renameConcurrency),
+    classifyPaused: config.classifyPaused !== false,
+    renamePaused: config.renamePaused !== false,
     captureVideos: config.captureVideos !== false,
     maxVideoSize,
     enabledVideoTypes:
@@ -86,5 +142,6 @@ export function normalizeAppConfig(config: AppConfig): AppConfig {
     mediaArchiveTargetPath:
       typeof config.mediaArchiveTargetPath === 'string' ? config.mediaArchiveTargetPath.trim() : '',
     mediaArchiveIntervalMinutes,
+    mediaArchiveConcurrency: normalizeConcurrency(config.mediaArchiveConcurrency),
   };
 }

@@ -17,7 +17,7 @@ import {
 } from 'antd';
 import type { QueueStatus, TaskTypeSummary } from '../../../shared/extension-runtime';
 import type { PromptTemplates } from '../../../shared/prompt-templates';
-import type { TaskActionKey } from '../hooks/useTaskQueue';
+import type { AiTaskType, TaskActionKey } from '../hooks/useTaskQueue';
 
 const { Text } = Typography;
 const { TextArea } = Input;
@@ -50,14 +50,14 @@ interface TaskConsoleProps {
   status: QueueStatus;
   loading?: boolean;
   busy: Record<TaskActionKey, boolean>;
-  concurrency: number;
+  concurrency: Record<AiTaskType, number>;
   templateDrafts: Record<TemplateKey, string>;
-  onStart: () => Promise<void>;
-  onPause: () => Promise<void>;
-  onRetryFailed: () => Promise<void>;
-  onClearQueue: () => Promise<void>;
-  onRescan: () => Promise<void>;
-  onConcurrencyChange: (value: number) => void;
+  onStart: (taskType: AiTaskType) => Promise<void>;
+  onPause: (taskType: AiTaskType) => Promise<void>;
+  onRetryFailed: (taskType: AiTaskType) => Promise<void>;
+  onClearQueue: (taskType: AiTaskType) => Promise<void>;
+  onRescan: (taskType: AiTaskType) => Promise<void>;
+  onConcurrencyChange: (taskType: AiTaskType, value: number) => void;
   onTemplateChange: (key: TemplateKey, value: string) => void;
   onTemplateSave: (key: TemplateKey) => void;
   onTemplateReset: (key: TemplateKey) => void;
@@ -67,11 +67,16 @@ function isTemplateKey(key: string): key is 'classify' | 'rename' {
   return key === 'classify' || key === 'rename';
 }
 
+function isAiTaskType(key: string): key is AiTaskType {
+  return key === 'classify' || key === 'rename';
+}
+
 /**
  * Async AI task console for the Options page.
  *
- * Scheduler controls live in a shared card; each task type (classify, rename)
- * gets its own progress card with the corresponding prompt template.
+ * Each AI task type owns its run/pause switch, concurrency limit, progress,
+ * prompt template, and maintenance actions. The archive type has its own card
+ * elsewhere in the Tasks section.
  */
 const TaskConsole = memo(function TaskConsole({
   status,
@@ -89,10 +94,8 @@ const TaskConsole = memo(function TaskConsole({
   onTemplateSave,
   onTemplateReset,
 }: TaskConsoleProps) {
-  const schedulerRunning = status.scheduler?.running ?? false;
-
-  // One card per task type. Older backends only report an aggregate; in that
-  // case show it on the classify card and zeroes for the rest.
+  // One card per AI task type. Older backends only report an aggregate; in
+  // that case show it on the classify card and zeroes for the rest.
   const typeRows = useMemo<TypeRow[]>(() => {
     const byType = status.byType;
     const empty: TaskTypeSummary = {
@@ -133,89 +136,14 @@ const TaskConsole = memo(function TaskConsole({
 
   return (
     <Space direction="vertical" size="large" className="full-width">
-      <Card className="options-card" title="任务调度" loading={loading}>
-        <Row gutter={[16, 16]} align="middle">
-          <Col xs={24} md={8}>
-            <Space direction="vertical" size={4}>
-              <Text strong>处理状态</Text>
-              <Space>
-                <Switch
-                  checked={schedulerRunning}
-                  loading={busy.start || busy.pause}
-                  checkedChildren="运行中"
-                  unCheckedChildren="已暂停"
-                  onChange={(checked) => {
-                    if (checked) {
-                      void onStart();
-                    } else {
-                      void onPause();
-                    }
-                  }}
-                />
-                <Tag color={schedulerRunning ? 'processing' : 'default'}>
-                  {schedulerRunning ? '运行中' : '已暂停'}
-                </Tag>
-              </Space>
-              <Text type="secondary">暂停时可入队，但不会自动消费任务。</Text>
-            </Space>
-          </Col>
-
-          <Col xs={24} md={8}>
-            <Space direction="vertical" size={4}>
-              <Text strong>并发数</Text>
-              <InputNumber
-                min={1}
-                max={8}
-                value={concurrency}
-                onChange={(value) => {
-                  if (typeof value === 'number') onConcurrencyChange(value);
-                }}
-              />
-            </Space>
-          </Col>
-
-          <Col xs={24} md={8}>
-            <Statistic
-              title="当前处理中"
-              value={status.scheduler?.processing ?? status.processing}
-            />
-          </Col>
-        </Row>
-
-        <Space wrap style={{ marginTop: 16 }}>
-          <Button
-            loading={busy.retry}
-            disabled={status.failed === 0}
-            onClick={() => void onRetryFailed()}
-          >
-            重试失败任务
-          </Button>
-          <Popconfirm
-            title="清空任务队列"
-            description="这会删除当前队列记录，确定继续吗？"
-            okText="清空"
-            cancelText="取消"
-            onConfirm={() => void onClearQueue()}
-          >
-            <Button danger loading={busy.clear}>
-              清空队列
-            </Button>
-          </Popconfirm>
-          <Popconfirm
-            title="全量重扫"
-            description="重新扫描全部媒体的分类与命名（classify + rename），确定继续吗？"
-            okText="重扫"
-            cancelText="取消"
-            onConfirm={() => void onRescan()}
-          >
-            <Button loading={busy.rescan}>全量重扫</Button>
-          </Popconfirm>
-        </Space>
-      </Card>
-
       {typeRows.map((row) => {
         const templateKey = isTemplateKey(row.key) ? row.key : null;
         const templateMeta = templateKey ? TEMPLATE_META[templateKey] : null;
+        const taskType = isAiTaskType(row.key) ? row.key : null;
+        const schedulerState = status.scheduler?.byType?.[row.key]?.state;
+        const schedulerRunning = schedulerState === 'running';
+        const typeConcurrency = taskType ? concurrency[taskType] : 1;
+        const processing = status.scheduler?.byType?.[row.key]?.processing ?? row.processing;
         const percent =
           row.total > 0 ? Math.round(((row.completed + row.skipped) / row.total) * 100) : 0;
         const progressStatus =
@@ -226,6 +154,7 @@ const TaskConsole = memo(function TaskConsole({
             key={row.key}
             className="options-card"
             title={row.label}
+            loading={loading}
             extra={
               templateKey ? (
                 <Button size="small" onClick={() => onTemplateReset(templateKey)}>
@@ -234,7 +163,66 @@ const TaskConsole = memo(function TaskConsole({
               ) : undefined
             }
           >
-            <Space style={{ justifyContent: 'space-between', width: '100%' }}>
+            {taskType && (
+              <Row gutter={[16, 16]} align="middle">
+                <Col xs={24} md={8}>
+                  <Space direction="vertical" size={4}>
+                    <Text strong>处理状态</Text>
+                    <Space>
+                      <Switch
+                        checked={schedulerRunning}
+                        loading={busy[`${taskType}:start`] || busy[`${taskType}:pause`]}
+                        checkedChildren="运行中"
+                        unCheckedChildren="已暂停"
+                        aria-label={`${row.label}运行开关`}
+                        onChange={(checked) => {
+                          if (checked) {
+                            void onStart(taskType);
+                          } else {
+                            void onPause(taskType);
+                          }
+                        }}
+                      />
+                      <Tag color={schedulerRunning ? 'processing' : 'default'}>
+                        {schedulerRunning ? '运行中' : '已暂停'}
+                      </Tag>
+                    </Space>
+                    <Text type="secondary">暂停时仍可入队，但不会消费该类型的任务。</Text>
+                  </Space>
+                </Col>
+
+                <Col xs={24} md={8}>
+                  <Space direction="vertical" size={4}>
+                    <Text strong>最大并发数</Text>
+                    <InputNumber
+                      min={1}
+                      max={8}
+                      value={typeConcurrency}
+                      aria-label={`${row.label}最大并发数`}
+                      onChange={(value) => {
+                        if (typeof value === 'number') onConcurrencyChange(taskType, value);
+                      }}
+                    />
+                  </Space>
+                </Col>
+
+                <Col xs={24} md={8}>
+                  <Statistic
+                    title="当前处理中"
+                    value={processing}
+                    suffix={`/ ${status.scheduler?.byType?.[row.key]?.concurrency ?? typeConcurrency}`}
+                  />
+                </Col>
+              </Row>
+            )}
+
+            <Space
+              style={{
+                justifyContent: 'space-between',
+                width: '100%',
+                marginTop: taskType ? 16 : 0,
+              }}
+            >
               <Text strong>队列进度</Text>
               <Text
                 type="secondary"
@@ -250,6 +238,38 @@ const TaskConsole = memo(function TaskConsole({
               status={progressStatus}
               strokeColor={row.failed > 0 ? undefined : schedulerRunning ? '#52c41a' : '#faad14'}
             />
+
+            {taskType && (
+              <Space wrap style={{ marginTop: 16 }}>
+                <Button
+                  loading={busy[`${taskType}:retry`]}
+                  disabled={row.failed === 0}
+                  onClick={() => void onRetryFailed(taskType)}
+                >
+                  重试失败任务
+                </Button>
+                <Popconfirm
+                  title={`清空 ${row.label} 队列`}
+                  description="这会删除该类型当前队列记录，确定继续吗？"
+                  okText="清空"
+                  cancelText="取消"
+                  onConfirm={() => void onClearQueue(taskType)}
+                >
+                  <Button danger loading={busy[`${taskType}:clear`]}>
+                    清空本类队列
+                  </Button>
+                </Popconfirm>
+                <Popconfirm
+                  title={`全量重扫 ${row.label}`}
+                  description="重新扫描全部媒体的该任务类型，确定继续吗？"
+                  okText="重扫"
+                  cancelText="取消"
+                  onConfirm={() => void onRescan(taskType)}
+                >
+                  <Button loading={busy[`${taskType}:rescan`]}>全量重扫</Button>
+                </Popconfirm>
+              </Space>
+            )}
 
             {templateKey && templateMeta && (
               <>
