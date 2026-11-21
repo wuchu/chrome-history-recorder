@@ -59,6 +59,7 @@ function createEmptyCounters(): SessionCounters {
     aiProcessing: 0,
     aiCompleted: 0,
     aiFailed: 0,
+    aiSkipped: 0,
     videosQueued: 0,
     videosDownloading: 0,
   };
@@ -197,7 +198,7 @@ function applyEventToSession(session: CaptureSession, event: SessionEvent): bool
 }
 
 function recomputeAiCounters(session: CaptureSession): void {
-  const counts = { pending: 0, processing: 0, completed: 0, failed: 0 };
+  const counts = { pending: 0, processing: 0, completed: 0, failed: 0, skipped: 0 };
   for (const status of Object.values(session.aiStatuses)) {
     counts[status] += 1;
   }
@@ -205,6 +206,7 @@ function recomputeAiCounters(session: CaptureSession): void {
   session.counters.aiProcessing = counts.processing;
   session.counters.aiCompleted = counts.completed;
   session.counters.aiFailed = counts.failed;
+  session.counters.aiSkipped = counts.skipped;
 }
 
 function buildSummary(session: CaptureSession, endedAt: string): SessionSummary {

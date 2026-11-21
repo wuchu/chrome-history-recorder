@@ -131,6 +131,8 @@ ollama serve
 
 AI 分类会在捕获文件后加入本地 VFS 分类队列。扩展 Options 控制台（「设置」和「任务」标签）可以从本地 Ollama `/api/tags` 查询已安装模型，并通过下拉框选择用于后续任务的视觉模型；模型选择会立即保存，刷新模型列表不会覆盖当前选择。AI 分类默认暂停，任务标签提供开始/暂停控制；暂停只会停止领取新的待处理任务，已经处理中的任务会自然完成或失败。
 
+AI 只能处理能产出代表性图像的媒体（视觉模型原生格式，或缩略图解码器可读取的格式，以及视频）。无法处理的格式（例如 ICO/BMP 图标）仍会被捕获和归档，但 AI 任务会以 `skipped` 终态记录并显示原因，不会反复重试；启动时也会把历史上这类 `pending`/`failed` 任务对账为 `skipped`。
+
 这里的“重命名”指更新 VFS 元数据中的 `ai_filename` 智能文件名，不会物理重命名、移动、导出或删除 hash 存储的原始 blob 文件。用户也可以在媒体详情或卡片快捷操作中将单个图片/视频重新加入分类与智能命名队列。
 
 ## 子模块文档
@@ -187,7 +189,9 @@ WebSocket 会广播以下事件：
 - `classify:started`: AI 分类任务开始处理
 - `classify:complete`: AI 分类任务处理完成
 - `classify:failed`: AI 分类任务处理失败
+- `classify:skipped`: AI 分类跳过（媒体格式不适用，不会重试）
 - `classify:scheduler`: AI 分类调度器运行/暂停状态变化
+- `task:skipped`: 任务终态跳过（分类或重命名）
 - `file:classified`: AI 分类完成
 - `queue:updated`: 队列状态更新
 

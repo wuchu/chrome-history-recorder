@@ -2,11 +2,11 @@
  * App Scheduler Tests
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import type { OllamaClient } from 'ai';
+import { UnprocessableMediaError, type OllamaClient } from 'ai';
 import {
   BlobStorage,
   SQLiteDatabase,
@@ -137,5 +137,77 @@ describe('App Scheduler', () => {
     expect(recovered).toBe(1);
     const task = api.getTasksByHash(saved.hash).find((item) => item.task_type === 'classify');
     expect(task?.status).toBe('pending');
+  });
+
+  it('records skipped tasks for ineligible ingest without queueing work', async () => {
+    api.setIngestHook((result) => {
+      void scheduler.enqueuePair(result.hash);
+    });
+
+    const saved = api.saveFile({
+      buffer: Buffer.from('icon-content'),
+      mimeType: 'image/x-icon',
+    });
+
+    await vi.waitFor(() => {
+      expect(api.getTasksByHash(saved.hash)).toHaveLength(2);
+    });
+
+    const tasks = api.getTasksByHash(saved.hash);
+    expect(tasks.every((task) => task.status === 'skipped')).toBe(true);
+    expect(tasks.every((task) => task.error?.includes('image/x-icon'))).toBe(true);
+    expect(api.getQueueStatus().pending).toBe(0);
+  });
+
+  it('skips permanent unprocessable media after a single attempt', async () => {
+    const failingAi = createFakeAi();
+    failingAi.classifyTagsByHash = async (hash: string) => {
+      throw new UnprocessableMediaError('unsupported-format', 'cannot decode', { hash });
+    };
+    const localScheduler = new Scheduler({ api, ai: failingAi, config: store, events });
+
+    const saved = api.saveFile({
+      buffer: Buffer.from('eligible-content'),
+      mimeType: 'image/jpeg',
+    });
+    api.enqueueTask({ taskType: 'classify', hash: saved.hash });
+
+    localScheduler.start();
+    await localScheduler.runOnce();
+
+    await vi.waitFor(() => {
+      const [task] = api.getTasksByHash(saved.hash);
+      expect(task.status).toBe('skipped');
+    });
+
+    const [task] = api.getTasksByHash(saved.hash);
+    expect(task.attempts).toBe(0);
+    expect(task.error).toBe('cannot decode');
+    localScheduler.stop();
+  });
+
+  it('keeps transient failures on the retry policy', async () => {
+    const failingAi = createFakeAi();
+    failingAi.classifyTagsByHash = async () => {
+      throw new Error('ollama timeout');
+    };
+    const localScheduler = new Scheduler({ api, ai: failingAi, config: store, events });
+
+    const saved = api.saveFile({
+      buffer: Buffer.from('transient-content'),
+      mimeType: 'image/jpeg',
+    });
+    api.enqueueTask({ taskType: 'classify', hash: saved.hash });
+
+    localScheduler.start();
+    await localScheduler.runOnce();
+
+    await vi.waitFor(() => {
+      const [task] = api.getTasksByHash(saved.hash);
+      expect(task.attempts).toBe(1);
+      expect(task.status).toBe('pending');
+    });
+
+    localScheduler.stop();
   });
 });

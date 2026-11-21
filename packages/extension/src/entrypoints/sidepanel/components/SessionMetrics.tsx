@@ -77,6 +77,9 @@ export function SessionMetrics({ counters, startedAt, endedAt, status }: Session
         <span>
           {t('cockpit.metrics.ai', 'AI')} {counters.aiPending} 排队 · {counters.aiProcessing} 处理中
           · {counters.aiCompleted} 完成
+          {counters.aiSkipped > 0
+            ? ` · ${counters.aiSkipped} ${t('cockpit.metrics.aiSkipped', '跳过')}`
+            : ''}
         </span>
         {counters.videosQueued + counters.videosDownloading > 0 && (
           <span>

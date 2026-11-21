@@ -5,9 +5,10 @@
  * extension's MV3 service worker. All storage and AI calls are in-process.
  */
 import type { VFSAPI, TaskItem, TaskType, QueueStatus } from 'vfs';
-import type { OllamaClient } from 'ai';
+import { type OllamaClient } from 'ai';
 import type { ConfigStore } from './config-store';
 import type { EventBus } from './event-bus';
+import { type EnqueueOptions } from './media-eligibility';
 export type SchedulerState = 'running' | 'paused';
 export interface SchedulerStatus {
     state: SchedulerState;
@@ -35,6 +36,7 @@ export declare class Scheduler {
     private ticking;
     private intervalId;
     private handlers;
+    private readonly gate;
     constructor(dependencies: SchedulerDependencies);
     registerHandler(taskType: TaskType, handler: TaskHandler): void;
     start(): void;
@@ -50,14 +52,15 @@ export declare class Scheduler {
     getSchedulerStatus(): SchedulerStatus;
     updateConcurrency(concurrency: number): void;
     getQueueStatus(): QueueStatus;
-    enqueueTask(taskType: TaskType, hash: string, options?: {
-        priority?: number;
-        requeue?: boolean;
-    }): Promise<boolean>;
+    enqueueTask(taskType: TaskType, hash: string, options?: EnqueueOptions): Promise<boolean>;
     enqueue(hash: string, priority?: number): Promise<boolean>;
     enqueuePair(hash: string): Promise<void>;
-    requeueTask(taskType: TaskType, hash: string): Promise<boolean>;
-    requeueAll(taskType: TaskType): Promise<number>;
+    requeueTask(taskType: TaskType, hash: string): Promise<{
+        success: boolean;
+        skipped: boolean;
+        reason?: string;
+    }>;
+    requeueAll(taskType?: TaskType): Promise<number>;
     retryFailed(taskType?: TaskType): Promise<number>;
     clearQueue(taskType?: TaskType): Promise<void>;
     recoverStale(): Promise<number>;
@@ -65,6 +68,8 @@ export declare class Scheduler {
     private handleRename;
     private tick;
     private runTask;
+    private markSkipped;
+    private emitSkipped;
     private retryDelayFor;
     private broadcastEvent;
     private broadcastSchedulerStatus;

@@ -9,6 +9,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ThumbnailStorage = void 0;
+exports.getDecodableImageMimeTypes = getDecodableImageMimeTypes;
 const sharp_1 = __importDefault(require("sharp"));
 const path_1 = __importDefault(require("path"));
 const fs_1 = __importDefault(require("fs"));
@@ -21,6 +22,53 @@ const THUMBNAIL_DIMENSIONS = {
     medium: 200,
     large: 400,
 };
+/**
+ * Map sharp/libvips format identifiers to image MIME types. Formats missing
+ * here have no image MIME equivalent (for example `pdf` or `raw`).
+ */
+const SHARP_FORMAT_MIME_TYPES = {
+    jpeg: 'image/jpeg',
+    png: 'image/png',
+    webp: 'image/webp',
+    tiff: 'image/tiff',
+    gif: 'image/gif',
+    svg: 'image/svg+xml',
+    heif: 'image/heif',
+    jp2k: 'image/jp2',
+    jxl: 'image/jxl',
+};
+let decodableImageMimeTypes = null;
+let unmappedFormatsLogged = false;
+/**
+ * Image MIME types the bundled decoder can actually read as input.
+ *
+ * Derived from the compiled sharp/libvips capabilities so callers (for example
+ * AI eligibility) never assume a format the build cannot decode.
+ */
+function getDecodableImageMimeTypes() {
+    if (decodableImageMimeTypes) {
+        return [...decodableImageMimeTypes];
+    }
+    const mimeTypes = new Set();
+    const unmapped = [];
+    for (const [format, capabilities] of Object.entries(sharp_1.default.format)) {
+        if (!capabilities.input?.buffer)
+            continue;
+        const mimeType = SHARP_FORMAT_MIME_TYPES[format];
+        if (mimeType) {
+            mimeTypes.add(mimeType);
+        }
+        else {
+            unmapped.push(format);
+        }
+    }
+    if (!unmappedFormatsLogged && unmapped.length > 0) {
+        unmappedFormatsLogged = true;
+        console.warn(`[ThumbnailStorage] Decoder formats without an image MIME mapping (ignored): ${unmapped.join(', ')}`);
+    }
+    decodableImageMimeTypes = [...mimeTypes];
+    return [...decodableImageMimeTypes];
+}
 /**
  * Thumbnail storage class
  */

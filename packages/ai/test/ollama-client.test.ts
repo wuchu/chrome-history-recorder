@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { OllamaClient, type MediaReader } from '../src/ollama-client';
+import { isUnprocessableMediaError } from '../src/errors';
+
+const DECODABLE = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/tiff'];
 
 const media: MediaReader = {
+  getMediaInfo: () => ({ mimeType: 'image/jpeg' }),
+  getDecodableImageMimeTypes: () => DECODABLE,
   getThumbnail: async () => ({ buffer: Buffer.from([1, 2, 3]), mimeType: 'image/jpeg' }),
   getFile: () => ({ buffer: Buffer.from([1, 2, 3]), mimeType: 'image/jpeg' }),
   getTagVocabulary: () => ['cat', 'dog'],
@@ -75,6 +80,8 @@ describe('OllamaClient', () => {
 
   it('falls back to the original file when thumbnails fail', async () => {
     const failingMedia: MediaReader = {
+      getMediaInfo: () => ({ mimeType: 'image/png' }),
+      getDecodableImageMimeTypes: () => DECODABLE,
       getThumbnail: async () => {
         throw new Error('thumbnail unavailable');
       },
@@ -86,5 +93,73 @@ describe('OllamaClient', () => {
 
     const result = await client.classifyTagsByHash('hash-3');
     expect(result.tags).toEqual(['cat', 'fluffy']);
+  });
+
+  it('skips unsupported formats before calling Ollama', async () => {
+    const icoMedia: MediaReader = {
+      getMediaInfo: () => ({ mimeType: 'image/x-icon' }),
+      getDecodableImageMimeTypes: () => DECODABLE,
+      getThumbnail: async () => null,
+      getFile: () => ({ buffer: Buffer.from([1, 2, 3]), mimeType: 'image/x-icon' }),
+      getTagVocabulary: () => [],
+    };
+    const client = new OllamaClient({ model: 'llava:7b', media: icoMedia });
+    await client.checkHealth();
+
+    await expect(client.classifyTagsByHash('ico-hash')).rejects.toMatchObject({
+      name: 'UnprocessableMediaError',
+      reason: 'unsupported-format',
+    });
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/api/chat'))).toBe(false);
+  });
+
+  it('reports a video without a representative frame as permanent', async () => {
+    const videoMedia: MediaReader = {
+      getMediaInfo: () => ({ mimeType: 'video/mp4' }),
+      getDecodableImageMimeTypes: () => DECODABLE,
+      getThumbnail: async () => null,
+      getFile: () => ({ buffer: Buffer.from([1, 2, 3]), mimeType: 'video/mp4' }),
+      getTagVocabulary: () => [],
+    };
+    const client = new OllamaClient({ model: 'llava:7b', media: videoMedia });
+    await client.checkHealth();
+
+    await expect(client.renameByHash('video-hash')).rejects.toMatchObject({
+      name: 'UnprocessableMediaError',
+      reason: 'no-representative-frame',
+    });
+  });
+
+  it('reports invalid media bytes as permanent', async () => {
+    const emptyMedia: MediaReader = {
+      getMediaInfo: () => ({ mimeType: 'image/jpeg' }),
+      getDecodableImageMimeTypes: () => DECODABLE,
+      getThumbnail: async () => null,
+      getFile: () => ({ buffer: Buffer.alloc(0), mimeType: 'image/jpeg' }),
+      getTagVocabulary: () => [],
+    };
+    const client = new OllamaClient({ model: 'llava:7b', media: emptyMedia });
+    await client.checkHealth();
+
+    await expect(client.classifyTagsByHash('empty-hash')).rejects.toMatchObject({
+      name: 'UnprocessableMediaError',
+      reason: 'invalid-media',
+    });
+  });
+
+  it('keeps missing media as a transient error', async () => {
+    const missingMedia: MediaReader = {
+      getMediaInfo: () => null,
+      getDecodableImageMimeTypes: () => DECODABLE,
+      getThumbnail: async () => null,
+      getFile: () => null,
+      getTagVocabulary: () => [],
+    };
+    const client = new OllamaClient({ model: 'llava:7b', media: missingMedia });
+    await client.checkHealth();
+
+    const error = await client.classifyTagsByHash('missing-hash').catch((caught) => caught);
+    expect(error).toBeInstanceOf(Error);
+    expect(isUnprocessableMediaError(error)).toBe(false);
   });
 });

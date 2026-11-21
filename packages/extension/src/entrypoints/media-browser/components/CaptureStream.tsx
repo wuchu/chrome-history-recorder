@@ -17,7 +17,7 @@ interface CapturedFile {
   url: string;
   thumbnailUrl: string;
   capturedAt: string;
-  classifyStatus?: 'pending' | 'processing' | 'completed' | 'failed';
+  classifyStatus?: 'pending' | 'processing' | 'completed' | 'failed' | 'skipped';
   classifyData?: {
     category: string;
     confidence: number;
@@ -37,13 +37,14 @@ interface CaptureStreamProps {
 const StatusIndicator = memo(function StatusIndicator({
   status,
 }: {
-  status: 'pending' | 'processing' | 'completed' | 'failed';
+  status: 'pending' | 'processing' | 'completed' | 'failed' | 'skipped';
 }) {
   const icon = {
     pending: '○',
     processing: '◉',
     completed: '✓',
     failed: '✗',
+    skipped: '⊘',
   };
 
   const colorClass = {
@@ -51,6 +52,7 @@ const StatusIndicator = memo(function StatusIndicator({
     processing: styles.processing,
     completed: styles.completed,
     failed: styles.failed,
+    skipped: styles.skipped,
   };
 
   return <span className={`${styles.statusIcon} ${colorClass[status]}`}>{icon[status]}</span>;

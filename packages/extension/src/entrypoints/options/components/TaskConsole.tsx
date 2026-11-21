@@ -100,6 +100,7 @@ const TaskConsole = memo(function TaskConsole({
       processing: 0,
       completed: 0,
       failed: 0,
+      skipped: 0,
       total: 0,
     };
     const aggregate: TaskTypeSummary = {
@@ -107,6 +108,7 @@ const TaskConsole = memo(function TaskConsole({
       processing: status.processing,
       completed: status.completed,
       failed: status.failed,
+      skipped: status.skipped,
       total: status.total,
     };
     const keys = [
@@ -214,7 +216,8 @@ const TaskConsole = memo(function TaskConsole({
       {typeRows.map((row) => {
         const templateKey = isTemplateKey(row.key) ? row.key : null;
         const templateMeta = templateKey ? TEMPLATE_META[templateKey] : null;
-        const percent = row.total > 0 ? Math.round((row.completed / row.total) * 100) : 0;
+        const percent =
+          row.total > 0 ? Math.round(((row.completed + row.skipped) / row.total) * 100) : 0;
         const progressStatus =
           row.failed > 0 ? 'exception' : schedulerRunning ? 'active' : 'normal';
 
@@ -235,9 +238,10 @@ const TaskConsole = memo(function TaskConsole({
               <Text strong>队列进度</Text>
               <Text
                 type="secondary"
-                title={`待处理 ${row.pending} · 处理中 ${row.processing} · 已完成 ${row.completed} · 失败 ${row.failed}`}
+                title={`待处理 ${row.pending} · 处理中 ${row.processing} · 已完成 ${row.completed} · 跳过 ${row.skipped} · 失败 ${row.failed}`}
               >
                 {row.pending} 待处理 · {row.processing} 处理中 · {row.completed}/{row.total} 完成
+                {row.skipped > 0 ? ` · ${row.skipped} 跳过` : ''}
                 {row.failed > 0 ? ` · ${row.failed} 失败` : ''}
               </Text>
             </Space>

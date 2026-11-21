@@ -97,6 +97,10 @@
   color: var(--error-color);
 }
 
+.skipped {
+  color: var(--text-muted);
+}
+
 .captureInfo {
   text-align: center;
   padding-top: 4px;

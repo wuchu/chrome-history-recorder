@@ -25,6 +25,62 @@ const THUMBNAIL_DIMENSIONS: Record<ThumbnailSize, number> = {
 };
 
 /**
+ * Map sharp/libvips format identifiers to image MIME types. Formats missing
+ * here have no image MIME equivalent (for example `pdf` or `raw`).
+ */
+const SHARP_FORMAT_MIME_TYPES: Record<string, string> = {
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+  tiff: 'image/tiff',
+  gif: 'image/gif',
+  svg: 'image/svg+xml',
+  heif: 'image/heif',
+  jp2k: 'image/jp2',
+  jxl: 'image/jxl',
+};
+
+let decodableImageMimeTypes: string[] | null = null;
+let unmappedFormatsLogged = false;
+
+/**
+ * Image MIME types the bundled decoder can actually read as input.
+ *
+ * Derived from the compiled sharp/libvips capabilities so callers (for example
+ * AI eligibility) never assume a format the build cannot decode.
+ */
+export function getDecodableImageMimeTypes(): string[] {
+  if (decodableImageMimeTypes) {
+    return [...decodableImageMimeTypes];
+  }
+
+  const mimeTypes = new Set<string>();
+  const unmapped: string[] = [];
+
+  for (const [format, capabilities] of Object.entries(sharp.format)) {
+    if (!capabilities.input?.buffer) continue;
+    const mimeType = SHARP_FORMAT_MIME_TYPES[format];
+    if (mimeType) {
+      mimeTypes.add(mimeType);
+    } else {
+      unmapped.push(format);
+    }
+  }
+
+  if (!unmappedFormatsLogged && unmapped.length > 0) {
+    unmappedFormatsLogged = true;
+    console.warn(
+      `[ThumbnailStorage] Decoder formats without an image MIME mapping (ignored): ${unmapped.join(
+        ', '
+      )}`
+    );
+  }
+
+  decodableImageMimeTypes = [...mimeTypes];
+  return [...decodableImageMimeTypes];
+}
+
+/**
  * Thumbnail storage class
  */
 export class ThumbnailStorage {

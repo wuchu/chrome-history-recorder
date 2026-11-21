@@ -4,7 +4,7 @@
  * Implements all VFS API methods.
  */
 import { type Readable } from 'stream';
-import { SQLiteDatabase, FileMetadata, MetadataUpdate, ListQuery, ListFilesCreatedAfterParams, EnqueueTaskParams, TaskType, TaskStatus, TaskItem, QueueStatus, TagRecord, ApplyClassificationParams } from './sqlite';
+import { SQLiteDatabase, FileMetadata, MetadataUpdate, ListQuery, ListFilesCreatedAfterParams, EnqueueTaskParams, TaskType, TaskStatus, TaskItem, QueueStatus, TagRecord, ApplyClassificationParams, RecordSkippedTaskParams, RetryFailedParams, RequeueAllParams, SkipIneligibleTasksParams } from './sqlite';
 import { BlobStorage } from './blob';
 import { ThumbnailStorage, ThumbnailSize } from './thumbnail';
 export interface SyncBlobsToIndexError {
@@ -206,11 +206,29 @@ export declare class VFSAPI {
     /**
      * Requeue all tasks of a type (full rescan).
      */
-    requeueAll(params?: {
-        taskType?: TaskType;
-    }): {
+    requeueAll(params?: RequeueAllParams): {
         count: number;
     };
+    /**
+     * Record a terminal skipped task for media the AI pipeline cannot process.
+     */
+    recordSkippedTask(params: RecordSkippedTaskParams): {
+        success: boolean;
+    };
+    /**
+     * Convert persisted pending/failed tasks for ineligible media to skipped.
+     */
+    skipIneligibleTasks(params: SkipIneligibleTasksParams): {
+        count: number;
+    };
+    /**
+     * MIME types present in the media index (used for eligibility sweeps).
+     */
+    getDistinctMimeTypes(): string[];
+    /**
+     * Image MIME types the bundled thumbnail decoder can read.
+     */
+    getDecodableImageMimeTypes(): string[];
     /**
      * Recover tasks left processing by a terminated worker.
      */
@@ -251,11 +269,9 @@ export declare class VFSAPI {
         success: boolean;
     };
     /**
-     * Retry failed tasks API
+     * Retry failed tasks API. Failed tasks for ineligible media are skipped.
      */
-    retryFailedTasks(params?: {
-        taskType?: TaskType;
-    }): {
+    retryFailedTasks(params?: RetryFailedParams): {
         count: number;
     };
     /**

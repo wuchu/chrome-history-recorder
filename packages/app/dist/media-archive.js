@@ -635,10 +635,10 @@ class MediaArchiveWorker {
     getArchiveSummary() {
         try {
             const summary = this.api.getQueueStatus().byType[exports.ARCHIVE_TASK_TYPE];
-            return summary ?? { pending: 0, processing: 0, completed: 0, failed: 0, total: 0 };
+            return (summary ?? { pending: 0, processing: 0, completed: 0, failed: 0, skipped: 0, total: 0 });
         }
         catch {
-            return { pending: 0, processing: 0, completed: 0, failed: 0, total: 0 };
+            return { pending: 0, processing: 0, completed: 0, failed: 0, skipped: 0, total: 0 };
         }
     }
     persist() {

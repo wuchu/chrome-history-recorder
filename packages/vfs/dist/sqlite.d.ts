@@ -38,7 +38,7 @@ export interface FileMetadata {
 export interface QueueItem {
     id: number;
     hash: string;
-    status: 'pending' | 'processing' | 'completed' | 'failed';
+    status: TaskStatus;
     priority: number;
     added_at: string;
     started_at: string | null;
@@ -50,7 +50,7 @@ export interface QueueItem {
  * Task types supported by the unified engine. Extensible by design.
  */
 export type TaskType = 'classify' | 'rename' | (string & {});
-export type TaskStatus = 'pending' | 'processing' | 'completed' | 'failed';
+export type TaskStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'skipped';
 export interface TaskItem {
     id: number;
     task_type: TaskType;
@@ -71,6 +71,7 @@ export interface TaskStatusSummary {
     processing: number;
     completed: number;
     failed: number;
+    skipped: number;
     total: number;
 }
 export interface QueueStatus extends TaskStatusSummary {
@@ -94,6 +95,33 @@ export interface UpdateTaskStatusParams {
     error?: string;
     /** Delay before a failed task becomes claimable again. */
     retryDelayMs?: number;
+}
+export interface RetryFailedParams {
+    taskType?: TaskType;
+    /**
+     * Media MIME types the AI pipeline cannot process. Failed tasks for these
+     * types become skipped instead of pending.
+     */
+    ineligibleMimeTypes?: string[];
+    /** Reason recorded when a task is skipped for ineligible media. */
+    skipError?: string;
+}
+export interface RequeueAllParams {
+    taskType?: TaskType;
+    ineligibleMimeTypes?: string[];
+    skipError?: string;
+}
+export interface RecordSkippedTaskParams {
+    taskType: TaskType;
+    hash: string;
+    error: string;
+    priority?: number;
+    maxAttempts?: number;
+}
+export interface SkipIneligibleTasksParams {
+    ineligibleMimeTypes: string[];
+    error: string;
+    taskTypes?: TaskType[];
 }
 export interface TagRecord {
     id: number;
@@ -261,11 +289,26 @@ export declare class SQLiteDatabase {
      */
     requeueTask(taskType: TaskType, hash: string): boolean;
     /**
-     * Requeue every task of a type (full rescan), creating rows for files that
-     * never had that task type. When `taskType` is omitted all existing task
-     * types are requeued.
+     * Record a terminal skipped task for media the AI pipeline cannot process.
+     *
+     * Creates the row when absent and converts `pending`/`failed` rows.
+     * `completed` rows are preserved: skipping must not erase a real result.
      */
-    requeueAll(taskType?: TaskType): number;
+    recordSkippedTask(params: RecordSkippedTaskParams): boolean;
+    /**
+     * Requeue every eligible task of a type (full rescan), creating rows for
+     * files that never had that task type. Ineligible media becomes or remains
+     * skipped and is never reset to pending.
+     */
+    requeueAll(params?: RequeueAllParams): number;
+    /**
+     * Convert persisted pending/failed tasks for ineligible media to skipped.
+     */
+    skipIneligibleTasks(params: SkipIneligibleTasksParams): number;
+    /**
+     * Distinct MIME types currently stored in the index.
+     */
+    getDistinctMimeTypes(): string[];
     /**
      * Recover tasks left in `processing` by a terminated service worker.
      */
@@ -292,9 +335,13 @@ export declare class SQLiteDatabase {
      */
     getFailedTasks(taskType?: TaskType): QueueItem[];
     /**
-     * Retry failed tasks, optionally filtered by type.
+     * Retry failed tasks, optionally filtered by type. Failed tasks for
+     * ineligible media become skipped instead of pending.
      */
-    retryFailedTasks(taskType?: TaskType): number;
+    retryFailedTasks(params?: RetryFailedParams): number;
+    private normalizeMimeTypes;
+    private ineligibleHashSubquery;
+    private markIneligibleTasksSkipped;
     /**
      * Clear tasks, optionally filtered by type.
      */

@@ -77,7 +77,7 @@ export interface VFSListQuery {
  */
 export type VFSTaskType = 'classify' | 'rename' | (string & {});
 
-export type VFSTaskStatus = 'pending' | 'processing' | 'completed' | 'failed';
+export type VFSTaskStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'skipped';
 
 export interface VFSTask {
   id: number;
@@ -100,6 +100,7 @@ export interface VFSTaskSummary {
   processing: number;
   completed: number;
   failed: number;
+  skipped: number;
   total: number;
 }
 
@@ -682,7 +683,10 @@ export class VFSWebSocketClient {
   /**
    * Requeue a single typed task.
    */
-  async requeueTask(taskType: VFSTaskType, hash: string): Promise<{ success: boolean }> {
+  async requeueTask(
+    taskType: VFSTaskType,
+    hash: string
+  ): Promise<{ success: boolean; skipped?: boolean; reason?: string }> {
     return this.send('requeueTask', { taskType, hash });
   }
 

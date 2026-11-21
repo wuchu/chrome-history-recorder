@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Modal, Space, Spin, Tag, Typography } from 'antd';
+import { Alert, Button, Modal, Space, Spin, Tag, Typography, message } from 'antd';
 import {
   getTagCounts,
   listTags,
@@ -130,9 +130,15 @@ export function MediaLibrary() {
   );
 
   const handleRefreshTask = useCallback((taskType: 'classify' | 'rename', hash: string) => {
-    refreshTask(taskType, hash).catch((error) => {
-      console.error(`[MediaLibrary] Failed to requeue ${taskType} for ${hash}:`, error);
-    });
+    refreshTask(taskType, hash)
+      .then((result) => {
+        if (!result.success && result.reason) {
+          message.warning(result.reason);
+        }
+      })
+      .catch((error) => {
+        console.error(`[MediaLibrary] Failed to requeue ${taskType} for ${hash}:`, error);
+      });
   }, []);
 
   const themeClass = theme.themeClass(appStyles.lightTheme, appStyles.darkTheme);

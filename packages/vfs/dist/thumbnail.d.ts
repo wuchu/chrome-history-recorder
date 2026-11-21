@@ -8,6 +8,13 @@
  */
 export type ThumbnailSize = 'small' | 'medium' | 'large';
 /**
+ * Image MIME types the bundled decoder can actually read as input.
+ *
+ * Derived from the compiled sharp/libvips capabilities so callers (for example
+ * AI eligibility) never assume a format the build cannot decode.
+ */
+export declare function getDecodableImageMimeTypes(): string[];
+/**
  * Thumbnail storage class
  */
 export declare class ThumbnailStorage {

@@ -9,6 +9,12 @@ import { type PromptTemplates } from './prompt-templates';
  * Media access needed by the classifier. Implemented by the app with VFSAPI.
  */
 export interface MediaReader {
+    /** Metadata for a hash, without reading the media bytes. */
+    getMediaInfo(hash: string): {
+        mimeType: string;
+    } | null;
+    /** Image formats the bundled thumbnail decoder can actually read. */
+    getDecodableImageMimeTypes(): string[];
     getThumbnail(hash: string, size: 'small' | 'medium' | 'large'): Promise<{
         buffer: Buffer | Uint8Array | number[];
         mimeType: string;
@@ -116,6 +122,9 @@ export declare class OllamaClient {
     /**
      * Obtain a representative image for a media hash (large thumbnail when
      * available, otherwise the original blob), read in-process.
+     *
+     * Media that cannot produce a representative image raises a permanent
+     * `UnprocessableMediaError`; transient failures keep their original error.
      */
     getRepresentativeImage(hash: string): Promise<{
         buffer: ArrayBuffer;

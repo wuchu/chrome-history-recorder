@@ -195,13 +195,13 @@ describe('SQLiteDatabase tasks and tags', () => {
       db.enqueueTask({ taskType: 'classify', hash: 'old' });
       db.updateTaskStatus({ taskType: 'classify', hash: 'old', status: 'completed' });
 
-      expect(db.requeueAll('rename')).toBe(1);
+      expect(db.requeueAll({ taskType: 'rename' })).toBe(1);
       expect(db.getTasksByHash('old').map((t) => t.task_type)).toEqual(['classify', 'rename']);
       expect(db.getTasksByHash('deleted')).toHaveLength(0);
 
       // Only the rename task is pending; classify is still completed.
       expect(db.claimTasks(10).map((t) => t.task_type)).toEqual(['rename']);
-      expect(db.requeueAll('classify')).toBe(1);
+      expect(db.requeueAll({ taskType: 'classify' })).toBe(1);
       expect(db.claimTasks(10).map((t) => t.task_type)).toEqual(['classify']);
     });
 
@@ -210,6 +210,103 @@ describe('SQLiteDatabase tasks and tags', () => {
       db.enqueueTask({ taskType: 'classify', hash: 'h1' });
       db.hardDeleteFile('h1');
       expect(db.getTasksByHash('h1')).toHaveLength(0);
+    });
+  });
+
+  describe('skipped tasks', () => {
+    it('records a terminal skipped row that cannot be claimed', () => {
+      insertFile('ico', { mime_type: 'image/x-icon' });
+
+      expect(
+        db.recordSkippedTask({
+          taskType: 'classify',
+          hash: 'ico',
+          error: 'unsupported-format',
+        })
+      ).toBe(true);
+
+      const [task] = db.getTasksByHash('ico');
+      expect(task.status).toBe('skipped');
+      expect(task.error).toBe('unsupported-format');
+      expect(db.claimTasks(10)).toHaveLength(0);
+    });
+
+    it('converts pending and failed rows but preserves completed results', () => {
+      insertFile('ico', { mime_type: 'image/x-icon' });
+      insertFile('done');
+      db.enqueueTask({ taskType: 'classify', hash: 'ico' });
+      db.enqueueTask({ taskType: 'classify', hash: 'done' });
+      db.updateTaskStatus({ taskType: 'classify', hash: 'done', status: 'completed' });
+
+      db.recordSkippedTask({ taskType: 'classify', hash: 'ico', error: 'unsupported' });
+      db.recordSkippedTask({ taskType: 'classify', hash: 'done', error: 'unsupported' });
+
+      expect(db.getTasksByHash('ico')[0].status).toBe('skipped');
+      expect(db.getTasksByHash('done')[0].status).toBe('completed');
+    });
+
+    it('counts skipped tasks in queue status', () => {
+      insertFile('ico', { mime_type: 'image/x-icon' });
+      db.recordSkippedTask({ taskType: 'classify', hash: 'ico', error: 'unsupported' });
+      db.recordSkippedTask({ taskType: 'rename', hash: 'ico', error: 'unsupported' });
+
+      const status = db.getQueueStatus();
+      expect(status.skipped).toBe(2);
+      expect(status.total).toBe(2);
+      expect(status.byType?.classify.skipped).toBe(1);
+      expect(status.byType?.rename.skipped).toBe(1);
+    });
+
+    it('splits retry-failed into skipped and pending by eligibility', () => {
+      insertFile('ico', { mime_type: 'image/x-icon' });
+      insertFile('png');
+      for (const hash of ['ico', 'png']) {
+        db.enqueueTask({ taskType: 'classify', hash, maxAttempts: 1 });
+        db.updateTaskStatus({
+          taskType: 'classify',
+          hash,
+          status: 'failed',
+          error: 'boom',
+          retryDelayMs: 0,
+        });
+      }
+
+      const reset = db.retryFailedTasks({ ineligibleMimeTypes: ['image/x-icon'] });
+      expect(reset).toBe(1);
+      expect(db.getTasksByHash('ico')[0].status).toBe('skipped');
+      expect(db.getTasksByHash('png')[0].status).toBe('pending');
+    });
+
+    it('full rescan never resets ineligible tasks to pending', () => {
+      insertFile('ico', { mime_type: 'image/x-icon' });
+      insertFile('png');
+      db.recordSkippedTask({ taskType: 'classify', hash: 'ico', error: 'unsupported' });
+      db.enqueueTask({ taskType: 'classify', hash: 'png' });
+
+      const count = db.requeueAll({
+        taskType: 'classify',
+        ineligibleMimeTypes: ['image/x-icon'],
+      });
+
+      expect(count).toBe(1);
+      expect(db.getTasksByHash('ico')[0].status).toBe('skipped');
+      expect(db.getTasksByHash('png')[0].status).toBe('pending');
+    });
+
+    it('startup reconciliation converts persisted ineligible tasks', () => {
+      insertFile('ico', { mime_type: 'image/x-icon' });
+      insertFile('png');
+      db.enqueueTask({ taskType: 'classify', hash: 'ico' });
+      db.enqueueTask({ taskType: 'classify', hash: 'png' });
+
+      const converted = db.skipIneligibleTasks({
+        ineligibleMimeTypes: ['image/x-icon'],
+        error: 'unsupported',
+      });
+
+      expect(converted).toBe(1);
+      expect(db.getTasksByHash('ico')[0].status).toBe('skipped');
+      expect(db.getTasksByHash('png')[0].status).toBe('pending');
     });
   });
 

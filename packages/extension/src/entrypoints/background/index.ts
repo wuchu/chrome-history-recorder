@@ -62,6 +62,9 @@ export default defineBackground(() => {
       case 'classify:failed':
         status = 'failed';
         break;
+      case 'classify:skipped':
+        status = 'skipped';
+        break;
       case 'task:queued':
         if (payload?.task_type === 'classify') status = 'pending';
         break;
@@ -73,6 +76,9 @@ export default defineBackground(() => {
         break;
       case 'task:failed':
         if (payload?.task_type === 'classify') status = 'failed';
+        break;
+      case 'task:skipped':
+        if (payload?.task_type === 'classify') status = 'skipped';
         break;
       default:
         return;

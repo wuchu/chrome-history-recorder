@@ -6,7 +6,7 @@
  * over the same WebSocket connection.
  */
 
-import type { ExternalHandler, VFSAPI } from 'vfs';
+import type { ExternalHandler, VFSAPI, TaskType } from 'vfs';
 import type { OllamaClient } from 'ai';
 import type { ConfigStore } from './config-store';
 import type { EventBus } from './event-bus';
@@ -109,41 +109,52 @@ export function createAppExternalHandler(dependencies: AppHandlerDependencies): 
         return { available: ai.isAvailable() };
 
       /**
-       * Scheduler-aware task mutations. The storage dispatcher would handle
-       * these too, but the app wants to kick the scheduler immediately.
+       * Scheduler-aware task mutations. The scheduler owns eligibility, so
+       * ineligible media is recorded as skipped instead of pending.
        */
       case 'enqueueTask': {
-        const result = api.enqueueTask(params as unknown as Parameters<typeof api.enqueueTask>[0]);
-        scheduler.kick();
-        return result;
+        const { taskType, hash, priority, maxAttempts, requeue } = params as {
+          taskType?: TaskType;
+          hash?: string;
+          priority?: number;
+          maxAttempts?: number;
+          requeue?: boolean;
+        };
+        if (!taskType || !hash) return { success: false };
+        const success = await scheduler.enqueueTask(taskType, hash, {
+          priority: typeof priority === 'number' ? priority : undefined,
+          maxAttempts: typeof maxAttempts === 'number' ? maxAttempts : undefined,
+          requeue: requeue === true,
+        });
+        return { success };
       }
 
       case 'enqueueClassification': {
-        const result = api.enqueueClassification(
-          params as unknown as Parameters<typeof api.enqueueClassification>[0]
-        );
-        scheduler.kick();
-        return result;
+        const { hash, priority } = params as { hash?: string; priority?: number };
+        if (!hash) return { success: false };
+        const success = await scheduler.enqueueTask('classify', hash, {
+          priority: typeof priority === 'number' ? priority : undefined,
+          requeue: true,
+        });
+        return { success };
       }
 
       case 'requeueTask': {
-        const result = api.requeueTask(params as unknown as Parameters<typeof api.requeueTask>[0]);
-        scheduler.kick();
-        return result;
+        const { taskType, hash } = params as { taskType?: TaskType; hash?: string };
+        if (!taskType || !hash) return { success: false };
+        return scheduler.requeueTask(taskType, hash);
       }
 
       case 'requeueAll': {
-        const result = api.requeueAll(params as unknown as Parameters<typeof api.requeueAll>[0]);
-        scheduler.kick();
-        return result;
+        const { taskType } = params as { taskType?: TaskType };
+        const count = await scheduler.requeueAll(taskType);
+        return { count };
       }
 
       case 'retryFailedTasks': {
-        const result = api.retryFailedTasks(
-          params as unknown as Parameters<typeof api.retryFailedTasks>[0]
-        );
-        scheduler.kick();
-        return result;
+        const { taskType } = params as { taskType?: TaskType };
+        const count = await scheduler.retryFailed(taskType);
+        return { count };
       }
 
       case 'clearQueue':

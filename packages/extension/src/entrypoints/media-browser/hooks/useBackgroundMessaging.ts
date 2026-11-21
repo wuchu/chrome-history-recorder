@@ -151,7 +151,10 @@ export function useBackgroundMessaging({
  */
 export function useClassifyEvents(events: BackgroundEvent[]) {
   const [classifyStatus, setClassifyStatus] = useState<
-    Record<string, { status: 'pending' | 'processing' | 'completed' | 'failed'; data?: unknown }>
+    Record<
+      string,
+      { status: 'pending' | 'processing' | 'completed' | 'failed' | 'skipped'; data?: unknown }
+    >
   >({});
 
   useEffect(() => {
@@ -179,6 +182,12 @@ export function useClassifyEvents(events: BackgroundEvent[]) {
         setClassifyStatus((prev) => ({
           ...prev,
           [data.hash]: { status: 'failed', data },
+        }));
+      } else if (event.type === 'classify:skipped') {
+        const data = event.data as { hash: string; error: string };
+        setClassifyStatus((prev) => ({
+          ...prev,
+          [data.hash]: { status: 'skipped', data },
         }));
       }
     }

@@ -7,6 +7,8 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Scheduler = void 0;
+const ai_1 = require("ai");
+const media_eligibility_1 = require("./media-eligibility");
 const DEFAULT_RETRY_BASE_DELAY_MS = 5000;
 const DEFAULT_RETRY_MAX_DELAY_MS = 120000;
 class Scheduler {
@@ -20,12 +22,14 @@ class Scheduler {
     ticking = false;
     intervalId = null;
     handlers = new Map();
+    gate;
     constructor(dependencies) {
         this.api = dependencies.api;
         this.ai = dependencies.ai;
         this.events = dependencies.events;
         this.pollInterval = dependencies.pollInterval ?? 5000;
         this.concurrency = dependencies.config.get().classificationConcurrency;
+        this.gate = new media_eligibility_1.MediaEligibilityGate(this.api);
         this.registerHandler('classify', (task) => this.handleClassify(task));
         this.registerHandler('rename', (task) => this.handleRename(task));
     }
@@ -87,12 +91,18 @@ class Scheduler {
         return this.api.getQueueStatus();
     }
     async enqueueTask(taskType, hash, options = {}) {
-        const result = this.api.enqueueTask({
-            taskType,
-            hash,
+        const result = this.gate.enqueue(taskType, hash, {
             priority: options.priority ?? 5,
+            maxAttempts: options.maxAttempts,
             requeue: options.requeue ?? false,
         });
+        if (result.skipped) {
+            // Ineligible media never enters the pending queue; surface the terminal
+            // outcome so the UI can explain why no AI work will run.
+            this.emitSkipped(taskType, hash, result.reason ?? 'Media is not processable');
+            this.broadcastQueueUpdated();
+            return result.success;
+        }
         if (result.success) {
             this.events.emit('task:queued', {
                 task_type: taskType,
@@ -117,23 +127,34 @@ class Scheduler {
         ]);
     }
     async requeueTask(taskType, hash) {
+        const reason = this.gate.ineligibleReason(hash);
+        if (reason) {
+            const success = this.markSkipped(taskType, hash, reason);
+            return { success: false, skipped: success, reason };
+        }
         const result = this.api.requeueTask({ taskType, hash });
         if (result.success) {
             this.events.emit('task:queued', { task_type: taskType, hash, requeue: true });
             this.broadcastQueueUpdated();
             void this.tick();
         }
-        return result.success;
+        return { success: result.success, skipped: false };
     }
     async requeueAll(taskType) {
-        const result = this.api.requeueAll({ taskType });
+        const result = this.api.requeueAll({
+            taskType,
+            ineligibleMimeTypes: this.gate.ineligibleMimeTypes(),
+        });
         this.broadcastQueueUpdated();
         if (result.count > 0)
             void this.tick();
         return result.count;
     }
     async retryFailed(taskType) {
-        const result = this.api.retryFailedTasks({ taskType });
+        const result = this.api.retryFailedTasks({
+            taskType,
+            ineligibleMimeTypes: this.gate.ineligibleMimeTypes(),
+        });
         this.broadcastQueueUpdated();
         if (result.count > 0)
             void this.tick();
@@ -252,6 +273,14 @@ class Scheduler {
         }
         catch (error) {
             const message = error instanceof Error ? error.message : 'Unknown error';
+            if ((0, ai_1.isUnprocessableMediaError)(error)) {
+                // Permanent: the media cannot produce a representative image. Mark it
+                // skipped once; retrying the same bytes can never succeed.
+                this.api.updateTaskStatus({ taskType, hash, status: 'skipped', error: message });
+                this.emitSkipped(taskType, hash, message);
+                console.warn(`[Scheduler] ${taskType} skipped for ${hash}: ${message}`);
+                return;
+            }
             this.api.updateTaskStatus({
                 taskType,
                 hash,
@@ -278,6 +307,22 @@ class Scheduler {
         finally {
             this.broadcastQueueUpdated();
         }
+    }
+    markSkipped(taskType, hash, reason) {
+        const recorded = this.api.recordSkippedTask({ taskType, hash, error: reason });
+        if (recorded.success) {
+            this.emitSkipped(taskType, hash, reason);
+            this.broadcastQueueUpdated();
+        }
+        return recorded.success;
+    }
+    emitSkipped(taskType, hash, reason) {
+        const payload = { task_type: taskType, hash, error: reason, terminal: true };
+        this.broadcastEvent('task:skipped', payload);
+        if (taskType === 'classify')
+            this.broadcastEvent('classify:skipped', payload);
+        if (taskType === 'rename')
+            this.broadcastEvent('rename:skipped', payload);
     }
     retryDelayFor(attempt) {
         const delay = DEFAULT_RETRY_BASE_DELAY_MS * 2 ** Math.max(0, attempt - 1);

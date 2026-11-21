@@ -30,7 +30,7 @@ export interface VFSRawMediaItem {
   confidence?: number;
   classified_at?: string | null;
   model_used?: string | null;
-  classifyStatus?: 'pending' | 'processing' | 'completed' | 'failed';
+  classifyStatus?: 'pending' | 'processing' | 'completed' | 'failed' | 'skipped';
 }
 
 export interface NormalizedMediaItem {
@@ -44,7 +44,7 @@ export interface NormalizedMediaItem {
   confidence?: number;
   classified_at?: string;
   model_used?: string;
-  classifyStatus?: 'pending' | 'processing' | 'completed' | 'failed';
+  classifyStatus?: 'pending' | 'processing' | 'completed' | 'failed' | 'skipped';
   url: string;
   thumbnailUrl: string;
   sourceUrl?: string;

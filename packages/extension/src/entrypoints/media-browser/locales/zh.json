@@ -92,6 +92,7 @@
       "duplicate": "重复",
       "skipped": "跳过",
       "failed": "失败",
+      "aiSkipped": "AI 跳过",
       "totalSize": "本次会话保存大小",
       "media": "媒体",
       "ai": "AI",

@@ -21,9 +21,17 @@ import {
   QueueStatus,
   TagRecord,
   ApplyClassificationParams,
+  RecordSkippedTaskParams,
+  RetryFailedParams,
+  RequeueAllParams,
+  SkipIneligibleTasksParams,
 } from './sqlite';
 import { BlobStorage, calculateHash, getMimeTypeFromExtension } from './blob';
-import { ThumbnailStorage, ThumbnailSize } from './thumbnail';
+import {
+  ThumbnailStorage,
+  ThumbnailSize,
+  getDecodableImageMimeTypes as readDecodableImageMimeTypes,
+} from './thumbnail';
 
 export interface SyncBlobsToIndexError {
   path: string;
@@ -606,9 +614,37 @@ export class VFSAPI {
   /**
    * Requeue all tasks of a type (full rescan).
    */
-  requeueAll(params: { taskType?: TaskType } = {}): { count: number } {
-    const count = this.db.requeueAll(params.taskType);
+  requeueAll(params: RequeueAllParams = {}): { count: number } {
+    const count = this.db.requeueAll(params);
     return { count };
+  }
+
+  /**
+   * Record a terminal skipped task for media the AI pipeline cannot process.
+   */
+  recordSkippedTask(params: RecordSkippedTaskParams): { success: boolean } {
+    return { success: this.db.recordSkippedTask(params) };
+  }
+
+  /**
+   * Convert persisted pending/failed tasks for ineligible media to skipped.
+   */
+  skipIneligibleTasks(params: SkipIneligibleTasksParams): { count: number } {
+    return { count: this.db.skipIneligibleTasks(params) };
+  }
+
+  /**
+   * MIME types present in the media index (used for eligibility sweeps).
+   */
+  getDistinctMimeTypes(): string[] {
+    return this.db.getDistinctMimeTypes();
+  }
+
+  /**
+   * Image MIME types the bundled thumbnail decoder can read.
+   */
+  getDecodableImageMimeTypes(): string[] {
+    return readDecodableImageMimeTypes();
   }
 
   /**
@@ -669,10 +705,10 @@ export class VFSAPI {
   }
 
   /**
-   * Retry failed tasks API
+   * Retry failed tasks API. Failed tasks for ineligible media are skipped.
    */
-  retryFailedTasks(params: { taskType?: TaskType } = {}): { count: number } {
-    const count = this.db.retryFailedTasks(params.taskType);
+  retryFailedTasks(params: RetryFailedParams = {}): { count: number } {
+    const count = this.db.retryFailedTasks(params);
     return { count };
   }
 

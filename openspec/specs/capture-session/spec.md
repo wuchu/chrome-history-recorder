@@ -81,7 +81,7 @@ A capture session SHALL begin only on an explicit capture start and SHALL end on
 ### Requirement: Session counters
 The system SHALL maintain counters for the active session and update them from session-scoped events.
 
-The counters SHALL include saved count, duplicate count, skipped count, failed count, saved bytes, saved image count, saved video count, AI pending count, AI processing count, AI completed count, AI failed count, queued video count, and downloading video count.
+The counters SHALL include saved count, duplicate count, skipped count, failed count, saved bytes, saved image count, saved video count, AI pending count, AI processing count, AI completed count, AI failed count, AI skipped count, queued video count, and downloading video count.
 
 #### Scenario: Increment on save
 - **WHEN** a media resource is saved as a new file in the session
@@ -107,6 +107,7 @@ The counters SHALL include saved count, duplicate count, skipped count, failed c
 #### Scenario: AI status is correlated by hash
 - **WHEN** an AI task event references a hash saved in the active session
 - **THEN** the corresponding AI counter SHALL update for that session
+- **AND** a skipped AI outcome SHALL update the AI skipped counter instead of the AI failed counter
 - **AND** AI events for hashes outside the session SHALL NOT affect the session counters
 
 ### Requirement: Session-scoped capture events
@@ -135,8 +136,9 @@ The event types SHALL include saved, duplicate, skipped, failed, video candidate
 - **THEN** the Background SHALL emit the corresponding video event containing the tab id, page URL, source URL, and available hash or error
 
 #### Scenario: Emit AI status for session hashes
-- **WHEN** an AI task for a hash saved in the active session is queued, started, completed, or fails
+- **WHEN** an AI task for a hash saved in the active session is queued, started, completed, fails, or is skipped
 - **THEN** the Background SHALL emit an AI status event correlated to that session
+- **AND** a skipped outcome SHALL be distinguishable from a failed outcome
 
 #### Scenario: Events use the page identity at capture time
 - **WHEN** a capture event is emitted after the session tab has navigated

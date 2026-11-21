@@ -10,6 +10,8 @@ exports.OllamaClient = exports.DEFAULT_PREFERRED_MODEL = void 0;
 exports.selectPreferredOllamaModel = selectPreferredOllamaModel;
 const prompt_templates_1 = require("./prompt-templates");
 const base64_1 = require("./base64");
+const eligibility_1 = require("./eligibility");
+const errors_1 = require("./errors");
 /**
  * Build the tag classification prompt from a user-editable template. The
  * vocabulary is a bounded top-N window; the model may reuse an existing
@@ -119,6 +121,17 @@ function normalizeFileBuffer(buffer) {
     const copy = new Uint8Array(bytes.length);
     copy.set(bytes);
     return copy.buffer;
+}
+/**
+ * Normalize media bytes, reporting an invalid payload as permanent.
+ */
+function normalizeMediaBuffer(buffer, mimeType, hash) {
+    try {
+        return normalizeFileBuffer(buffer);
+    }
+    catch {
+        throw new errors_1.UnprocessableMediaError('invalid-media', `Media bytes are invalid for ${mimeType || 'unknown type'} file ${hash}`, { hash });
+    }
 }
 /**
  * Parse an AI tag response.
@@ -331,38 +344,58 @@ class OllamaClient {
     /**
      * Obtain a representative image for a media hash (large thumbnail when
      * available, otherwise the original blob), read in-process.
+     *
+     * Media that cannot produce a representative image raises a permanent
+     * `UnprocessableMediaError`; transient failures keep their original error.
      */
     async getRepresentativeImage(hash) {
+        const info = this.media.getMediaInfo(hash);
+        if (!info) {
+            // Missing metadata/blob stays transient so a racing upload can recover.
+            throw new Error(`File not found: ${hash}`);
+        }
+        const eligibility = (0, eligibility_1.evaluateMediaEligibility)({
+            mimeType: info.mimeType,
+            decodableMimeTypes: this.media.getDecodableImageMimeTypes(),
+        });
+        if (!eligibility.eligible) {
+            throw new errors_1.UnprocessableMediaError('unsupported-format', `${eligibility.message} (${hash})`, {
+                hash,
+            });
+        }
         try {
             const thumbnail = await this.media.getThumbnail(hash, 'large');
             if (thumbnail) {
                 return {
-                    buffer: normalizeFileBuffer(thumbnail.buffer),
+                    buffer: normalizeMediaBuffer(thumbnail.buffer, info.mimeType, hash),
                     mimeType: thumbnail.mimeType,
                 };
             }
         }
         catch (error) {
+            if (error instanceof errors_1.UnprocessableMediaError) {
+                throw error;
+            }
             console.warn('[OllamaClient] Failed to get thumbnail, falling back to original file:', error);
         }
         const file = this.media.getFile(hash);
         if (!file) {
             throw new Error(`File not found: ${hash}`);
         }
+        const fileMime = (0, eligibility_1.normalizeMimeType)(file.mimeType || info.mimeType);
         // Sending raw video bytes to a vision model fails with a misleading
         // "Failed to load image" error. Report the real problem instead.
-        if (file.mimeType.startsWith('video/')) {
-            throw new Error(`No representative frame available for video ${hash}; thumbnail generation failed or the video is invalid`);
+        if (fileMime.startsWith('video/')) {
+            throw new errors_1.UnprocessableMediaError('no-representative-frame', `No representative frame available for video ${hash}; thumbnail generation failed or the video is invalid`, { hash });
         }
-        // Ollama only accepts common image formats; do not send ICO/BMP/TIFF/SVG
-        // originals when thumbnail generation could not produce a JPEG.
-        const visionFriendly = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
-        if (!visionFriendly.has(file.mimeType)) {
-            throw new Error(`No representative thumbnail available for ${file.mimeType} file ${hash}; the format is not a supported vision input`);
+        // Eligible non-native formats (for example TIFF) must go through the
+        // thumbnail path. Reaching here means the decoder rejected the bytes.
+        if (!(0, eligibility_1.isNativeVisionMimeType)(fileMime)) {
+            throw new errors_1.UnprocessableMediaError('invalid-media', `No representative thumbnail available for ${fileMime} file ${hash}; the media could not be decoded`, { hash });
         }
         return {
-            buffer: normalizeFileBuffer(file.buffer),
-            mimeType: file.mimeType,
+            buffer: normalizeMediaBuffer(file.buffer, fileMime, hash),
+            mimeType: fileMime,
         };
     }
     /**

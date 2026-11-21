@@ -16,6 +16,7 @@ const DEFAULT_STATUS: QueueStatus = {
   processing: 0,
   completed: 0,
   failed: 0,
+  skipped: 0,
   total: 0,
 };
 
@@ -55,6 +56,7 @@ export function useTaskQueue(): UseTaskQueueReturn {
           processing: next.processing ?? 0,
           completed: next.completed ?? 0,
           failed: next.failed ?? 0,
+          skipped: next.skipped ?? 0,
           total: next.total ?? 0,
           scheduler: next.scheduler,
           byType: next.byType,
@@ -88,6 +90,7 @@ export function useTaskQueue(): UseTaskQueueReturn {
           processing: data.processing ?? prev.processing,
           completed: data.completed ?? prev.completed,
           failed: data.failed ?? prev.failed,
+          skipped: data.skipped ?? prev.skipped,
           total: data.total ?? prev.total,
           scheduler: (data.scheduler as SchedulerStatus | undefined) ?? prev.scheduler,
           byType: data.byType ?? prev.byType,

@@ -781,13 +781,16 @@ export class MediaArchiveWorker {
     processing: number;
     completed: number;
     failed: number;
+    skipped: number;
     total: number;
   } {
     try {
       const summary = this.api.getQueueStatus().byType[ARCHIVE_TASK_TYPE];
-      return summary ?? { pending: 0, processing: 0, completed: 0, failed: 0, total: 0 };
+      return (
+        summary ?? { pending: 0, processing: 0, completed: 0, failed: 0, skipped: 0, total: 0 }
+      );
     } catch {
-      return { pending: 0, processing: 0, completed: 0, failed: 0, total: 0 };
+      return { pending: 0, processing: 0, completed: 0, failed: 0, skipped: 0, total: 0 };
     }
   }
 

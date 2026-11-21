@@ -14,6 +14,7 @@ const fs_1 = __importDefault(require("fs"));
 const stream_1 = require("stream");
 const promises_1 = require("stream/promises");
 const blob_1 = require("./blob");
+const thumbnail_1 = require("./thumbnail");
 /**
  * Raised when a streamed upload exceeds the configured byte limit.
  */
@@ -481,8 +482,32 @@ class VFSAPI {
      * Requeue all tasks of a type (full rescan).
      */
     requeueAll(params = {}) {
-        const count = this.db.requeueAll(params.taskType);
+        const count = this.db.requeueAll(params);
         return { count };
+    }
+    /**
+     * Record a terminal skipped task for media the AI pipeline cannot process.
+     */
+    recordSkippedTask(params) {
+        return { success: this.db.recordSkippedTask(params) };
+    }
+    /**
+     * Convert persisted pending/failed tasks for ineligible media to skipped.
+     */
+    skipIneligibleTasks(params) {
+        return { count: this.db.skipIneligibleTasks(params) };
+    }
+    /**
+     * MIME types present in the media index (used for eligibility sweeps).
+     */
+    getDistinctMimeTypes() {
+        return this.db.getDistinctMimeTypes();
+    }
+    /**
+     * Image MIME types the bundled thumbnail decoder can read.
+     */
+    getDecodableImageMimeTypes() {
+        return (0, thumbnail_1.getDecodableImageMimeTypes)();
     }
     /**
      * Recover tasks left processing by a terminated worker.
@@ -528,10 +553,10 @@ class VFSAPI {
         return { success: true };
     }
     /**
-     * Retry failed tasks API
+     * Retry failed tasks API. Failed tasks for ineligible media are skipped.
      */
     retryFailedTasks(params = {}) {
-        const count = this.db.retryFailedTasks(params.taskType);
+        const count = this.db.retryFailedTasks(params);
         return { count };
     }
     /**

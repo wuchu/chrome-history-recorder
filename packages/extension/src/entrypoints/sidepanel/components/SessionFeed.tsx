@@ -15,6 +15,7 @@ const AI_STATUS_ICONS = {
   processing: '◉',
   completed: '✓',
   failed: '✗',
+  skipped: '⊘',
 } as const;
 
 export function SessionFeed({ items, onOpenItem }: SessionFeedProps) {

@@ -17,6 +17,19 @@ export {
   type TagClassificationResult,
 } from './ollama-client';
 export {
+  NATIVE_VISION_MIME_TYPES,
+  evaluateMediaEligibility,
+  isNativeVisionMimeType,
+  normalizeMimeType,
+  type MediaEligibility,
+  type MediaEligibilityInput,
+} from './eligibility';
+export {
+  UnprocessableMediaError,
+  isUnprocessableMediaError,
+  type UnprocessableMediaReason,
+} from './errors';
+export {
   DEFAULT_PROMPT_TEMPLATES,
   renderTemplate,
   resolveTemplate,

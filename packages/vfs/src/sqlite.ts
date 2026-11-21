@@ -9,6 +9,7 @@ import path from 'path';
 import fs from 'fs';
 
 const MAX_TAG_NAME_LENGTH = 40;
+const SKIPPED_MEDIA_ERROR = 'Media format is not supported by the AI vision pipeline';
 
 /**
  * Normalize a tag candidate into a canonical vocabulary key.
@@ -151,7 +152,7 @@ export interface FileMetadata {
 export interface QueueItem {
   id: number;
   hash: string;
-  status: 'pending' | 'processing' | 'completed' | 'failed';
+  status: TaskStatus;
   priority: number;
   added_at: string;
   started_at: string | null;
@@ -165,7 +166,7 @@ export interface QueueItem {
  */
 export type TaskType = 'classify' | 'rename' | (string & {});
 
-export type TaskStatus = 'pending' | 'processing' | 'completed' | 'failed';
+export type TaskStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'skipped';
 
 export interface TaskItem {
   id: number;
@@ -188,6 +189,7 @@ export interface TaskStatusSummary {
   processing: number;
   completed: number;
   failed: number;
+  skipped: number;
   total: number;
 }
 
@@ -214,6 +216,37 @@ export interface UpdateTaskStatusParams {
   error?: string;
   /** Delay before a failed task becomes claimable again. */
   retryDelayMs?: number;
+}
+
+export interface RetryFailedParams {
+  taskType?: TaskType;
+  /**
+   * Media MIME types the AI pipeline cannot process. Failed tasks for these
+   * types become skipped instead of pending.
+   */
+  ineligibleMimeTypes?: string[];
+  /** Reason recorded when a task is skipped for ineligible media. */
+  skipError?: string;
+}
+
+export interface RequeueAllParams {
+  taskType?: TaskType;
+  ineligibleMimeTypes?: string[];
+  skipError?: string;
+}
+
+export interface RecordSkippedTaskParams {
+  taskType: TaskType;
+  hash: string;
+  error: string;
+  priority?: number;
+  maxAttempts?: number;
+}
+
+export interface SkipIneligibleTasksParams {
+  ineligibleMimeTypes: string[];
+  error: string;
+  taskTypes?: TaskType[];
 }
 
 export interface TagRecord {
@@ -954,6 +987,22 @@ export class SQLiteDatabase {
       return true;
     }
 
+    if (nextStatus === 'skipped') {
+      // Terminal: the media is not applicable to the AI pipeline. Nothing is
+      // retried, so attempts and completed_at are left untouched.
+      const stmt = this.db.prepare(`
+        UPDATE tasks
+        SET status = 'skipped',
+            next_run_at = NULL,
+            started_at = NULL,
+            error = ?,
+            updated_at = ?
+        WHERE task_type = ? AND target_hash = ?
+      `);
+      stmt.run(taskError ?? 'Media is not processable by the AI pipeline', now, taskType, hash);
+      return true;
+    }
+
     const stmt = this.db.prepare(`
       UPDATE tasks SET status = 'pending', next_run_at = NULL, started_at = NULL, error = NULL,
         updated_at = ? WHERE task_type = ? AND target_hash = ?
@@ -981,14 +1030,60 @@ export class SQLiteDatabase {
   }
 
   /**
-   * Requeue every task of a type (full rescan), creating rows for files that
-   * never had that task type. When `taskType` is omitted all existing task
-   * types are requeued.
+   * Record a terminal skipped task for media the AI pipeline cannot process.
+   *
+   * Creates the row when absent and converts `pending`/`failed` rows.
+   * `completed` rows are preserved: skipping must not erase a real result.
    */
-  requeueAll(taskType?: TaskType): number {
+  recordSkippedTask(params: RecordSkippedTaskParams): boolean {
+    const { taskType, hash, error, priority = 5, maxAttempts = 3 } = params;
+    if (!this.fileExists(hash)) return false;
+
     const now = new Date().toISOString();
-    if (taskType) {
-      const transaction = this.db.transaction(() => {
+    const stmt = this.db.prepare(`
+      INSERT INTO tasks (
+        task_type, target_hash, status, priority, attempts, max_attempts,
+        next_run_at, started_at, completed_at, error, created_at, updated_at
+      ) VALUES (?, ?, 'skipped', ?, 0, ?, NULL, NULL, NULL, ?, ?, ?)
+      ON CONFLICT(task_type, target_hash) DO UPDATE SET
+        status = 'skipped',
+        next_run_at = NULL,
+        started_at = NULL,
+        error = excluded.error,
+        updated_at = excluded.updated_at
+      WHERE tasks.status IN ('pending', 'failed')
+    `);
+    stmt.run(taskType, hash, priority, maxAttempts, error, now, now);
+    return true;
+  }
+
+  /**
+   * Requeue every eligible task of a type (full rescan), creating rows for
+   * files that never had that task type. Ineligible media becomes or remains
+   * skipped and is never reset to pending.
+   */
+  requeueAll(params: RequeueAllParams = {}): number {
+    const { taskType } = params;
+    const ineligible = this.normalizeMimeTypes(params.ineligibleMimeTypes);
+    const skipError = params.skipError ?? SKIPPED_MEDIA_ERROR;
+    const now = new Date().toISOString();
+
+    const transaction = this.db.transaction(() => {
+      if (ineligible.length > 0) {
+        this.markIneligibleTasksSkipped({
+          mimeTypes: ineligible,
+          statuses: ['pending', 'failed'],
+          taskType,
+          error: skipError,
+          now,
+        });
+      }
+
+      if (taskType) {
+        const fileFilter =
+          ineligible.length > 0
+            ? `AND mime_type NOT IN (${ineligible.map(() => '?').join(', ')})`
+            : '';
         this.db
           .prepare(
             `INSERT INTO tasks (
@@ -996,27 +1091,53 @@ export class SQLiteDatabase {
                next_run_at, started_at, completed_at, error, created_at, updated_at
              )
              SELECT ?, hash, 'pending', 5, 0, 3, NULL, NULL, NULL, NULL, ?, ?
-             FROM files WHERE is_deleted = 0
+             FROM files WHERE is_deleted = 0 ${fileFilter}
              ON CONFLICT(task_type, target_hash) DO NOTHING`
           )
-          .run(taskType, now, now);
-        return this.db
-          .prepare(
-            `UPDATE tasks
-             SET status = 'pending', attempts = 0, next_run_at = NULL, started_at = NULL,
-                 completed_at = NULL, error = NULL, updated_at = ?
-             WHERE task_type = ?`
-          )
-          .run(now, taskType).changes;
-      });
-      return transaction();
-    }
-    const stmt = this.db.prepare(`
-      UPDATE tasks
-      SET status = 'pending', attempts = 0, next_run_at = NULL, started_at = NULL,
-          completed_at = NULL, error = NULL, updated_at = ?
-    `);
-    return stmt.run(now).changes;
+          .run(taskType, now, now, ...ineligible);
+      }
+
+      const typeFilter = taskType ? 'AND task_type = ?' : '';
+      const eligibleFilter =
+        ineligible.length > 0
+          ? `AND target_hash NOT IN (${this.ineligibleHashSubquery(ineligible)})`
+          : '';
+      return this.db
+        .prepare(
+          `UPDATE tasks
+           SET status = 'pending', attempts = 0, next_run_at = NULL, started_at = NULL,
+               completed_at = NULL, error = NULL, updated_at = ?
+           WHERE 1 = 1 ${typeFilter} ${eligibleFilter}`
+        )
+        .run(now, ...(taskType ? [taskType] : []), ...ineligible).changes;
+    });
+    return transaction();
+  }
+
+  /**
+   * Convert persisted pending/failed tasks for ineligible media to skipped.
+   */
+  skipIneligibleTasks(params: SkipIneligibleTasksParams): number {
+    const mimeTypes = this.normalizeMimeTypes(params.ineligibleMimeTypes);
+    if (mimeTypes.length === 0) return 0;
+
+    return this.markIneligibleTasksSkipped({
+      mimeTypes,
+      statuses: ['pending', 'failed'],
+      taskTypes: params.taskTypes,
+      error: params.error,
+      now: new Date().toISOString(),
+    });
+  }
+
+  /**
+   * Distinct MIME types currently stored in the index.
+   */
+  getDistinctMimeTypes(): string[] {
+    const rows = this.db
+      .prepare('SELECT DISTINCT mime_type FROM files WHERE is_deleted = 0')
+      .all() as Array<{ mime_type: string }>;
+    return rows.map((row) => row.mime_type).filter(Boolean);
   }
 
   /**
@@ -1081,6 +1202,7 @@ export class SQLiteDatabase {
       processing: 0,
       completed: 0,
       failed: 0,
+      skipped: 0,
       total: 0,
     });
 
@@ -1094,7 +1216,7 @@ export class SQLiteDatabase {
       status.byType[row.task_type] = summary;
 
       if (row.status in status && row.status !== 'total' && row.status !== 'byType') {
-        status[row.status as keyof TaskStatusSummary] = row.count;
+        status[row.status as keyof TaskStatusSummary] += row.count;
       }
       status.total += row.count;
     }
@@ -1133,22 +1255,77 @@ export class SQLiteDatabase {
   }
 
   /**
-   * Retry failed tasks, optionally filtered by type.
+   * Retry failed tasks, optionally filtered by type. Failed tasks for
+   * ineligible media become skipped instead of pending.
    */
-  retryFailedTasks(taskType?: TaskType): number {
+  retryFailedTasks(params: RetryFailedParams = {}): number {
+    const { taskType } = params;
+    const ineligible = this.normalizeMimeTypes(params.ineligibleMimeTypes);
+    const skipError = params.skipError ?? SKIPPED_MEDIA_ERROR;
     const now = new Date().toISOString();
-    if (taskType) {
+
+    const transaction = this.db.transaction(() => {
+      if (ineligible.length > 0) {
+        this.markIneligibleTasksSkipped({
+          mimeTypes: ineligible,
+          statuses: ['failed'],
+          taskType,
+          error: skipError,
+          now,
+        });
+      }
+
+      const typeFilter = taskType ? 'AND task_type = ?' : '';
+      const eligibleFilter =
+        ineligible.length > 0
+          ? `AND target_hash NOT IN (${this.ineligibleHashSubquery(ineligible)})`
+          : '';
       const stmt = this.db.prepare(`
         UPDATE tasks SET status = 'pending', attempts = 0, next_run_at = NULL, error = NULL,
-          started_at = NULL, updated_at = ? WHERE status = 'failed' AND task_type = ?
+          started_at = NULL, updated_at = ?
+        WHERE status = 'failed' ${typeFilter} ${eligibleFilter}
       `);
-      return stmt.run(now, taskType).changes;
-    }
+      return stmt.run(now, ...(taskType ? [taskType] : []), ...ineligible).changes;
+    });
+    return transaction();
+  }
+
+  private normalizeMimeTypes(mimeTypes?: string[]): string[] {
+    if (!mimeTypes || mimeTypes.length === 0) return [];
+    return [
+      ...new Set(
+        mimeTypes.map((mimeType) => mimeType.split(';', 1)[0].trim().toLowerCase()).filter(Boolean)
+      ),
+    ];
+  }
+
+  private ineligibleHashSubquery(mimeTypes: string[]): string {
+    return `SELECT hash FROM files WHERE mime_type IN (${mimeTypes.map(() => '?').join(', ')})`;
+  }
+
+  private markIneligibleTasksSkipped(params: {
+    mimeTypes: string[];
+    statuses: string[];
+    taskType?: TaskType;
+    taskTypes?: TaskType[];
+    error: string;
+    now: string;
+  }): number {
+    const { mimeTypes, statuses, taskType, taskTypes, error, now } = params;
+    if (mimeTypes.length === 0 || statuses.length === 0) return 0;
+
+    const typeList = taskTypes ?? (taskType ? [taskType] : []);
+    const typeFilter =
+      typeList.length > 0 ? `AND task_type IN (${typeList.map(() => '?').join(', ')})` : '';
+    const statusPlaceholders = statuses.map(() => '?').join(', ');
     const stmt = this.db.prepare(`
-      UPDATE tasks SET status = 'pending', attempts = 0, next_run_at = NULL, error = NULL,
-        started_at = NULL, updated_at = ? WHERE status = 'failed'
+      UPDATE tasks
+      SET status = 'skipped', error = ?, next_run_at = NULL, started_at = NULL, updated_at = ?
+      WHERE status IN (${statusPlaceholders})
+        ${typeFilter}
+        AND target_hash IN (${this.ineligibleHashSubquery(mimeTypes)})
     `);
-    return stmt.run(now).changes;
+    return stmt.run(error, now, ...statuses, ...typeList, ...mimeTypes).changes;
   }
 
   /**

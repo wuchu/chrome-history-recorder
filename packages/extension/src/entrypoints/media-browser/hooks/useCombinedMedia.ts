@@ -14,7 +14,7 @@ import { buildVfsFileUrl, buildVfsThumbnailUrl } from '../utils/media';
  */
 interface ClassifyEventData {
   hash: string;
-  status?: 'pending' | 'processing' | 'completed' | 'failed';
+  status?: 'pending' | 'processing' | 'completed' | 'failed' | 'skipped';
   category?: string;
   confidence?: number;
   tags?: string[];
@@ -109,6 +109,15 @@ function extractClassifyStatus(events: BackgroundEvent[]): Record<string, Classi
     } else if (event.type === 'classify:failed') {
       const data = event.data as { hash: string };
       status[data.hash] = { hash: data.hash, status: 'failed' };
+    } else if (event.type === 'classify:skipped') {
+      const data = event.data as { hash: string };
+      status[data.hash] = { hash: data.hash, status: 'skipped' };
+    } else if (event.type === 'task:skipped') {
+      const data = event.data as { hash: string; task_type?: string };
+      if (data.task_type === 'classify') {
+        const previous = status[data.hash] ?? { hash: data.hash };
+        status[data.hash] = { ...previous, status: 'skipped' };
+      }
     } else if (event.type === 'rename:complete' || event.type === 'rename:failed') {
       const data = event.data as { hash: string; ai_filename?: string };
       const previous = status[data.hash] ?? { hash: data.hash };

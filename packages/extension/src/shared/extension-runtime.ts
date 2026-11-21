@@ -120,7 +120,7 @@ export interface MediaArchiveConfigUpdate {
 
 export type TaskType = 'classify' | 'rename' | (string & {});
 
-export type TaskStatus = 'pending' | 'processing' | 'completed' | 'failed';
+export type TaskStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'skipped';
 
 export interface TaskItem {
   id: number;
@@ -143,6 +143,7 @@ export interface TaskTypeSummary {
   processing: number;
   completed: number;
   failed: number;
+  skipped: number;
   total: number;
 }
 
@@ -178,7 +179,7 @@ export interface ServiceStatus {
  */
 export type CaptureSessionStatus = 'capturing' | 'stopped' | 'error';
 
-export type SessionAiStatus = 'pending' | 'processing' | 'completed' | 'failed';
+export type SessionAiStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'skipped';
 
 export type SessionEventKind =
   | 'saved'
@@ -201,6 +202,7 @@ export interface SessionCounters {
   aiProcessing: number;
   aiCompleted: number;
   aiFailed: number;
+  aiSkipped: number;
   videosQueued: number;
   videosDownloading: number;
 }
@@ -448,14 +450,28 @@ export async function clearQueue(taskType?: TaskType): Promise<void> {
 
 /**
  * Requeue a single task type for one hash (manual single-file refresh).
+ *
+ * A `skipped` result means the media is not applicable to the AI pipeline;
+ * `reason` carries the user-facing explanation.
  */
-export async function refreshTask(taskType: TaskType, hash: string): Promise<boolean> {
-  const result = await sendRuntimeMessage<{ success: boolean }>({
+export async function refreshTask(
+  taskType: TaskType,
+  hash: string
+): Promise<{ success: boolean; skipped?: boolean; reason?: string }> {
+  const result = await sendRuntimeMessage<{
+    success: boolean;
+    skipped?: boolean;
+    reason?: string;
+  }>({
     type: 'requeueTask',
     taskType,
     hash,
   });
-  return Boolean(result?.success);
+  return {
+    success: Boolean(result?.success),
+    skipped: Boolean(result?.skipped),
+    reason: result?.reason,
+  };
 }
 
 /**

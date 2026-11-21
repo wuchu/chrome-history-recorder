@@ -92,6 +92,7 @@
       "duplicate": "Duplicate",
       "skipped": "Skipped",
       "failed": "Failed",
+      "aiSkipped": "AI skipped",
       "totalSize": "Saved this session",
       "media": "Media",
       "ai": "AI",

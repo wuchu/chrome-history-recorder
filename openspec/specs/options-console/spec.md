@@ -46,7 +46,7 @@ The Options Overview section SHALL summarize the global state of the recorder wi
 
 #### Scenario: Show AI queue summary
 - **WHEN** the Overview section renders
-- **THEN** it SHALL show a snapshot of the AI task queue including pending, processing, completed, and failed counts
+- **THEN** it SHALL show a snapshot of the AI task queue including pending, processing, completed, failed, and skipped counts
 
 #### Scenario: Show recent captures
 - **WHEN** the Overview section renders

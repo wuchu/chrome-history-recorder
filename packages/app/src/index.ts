@@ -19,6 +19,7 @@ import { ConfigStore } from './config-store';
 import { EventBus } from './event-bus';
 import { createAppExternalHandler } from './handlers';
 import { MediaArchiveWorker } from './media-archive';
+import { MediaEligibilityGate, SKIPPED_MEDIA_ERROR } from './media-eligibility';
 import { Scheduler } from './scheduler';
 import type { AppConfig } from './types';
 import {
@@ -70,6 +71,12 @@ async function main(): Promise<void> {
     language: store.get().language,
     promptTemplates: store.get().promptTemplates,
     media: {
+      getMediaInfo: (hash) => {
+        const metadata = api.getMetadata(hash);
+        if (!metadata || metadata.is_deleted === 1) return null;
+        return { mimeType: metadata.mime_type };
+      },
+      getDecodableImageMimeTypes: () => api.getDecodableImageMimeTypes(),
       getThumbnail: (hash, size) => api.getThumbnail({ hash, size }),
       getFile: (hash) => api.getFile(hash),
       getTagVocabulary: (limit) => api.getTagVocabulary({ limit }),
@@ -168,6 +175,28 @@ async function main(): Promise<void> {
   }
 
   await scheduler.recoverStale();
+
+  // Convert persisted tasks for media the AI pipeline cannot process so old
+  // poison does not stay queued or counted as failed. Runs before the
+  // scheduler starts claiming work.
+  try {
+    const eligibilityGate = new MediaEligibilityGate(api);
+    const ineligibleMimeTypes = eligibilityGate.ineligibleMimeTypes();
+    if (ineligibleMimeTypes.length > 0) {
+      const { count } = api.skipIneligibleTasks({
+        ineligibleMimeTypes,
+        error: SKIPPED_MEDIA_ERROR,
+      });
+      if (count > 0) {
+        console.error(
+          `[App] Skipped ${count} task(s) for AI-ineligible media: ${ineligibleMimeTypes.join(', ')}`
+        );
+      }
+    }
+  } catch (error) {
+    console.warn('[App] Failed to reconcile ineligible AI tasks:', error);
+  }
+
   if (!store.get().classificationPaused) {
     scheduler.start();
   }

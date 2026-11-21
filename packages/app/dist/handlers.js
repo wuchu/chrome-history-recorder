@@ -65,33 +65,45 @@ function createAppExternalHandler(dependencies) {
             case 'isOllamaAvailable':
                 return { available: ai.isAvailable() };
             /**
-             * Scheduler-aware task mutations. The storage dispatcher would handle
-             * these too, but the app wants to kick the scheduler immediately.
+             * Scheduler-aware task mutations. The scheduler owns eligibility, so
+             * ineligible media is recorded as skipped instead of pending.
              */
             case 'enqueueTask': {
-                const result = api.enqueueTask(params);
-                scheduler.kick();
-                return result;
+                const { taskType, hash, priority, maxAttempts, requeue } = params;
+                if (!taskType || !hash)
+                    return { success: false };
+                const success = await scheduler.enqueueTask(taskType, hash, {
+                    priority: typeof priority === 'number' ? priority : undefined,
+                    maxAttempts: typeof maxAttempts === 'number' ? maxAttempts : undefined,
+                    requeue: requeue === true,
+                });
+                return { success };
             }
             case 'enqueueClassification': {
-                const result = api.enqueueClassification(params);
-                scheduler.kick();
-                return result;
+                const { hash, priority } = params;
+                if (!hash)
+                    return { success: false };
+                const success = await scheduler.enqueueTask('classify', hash, {
+                    priority: typeof priority === 'number' ? priority : undefined,
+                    requeue: true,
+                });
+                return { success };
             }
             case 'requeueTask': {
-                const result = api.requeueTask(params);
-                scheduler.kick();
-                return result;
+                const { taskType, hash } = params;
+                if (!taskType || !hash)
+                    return { success: false };
+                return scheduler.requeueTask(taskType, hash);
             }
             case 'requeueAll': {
-                const result = api.requeueAll(params);
-                scheduler.kick();
-                return result;
+                const { taskType } = params;
+                const count = await scheduler.requeueAll(taskType);
+                return { count };
             }
             case 'retryFailedTasks': {
-                const result = api.retryFailedTasks(params);
-                scheduler.kick();
-                return result;
+                const { taskType } = params;
+                const count = await scheduler.retryFailed(taskType);
+                return { count };
             }
             case 'clearQueue':
                 return api.clearQueue(params);

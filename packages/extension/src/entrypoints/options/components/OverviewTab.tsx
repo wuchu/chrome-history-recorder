@@ -148,16 +148,19 @@ export function OverviewTab({
         <Col xs={24} md={12}>
           <Card title="AI 队列" className={styles.card}>
             <Row gutter={[16, 12]}>
-              <Col span={6}>
+              <Col flex="1">
                 <Statistic title="等待" value={queueStatus.pending} />
               </Col>
-              <Col span={6}>
+              <Col flex="1">
                 <Statistic title="处理中" value={queueStatus.processing} />
               </Col>
-              <Col span={6}>
+              <Col flex="1">
                 <Statistic title="完成" value={queueStatus.completed} />
               </Col>
-              <Col span={6}>
+              <Col flex="1">
+                <Statistic title="跳过" value={queueStatus.skipped} />
+              </Col>
+              <Col flex="1">
                 <Statistic title="失败" value={queueStatus.failed} />
               </Col>
             </Row>

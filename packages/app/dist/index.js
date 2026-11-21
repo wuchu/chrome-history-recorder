@@ -12,6 +12,7 @@ const config_store_1 = require("./config-store");
 const event_bus_1 = require("./event-bus");
 const handlers_1 = require("./handlers");
 const media_archive_1 = require("./media-archive");
+const media_eligibility_1 = require("./media-eligibility");
 const scheduler_1 = require("./scheduler");
 const workspace_config_1 = require("./workspace-config");
 const WEBSOCKET_PORT = process.env.VFS_WS_PORT ? parseInt(process.env.VFS_WS_PORT, 10) : 8765;
@@ -52,6 +53,13 @@ async function main() {
         language: store.get().language,
         promptTemplates: store.get().promptTemplates,
         media: {
+            getMediaInfo: (hash) => {
+                const metadata = api.getMetadata(hash);
+                if (!metadata || metadata.is_deleted === 1)
+                    return null;
+                return { mimeType: metadata.mime_type };
+            },
+            getDecodableImageMimeTypes: () => api.getDecodableImageMimeTypes(),
             getThumbnail: (hash, size) => api.getThumbnail({ hash, size }),
             getFile: (hash) => api.getFile(hash),
             getTagVocabulary: (limit) => api.getTagVocabulary({ limit }),
@@ -145,6 +153,25 @@ async function main() {
         }
     }
     await scheduler.recoverStale();
+    // Convert persisted tasks for media the AI pipeline cannot process so old
+    // poison does not stay queued or counted as failed. Runs before the
+    // scheduler starts claiming work.
+    try {
+        const eligibilityGate = new media_eligibility_1.MediaEligibilityGate(api);
+        const ineligibleMimeTypes = eligibilityGate.ineligibleMimeTypes();
+        if (ineligibleMimeTypes.length > 0) {
+            const { count } = api.skipIneligibleTasks({
+                ineligibleMimeTypes,
+                error: media_eligibility_1.SKIPPED_MEDIA_ERROR,
+            });
+            if (count > 0) {
+                console.error(`[App] Skipped ${count} task(s) for AI-ineligible media: ${ineligibleMimeTypes.join(', ')}`);
+            }
+        }
+    }
+    catch (error) {
+        console.warn('[App] Failed to reconcile ineligible AI tasks:', error);
+    }
     if (!store.get().classificationPaused) {
         scheduler.start();
     }

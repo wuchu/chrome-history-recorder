@@ -86,6 +86,10 @@ Extension 只保留浏览器专属能力与界面，不再包含业务调度或 
 - 通过注入的 `MediaReader` 直接读取 `VFSAPI` 的缩略图/原图，不再经 WebSocket 传输图片字节
 - 分块 base64 编码，避免阻塞 app 事件循环
 
+**媒体资格（eligibility）**：AI 只能处理能产出代表性图像的媒体。`evaluateMediaEligibility` 把三类来源合并为判定：视觉模型原生格式（JPEG/PNG/WebP/GIF）、`vfs` 解码器实际能读取的格式（由 `sharp.format` 推导，经 `VFSAPI.getDecodableImageMimeTypes()` 提供）、以及视频。判定不读取媒体字节，app 在**所有入队路径**（自动 ingest、手动入队、重单、重试失败、全量重扫）上使用它。
+
+**永久错误与 skipped**：无法产出代表性图像的媒体抛出 `UnprocessableMediaError`（`unsupported-format` / `no-representative-frame` / `invalid-media`）。调度器将其一次判定为 `skipped`（终态、不可领取、不计重试、`attempts` 不增），而不是按 `max_attempts` 重试。Ollama 不可用、超时、模型错误、模型输出不可用仍按原策略重试。采集层不变：ICO/BMP 仍会被保存、浏览和归档，只是 AI 流水线跳过它们。
+
 ### 4. VFS（`packages/vfs`）
 
 本地存储与传输库（由 `vfs-service` 演进而来）：
@@ -147,7 +151,7 @@ CREATE TABLE tasks (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     task_type       TEXT NOT NULL,          -- 'classify' | 'rename' | ...
     target_hash     TEXT NOT NULL REFERENCES files(hash) ON DELETE CASCADE,
-    status          TEXT NOT NULL DEFAULT 'pending',
+    status          TEXT NOT NULL DEFAULT 'pending',  -- pending|processing|completed|failed|skipped
     priority        INTEGER NOT NULL DEFAULT 5,
     attempts        INTEGER NOT NULL DEFAULT 0,
     max_attempts    INTEGER NOT NULL DEFAULT 3,
@@ -301,13 +305,16 @@ Windows  %APPDATA%\browser-media-recorder\config.json
 - `getWorkspaceConfig()` → `{ path }`
 - `setWorkspaceConfig(config)` → `{ success }`
 - `enqueueTask({ taskType, hash, priority?, maxAttempts?, requeue? })` → `{ success }`
+- `recordSkippedTask({ taskType, hash, error, priority?, maxAttempts? })` → `{ success }`（终态跳过；新建或转换 pending/failed，保留 completed）
 - `claimTasks(limit)` → `[ { id, task_type, target_hash, status, attempts, ... } ]`
 - `updateTaskStatus({ taskType, hash, status, error?, retryDelayMs? })` → `{ success }`
-- `requeueTask(taskType, hash)` / `requeueAll(taskType?)` → `{ count }`
+- `requeueTask(taskType, hash)` / `requeueAll({ taskType?, ineligibleMimeTypes?, skipError? })` → `{ count }`
 - `recoverStaleProcessingTasks()` → `{ count }`
+- `skipIneligibleTasks({ ineligibleMimeTypes, error, taskTypes? })` → `{ count }`（启动对账）
 - `getTasksByHash(hash)` → `[ task ]`
-- `getQueueStatus()` → `{ pending, processing, completed, failed, total, byType }`
-- `retryFailedTasks(taskType?)` → `{ count }`
+- `getQueueStatus()` → `{ pending, processing, completed, failed, skipped, total, byType }`
+- `retryFailedTasks({ taskType?, ineligibleMimeTypes?, skipError? })` → `{ count }`
+- `getDecodableImageMimeTypes()` / `getDistinctMimeTypes()` → 资格判定所需的解码能力与索引内 MIME 集合
 - `clearQueue(taskType?)` → `{ success }`
 - `applyClassification({ hash, tags, aliases?, confidence?, modelUsed? })` → `{ tags }`
 - `getTagVocabulary(limit?)` / `resolveTagName(name)` / `listTags(options)` → 标签词表
