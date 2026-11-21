@@ -18,6 +18,12 @@ export interface BackgroundEvent {
 }
 
 /**
+ * Cap the diagnostic event log so a long capture session cannot grow the
+ * Options tab's memory without bound.
+ */
+export const MAX_BACKGROUND_EVENTS = 500;
+
+/**
  * useBackgroundMessaging options
  */
 interface UseBackgroundMessagingOptions {
@@ -100,7 +106,12 @@ export function useBackgroundMessaging({
         message.type !== 'ollama:status' &&
         message.type !== 'capture:session'
       ) {
-        setEvents((prev) => [...prev, message]);
+        setEvents((prev) => {
+          const next = [...prev, message];
+          return next.length > MAX_BACKGROUND_EVENTS
+            ? next.slice(next.length - MAX_BACKGROUND_EVENTS)
+            : next;
+        });
       }
 
       // Call custom handler

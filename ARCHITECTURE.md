@@ -35,7 +35,7 @@ Extension 只保留浏览器专属能力与界面，不再包含业务调度或 
 
 #### Side Panel / Options / Offscreen (UI Layer)
 
-- **Side Panel（捕获驾驶舱）**: 当前标签页身份、单会话捕获控制、会话指标、实时捕获流、可展开事件日志、会话总结。
+- **Side Panel（捕获驾驶舱）**: 当前标签页身份、单会话捕获控制、抓取本页（一次性页面扫描/预览/批量保存）、会话指标、实时捕获流、可展开事件日志、会话总结。
 - **Options（控制台）**: `概览 / 媒体库 / 标签 / 任务 / 设置` 五个 Tab；全局媒体库从 Side Panel 迁移到 Options，配置和标签治理在此分组。
 - **Offscreen**: 视频下载执行上下文。
 - **技术**: React 18, TypeScript, Ant Design (Options), CSS Modules, 扩展 offscreen document
@@ -54,6 +54,7 @@ Extension 只保留浏览器专属能力与界面，不再包含业务调度或 
   - `DebuggerCaptureController`: tab-scoped CDP 捕获与视频候选识别
   - `CaptureSessionStore`: 单捕获会话、计数器、200 条事件日志、`chrome.storage.session` 快照
   - `VideoDownloadManager`: offscreen 下载队列、并发与取消
+  - `OneShotCapture`: 右键图片保存、页面扫描、data/blob 字节解析；不 attach debugger，不进入捕获会话
   - 配置镜像: 启动/重连时从 app 拉取，`config:updated` 时更新；真源在 app
 
 #### Background Debugger / CDP Capture Layer
@@ -105,7 +106,7 @@ Extension 只保留浏览器专属能力与界面，不再包含业务调度或 
 - **职责**:
   - 接收 RPC-style API 请求：`{ id, method, params }`
   - 返回统一响应：`{ id, success, data?, error? }`
-  - 广播实时事件，如文件捕获、删除、任务状态变化、标签词表变化
+  - 广播实时事件，如文件捕获、移入回收站、恢复、永久删除、任务状态变化、标签词表变化
   - 维护连接状态和心跳
 
 #### HTTP Server
@@ -128,6 +129,7 @@ CREATE TABLE files (
     mime_type       TEXT NOT NULL,
     size            INTEGER NOT NULL,
     source_url      TEXT,
+    source_domain   TEXT,
     captured_at     TEXT NOT NULL,
 
     -- category 列保留但不再写入（标签是唯一的内容分类来源）
@@ -140,6 +142,7 @@ CREATE TABLE files (
 
     is_starred      INTEGER DEFAULT 0,
     user_notes      TEXT,
+    -- 1 = 在回收站中（仍可恢复）；与 deleted_at 成对写入
     is_deleted      INTEGER DEFAULT 0,
     deleted_at      TEXT,
 
@@ -181,6 +184,12 @@ CREATE TABLE tag_aliases (
     created_at      TEXT NOT NULL
 );
 ```
+
+#### Search and Query
+
+`files` 旁边维护一个 FTS5 搜索表 `files_fts`（`ai_filename`、`tags`、`source_url`、`user_notes`），由触发器保持同步；工作区首次打开时按 `PRAGMA user_version` 迁移并回填。英文和短词查询走 FTS5，中文子串与短查询回退到 `LIKE`，因此不依赖分词器也能搜到中文标签和文件名。
+
+库查询在 `ListQuery` 上组合文本、类型、来源域名、捕获时间、收藏、分类状态、多标签 AND/OR 和排序；同时提供 offset 与 `(sortValue, hash)` 游标分页。游标与排序/筛选不匹配时会回到第一页，避免重复项。`orderBy` 通过固定列映射校验，`limit` 上限 500。
 
 #### Blob Storage
 
@@ -296,12 +305,16 @@ Windows  %APPDATA%\browser-media-recorder\config.json
 
 - `saveFile(buffer, mimeType, sourceUrl?, capturedAt?)` → `{ hash, duplicate, size }`
 - `getFile(hash)` → `{ buffer, mimeType, size, metadata }`
-- `deleteFile(hash, hard?)` → `{ success }`
-- `listFiles(query)` → `{ items, total, hasMore }`
+- `trashFile(hash)` → `{ success }`
+- `restoreFile(hash)` → `{ success }`
+- `restoreAll()` → `{ success, count }`
+- `purgeFile(hash)` → `{ success }`
+- `emptyTrash()` → `{ success, count }`
+- `listFiles(query)` → `{ items, total, hasMore }`（`status`: `active` / `trashed` / `all`）
 - `updateMetadata(hash, updates)` → `{ success, updatedMetadata }`
 - `getMetadata(hash)` → `metadata`
 - `getThumbnail(hash, size)` → `{ buffer, mimeType }`
-- `getStats()` → `{ totalFiles, totalSize, byCategory }`
+- `getStats()` → `{ totalFiles, totalSize, byCategory, trashFiles, trashSize }`
 - `getWorkspaceConfig()` → `{ path }`
 - `setWorkspaceConfig(config)` → `{ success }`
 - `enqueueTask({ taskType, hash, priority?, maxAttempts?, requeue? })` → `{ success }`
@@ -317,6 +330,9 @@ Windows  %APPDATA%\browser-media-recorder\config.json
 - `getDecodableImageMimeTypes()` / `getDistinctMimeTypes()` → 资格判定所需的解码能力与索引内 MIME 集合
 - `clearQueue(taskType?)` → `{ success }`
 - `applyClassification({ hash, tags, aliases?, confidence?, modelUsed? })` → `{ tags }`
+- `setFileStarred(hash, starred)` / `updateFileNotes(hash, notes)` → 更新后的元数据
+- `addFileTags(hash, tags[])` / `removeFileTags(hash, tags[])` → `{ tags }`（事务合并，保留 `system:*`，用户新标签以 `created_by='user'` 建词条）
+- `getSourceDomains(limit?)` → `{ domain, count }[]`
 - `getTagVocabulary(limit?)` / `resolveTagName(name)` / `listTags(options)` → 标签词表
 - `renameTag({ id, name, label? })` / `mergeTags(sourceId, targetId)` / `deleteTag(id)` / `setTagPinned(id, pinned)` → 标签治理
 
@@ -421,6 +437,28 @@ blobs/<hash>.<ext>  ──copy──▶  .<hash>.<ext>.part ──rename──�
 
 会话快照写入 `chrome.storage.session`，用于 Panel 关闭或 Service Worker 重启后的恢复。会话只属于当前标签页并跨页面导航保留；浏览器重启后清除。
 
+### 一次性捕获流程
+
+```
+右键图片 ───────────────▶ Context Menu
+                              │
+侧栏 [抓取本页媒体] ──▶ 注入 DOM 扫描器 ──▶ 候选预览（缩略图/尺寸/类型）
+                              │                       │
+                              ▼                       ▼
+                     http(s) / data: / blob:     用户多选
+                              │                       │
+                              ▼                       ▼
+                     OneShotCapture.resolve ──▶ FileManager.saveFile
+                              │                       │
+                              ▼                       ▼
+                     app ingest hook ──▶ AI / archive / file:captured
+```
+
+- 扫描只在用户点击时注入，不常驻页面。
+- `http(s)` 由 Background 使用 host permission 拉取；`data:` 在 Background 解码；`blob:` 在页面 MAIN world 读取（受 blob 生命周期和页面 CSP 限制）。
+- 默认过滤 128×128 以下、1 KB 以下和 SVG 候选；单次最多 300 个；URL 与 hash 双重去重。
+- 一次性捕获**不创建、不修改、不写入**捕获会话，不 attach debugger；保存结果通过 `file:captured` 进入全局媒体库，只出现在扫描预览/结果里，不进入会话 feed 或计数器。
+
 ### AI 任务流程
 
 ```
@@ -466,6 +504,12 @@ blobs/<hash>.<ext>  ──copy──▶  .<hash>.<ext>.part ──rename──�
    ↓
 4. VFS HTTP Server reads blob/thumbnail from workspace
 ```
+
+单文件下载使用 `Content-Disposition: attachment`，文件名优先取 `ai_filename` + 真实扩展名，缺失时回退到 `<hash>.<ext>`；文件名会清理路径分隔符、控制字符和保留名，并提供 RFC 5987 的 `filename*`。
+
+#### 媒体导出
+
+Options 媒体库的多选导出在扩展侧完成：它通过 HTTP 逐个读取选中的原图，用流式 zip 写入器打包，并附带 `metadata.json`（hash、MIME、大小、捕获时间、来源、标签、备注、收藏、AI 文件名、置信度、模型）。导出上限为 500 项 / 1 GB，逐文件显示进度，读取失败的条目会跳过并在结果中报告，不会生成半成品归档。
 
 ## 风险和缓解
 

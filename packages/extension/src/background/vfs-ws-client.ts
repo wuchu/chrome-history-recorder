@@ -44,6 +44,7 @@ export interface VFSFileMetadata {
   mime_type: string;
   size: number;
   source_url: string | null;
+  source_domain: string | null;
   captured_at: string;
   category: string;
   ai_filename: string | null;
@@ -65,11 +66,33 @@ export interface VFSFileMetadata {
 export interface VFSListQuery {
   category?: string;
   tag?: string;
+  q?: string;
+  mimeType?: 'image' | 'video';
+  sourceDomain?: string;
+  capturedFrom?: string;
+  capturedTo?: string;
+  starred?: boolean;
+  classifyStatus?: VFSTaskStatus;
+  tags?: string[];
+  tagMode?: 'and' | 'or';
   limit?: number;
   offset?: number;
-  orderBy?: 'captured_at' | 'category' | 'classified_at';
+  cursor?: string;
+  orderBy?:
+    | 'captured_at'
+    | 'size'
+    | 'confidence'
+    | 'ai_filename'
+    | 'category'
+    | 'classified_at'
+    | 'deleted_at';
   order?: 'asc' | 'desc';
-  includeDeleted?: boolean;
+  status?: 'active' | 'trashed' | 'all';
+}
+
+export interface VFSSourceDomainCount {
+  domain: string;
+  count: number;
 }
 
 /**
@@ -450,10 +473,38 @@ export class VFSWebSocketClient {
   }
 
   /**
-   * Delete file
+   * Trash file (recoverable delete)
    */
-  async deleteFile(hash: string, hard?: boolean): Promise<{ success: boolean }> {
-    return this.send('deleteFile', { hash, hard });
+  async trashFile(hash: string): Promise<{ success: boolean }> {
+    return this.send('trashFile', { hash });
+  }
+
+  /**
+   * Restore file from the recycle bin
+   */
+  async restoreFile(hash: string): Promise<{ success: boolean }> {
+    return this.send('restoreFile', { hash });
+  }
+
+  /**
+   * Restore every file in the recycle bin
+   */
+  async restoreAll(): Promise<{ success: boolean; count: number }> {
+    return this.send('restoreAll', {});
+  }
+
+  /**
+   * Permanently delete a file
+   */
+  async purgeFile(hash: string): Promise<{ success: boolean }> {
+    return this.send('purgeFile', { hash });
+  }
+
+  /**
+   * Permanently delete every file in the recycle bin
+   */
+  async emptyTrash(): Promise<{ success: boolean; count: number }> {
+    return this.send('emptyTrash', {});
   }
 
   /**
@@ -463,8 +514,44 @@ export class VFSWebSocketClient {
     items: VFSFileMetadata[];
     total: number;
     hasMore: boolean;
+    nextCursor?: string;
   }> {
     return this.send('listFiles', { ...(query ?? {}) });
+  }
+
+  /**
+   * Distinct source domains for the library filter.
+   */
+  async getSourceDomains(limit = 100): Promise<VFSSourceDomainCount[]> {
+    return this.send('getSourceDomains', { limit });
+  }
+
+  /**
+   * Set a file's star state.
+   */
+  async setFileStarred(hash: string, starred: boolean): Promise<VFSFileMetadata | null> {
+    return this.send('setFileStarred', { hash, starred });
+  }
+
+  /**
+   * Update a file's user notes.
+   */
+  async updateFileNotes(hash: string, notes: string): Promise<VFSFileMetadata | null> {
+    return this.send('updateFileNotes', { hash, notes });
+  }
+
+  /**
+   * Add user tags to a file.
+   */
+  async addFileTags(hash: string, tags: string[]): Promise<{ tags: string[] }> {
+    return this.send('addFileTags', { hash, tags });
+  }
+
+  /**
+   * Remove user tags from a file.
+   */
+  async removeFileTags(hash: string, tags: string[]): Promise<{ tags: string[] }> {
+    return this.send('removeFileTags', { hash, tags });
   }
 
   /**

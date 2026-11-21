@@ -4,7 +4,7 @@
  * Virtualized Masonry grid using @virtuoso.dev/masonry.
  */
 
-import { memo, useRef, useCallback, useEffect, useState } from 'react';
+import { memo, useRef, useEffect, type ReactNode } from 'react';
 import { VirtuosoMasonry } from '@virtuoso.dev/masonry';
 import type { CombinedMediaItem } from '../hooks/useCombinedMedia';
 import { useColumnCount } from '../hooks/useColumnCount';
@@ -19,6 +19,11 @@ interface VirtualMasonryGridProps {
   onItemDeleteRequest?: (hash: string) => void;
   hasMore?: boolean;
   loading?: boolean;
+  selectionMode?: boolean;
+  selectedHashes?: Set<string>;
+  onToggleSelect?: (hash: string) => void;
+  emptyMessage?: string;
+  emptyAction?: ReactNode;
 }
 
 interface VirtuosoItemContentProps {
@@ -37,11 +42,17 @@ const MasonryItemContent = memo(function MasonryItemContent({
   onItemClick,
   onItemDelete,
   onItemDeleteRequest,
+  selectionMode,
+  selected,
+  onToggleSelect,
 }: {
   data?: CombinedMediaItem;
   onItemClick?: (item: CombinedMediaItem) => void;
   onItemDelete?: (hash: string) => void;
   onItemDeleteRequest?: (hash: string) => void;
+  selectionMode?: boolean;
+  selected?: boolean;
+  onToggleSelect?: (hash: string) => void;
 }) {
   if (!data?.hash) {
     console.warn('[VirtualMasonryGrid] Skipping invalid masonry item:', data);
@@ -55,6 +66,9 @@ const MasonryItemContent = memo(function MasonryItemContent({
         onClick={() => onItemClick?.(data)}
         onDelete={onItemDelete}
         onDeleteRequest={onItemDeleteRequest}
+        selectionMode={selectionMode}
+        selected={selected}
+        onToggleSelect={onToggleSelect}
       />
     </div>
   );
@@ -71,9 +85,14 @@ const VirtualMasonryGrid = memo(function VirtualMasonryGrid({
   onItemDeleteRequest,
   hasMore = false,
   loading = false,
+  selectionMode = false,
+  selectedHashes,
+  onToggleSelect,
+  emptyMessage,
+  emptyAction,
 }: VirtualMasonryGridProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [isNearEnd, setIsNearEnd] = useState(false);
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
   // Responsive column count
   const { columnCount, containerWidth } = useColumnCount({
@@ -86,27 +105,24 @@ const VirtualMasonryGrid = memo(function VirtualMasonryGrid({
   // width leaves items sized to zero — lazy images then never start loading.
   const layoutReady = containerWidth > 0;
 
-  // Detect page scroll near end for infinite loading.
-  const handleScroll = useCallback(() => {
-    const { scrollTop, scrollHeight, clientHeight } = document.documentElement;
-    const nearEnd = scrollHeight - scrollTop - clientHeight < 200;
-
-    if (nearEnd && !isNearEnd && hasMore && !loading && onLoadMore) {
-      setIsNearEnd(true);
-      onLoadMore();
-    } else if (!nearEnd) {
-      setIsNearEnd(false);
-    }
-  }, [hasMore, loading, onLoadMore, isNearEnd]);
-
+  // Observe the end sentinel instead of latching on a scroll event. If a page
+  // is short enough that the sentinel stays visible after loading, the freshly
+  // re-armed observer triggers the next page immediately.
   useEffect(() => {
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    handleScroll();
+    const sentinel = sentinelRef.current;
+    if (!sentinel || !hasMore || loading) return;
 
-    return () => {
-      window.removeEventListener('scroll', handleScroll);
-    };
-  }, [handleScroll]);
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          onLoadMore?.();
+        }
+      },
+      { rootMargin: '200px' }
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasMore, loading, onLoadMore, items.length, layoutReady]);
 
   const isEmpty = items.length === 0 && !loading;
 
@@ -114,7 +130,8 @@ const VirtualMasonryGrid = memo(function VirtualMasonryGrid({
     <div ref={containerRef} className={styles.container}>
       {isEmpty ? (
         <div className={styles.empty}>
-          <p>暂无媒体</p>
+          <p>{emptyMessage ?? '暂无媒体'}</p>
+          {emptyAction}
         </div>
       ) : layoutReady ? (
         <>
@@ -141,11 +158,16 @@ const VirtualMasonryGrid = memo(function VirtualMasonryGrid({
                   onItemClick={onItemClick}
                   onItemDelete={onItemDelete}
                   onItemDeleteRequest={onItemDeleteRequest}
+                  selectionMode={selectionMode}
+                  selected={Boolean(item?.hash && selectedHashes?.has(item.hash))}
+                  onToggleSelect={onToggleSelect}
                 />
               );
             }}
             initialItemCount={50}
           />
+
+          {hasMore && <div ref={sentinelRef} style={{ height: 1 }} />}
 
           {loading && (
             <div className={styles.loadingIndicator}>

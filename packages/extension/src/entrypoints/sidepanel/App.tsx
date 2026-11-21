@@ -7,6 +7,7 @@ import { appStyles } from '../media-browser/styles';
 import { buildVfsFileUrl } from '../media-browser/utils/media';
 import { useActiveTab } from './hooks/useActiveTab';
 import { useCaptureSession } from './hooks/useCaptureSession';
+import { usePageScan } from './hooks/usePageScan';
 import TabIdentity from './components/TabIdentity';
 import SessionBanner from './components/SessionBanner';
 import SessionMetrics from './components/SessionMetrics';
@@ -15,6 +16,7 @@ import SessionEventLog from './components/SessionEventLog';
 import SessionSummary from './components/SessionSummary';
 import StartState from './components/StartState';
 import ConfirmDialog from './components/ConfirmDialog';
+import PageScanModal from './components/PageScanModal';
 import { summaryFromSession } from './utils';
 import styles from './cockpit.module.css';
 import './sidepanel.css';
@@ -25,6 +27,11 @@ function App() {
   const { vfsConnected, ollamaAvailable } = useBackgroundMessaging({ collectEvents: false });
   const activeTab = useActiveTab();
   const capture = useCaptureSession();
+  const pageScan = usePageScan({
+    tabId: activeTab.tabId,
+    tabSupported: activeTab.isSupported,
+    vfsConnected,
+  });
 
   const [pendingStart, setPendingStart] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -154,6 +161,8 @@ function App() {
           onToggleCapture={handleToggleCapture}
           onOpenOptions={() => openOptions('settings')}
           onClearEvents={() => void capture.clearLog()}
+          onScanPage={() => void pageScan.startScan()}
+          scanDisabled={!pageScan.canScan || capture.busy || pageScan.saving}
           disableCaptureToggle={!showCockpit && !vfsConnected}
         />
 
@@ -217,6 +226,45 @@ function App() {
           </>
         )}
       </main>
+
+      <PageScanModal
+        open={pageScan.open}
+        tabTitle={activeTab.title}
+        scanning={pageScan.scanning}
+        scan={pageScan.scan}
+        error={pageScan.error}
+        selected={pageScan.selected}
+        saving={pageScan.saving}
+        progress={pageScan.progress}
+        results={pageScan.results}
+        onToggle={pageScan.toggle}
+        onSelectAll={pageScan.selectAll}
+        onClear={pageScan.clearSelection}
+        onSave={() => void pageScan.saveSelected()}
+        onClose={pageScan.close}
+        onRetry={() => void pageScan.startScan()}
+      />
+
+      {pageScan.toast && (
+        <div
+          role="status"
+          style={{
+            position: 'fixed',
+            left: 12,
+            right: 12,
+            bottom: 12,
+            zIndex: 90,
+            padding: '8px 12px',
+            borderRadius: 8,
+            background: '#1677ff',
+            color: '#fff',
+            fontSize: 12,
+            boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
+          }}
+        >
+          {pageScan.toast}
+        </div>
+      )}
 
       <ConfirmDialog
         open={pendingStart}

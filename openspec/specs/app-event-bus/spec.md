@@ -15,8 +15,13 @@ The app SHALL own an event bus that collects file, task, classification, and tag
 - **THEN** the scheduler SHALL publish the event into the app event bus
 
 #### Scenario: Collect file events
-- **WHEN** a file is captured or deleted
-- **THEN** the corresponding event SHALL enter the app event bus
+- **WHEN** a file is captured, moved to the trash, restored, permanently deleted, or the trash is emptied
+- **THEN** the corresponding `file:captured`, `file:trashed`, `file:restored`, `file:purged`, `trash:emptied`, or `trash:restored-all` event SHALL enter the app event bus
+- **AND** `file:deleted` SHALL NOT be published
+
+#### Scenario: Collect automatic restore events
+- **WHEN** a duplicate capture restores a trashed file
+- **THEN** a `file:restored` event SHALL enter the app event bus
 
 ### Requirement: Push events to the extension
 

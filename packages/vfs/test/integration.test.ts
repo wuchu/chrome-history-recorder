@@ -943,45 +943,66 @@ describe('Integration Tests', () => {
       expect(statsData.byCategory['test-category']).toBe(1);
     });
 
-    it('should handle delete workflow', async () => {
+    it('should handle the trash workflow', async () => {
       // Setup: Create file
       const saveResult = api.saveFile({
         buffer: Buffer.from('to be deleted'),
         mimeType: 'image/jpeg',
       });
 
-      // Soft delete
-      const softDeleteRequest: VFSRequest = {
-        method: 'deleteFile',
+      // Move to trash
+      const trashRequest: VFSRequest = {
+        method: 'trashFile',
         params: { hash: saveResult.hash },
       };
-      const softDeleteResponse = await dispatcher(softDeleteRequest);
-      expect(softDeleteResponse.success).toBe(true);
+      const trashResponse = await dispatcher(trashRequest);
+      expect(trashResponse.success).toBe(true);
 
-      // Verify soft deleted (not in default list)
-      const listRequest: VFSRequest = {
-        method: 'listFiles',
-        params: {},
-      };
-      const listResponse = await dispatcher(listRequest);
+      // Verify trashed (not in default list, present in trash list)
+      const listResponse = await dispatcher({ method: 'listFiles', params: {} });
       expect(isListFilesResponse(listResponse.data)).toBe(true);
       expect((listResponse.data as ListFilesResponse).total).toBe(0);
 
-      // Hard delete
-      const hardDeleteRequest: VFSRequest = {
-        method: 'deleteFile',
-        params: { hash: saveResult.hash, hard: true },
-      };
-      const hardDeleteResponse = await dispatcher(hardDeleteRequest);
-      expect(hardDeleteResponse.success).toBe(true);
+      const trashListResponse = await dispatcher({
+        method: 'listFiles',
+        params: { status: 'trashed' },
+      });
+      expect((trashListResponse.data as ListFilesResponse).total).toBe(1);
+
+      // Restore
+      const restoreResponse = await dispatcher({
+        method: 'restoreFile',
+        params: { hash: saveResult.hash },
+      });
+      expect(restoreResponse.success).toBe(true);
+
+      // Permanently delete
+      const purgeResponse = await dispatcher({
+        method: 'purgeFile',
+        params: { hash: saveResult.hash },
+      });
+      expect(purgeResponse.success).toBe(true);
 
       // Verify completely removed
-      const metadataRequest: VFSRequest = {
+      const metadataResponse = await dispatcher({
         method: 'getMetadata',
         params: { hash: saveResult.hash },
-      };
-      const metadataResponse = await dispatcher(metadataRequest);
+      });
       expect(metadataResponse.data).toBeNull();
+    });
+
+    it('should broadcast trash lifecycle events', async () => {
+      const saveResult = api.saveFile({
+        buffer: Buffer.from('broadcast me'),
+        mimeType: 'image/jpeg',
+      });
+
+      await dispatcher({ method: 'trashFile', params: { hash: saveResult.hash } });
+      await dispatcher({ method: 'restoreFile', params: { hash: saveResult.hash } });
+      await dispatcher({ method: 'purgeFile', params: { hash: saveResult.hash } });
+
+      const result = await dispatcher({ method: 'emptyTrash', params: {} });
+      expect(result.success).toBe(true);
     });
   });
 });

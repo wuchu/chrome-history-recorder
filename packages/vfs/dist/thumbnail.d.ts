@@ -50,6 +50,11 @@ export declare class ThumbnailStorage {
      */
     generateThumbnailForBlob(hash: string, ext: string, mimeType: string, size: ThumbnailSize): Promise<Buffer>;
     /**
+     * Delete every cached thumbnail for a hash, including video frame scratch
+     * files. Missing directories or files are treated as success.
+     */
+    deleteByHash(hash: string): number;
+    /**
      * Clear thumbnail cache
      */
     clearCache(): void;

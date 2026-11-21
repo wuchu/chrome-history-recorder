@@ -193,20 +193,77 @@ describe('media archive tasks', () => {
     expect(archiveSummary().pending).toBe(1);
   });
 
-  it('completes tasks whose source was deleted before processing', async () => {
+  it('completes tasks whose source was permanently deleted before processing', async () => {
     vi.setSystemTime(START + 1000);
     enableArchive();
     worker = new MediaArchiveWorker({ api, store, events, workspacePath: workspace });
 
     const hash = saveImage('deleted later');
     worker.enqueue(hash);
-    api.deleteFile({ hash });
+    await api.purgeFile({ hash });
 
     await worker.runOnce();
 
     expect(archivedFiles()).toEqual([]);
     const task = api.getTasksByHash(hash).find((row) => row.task_type === ARCHIVE_TASK_TYPE);
-    expect(task?.status).toBe('completed');
+    expect(task).toBeUndefined();
+  });
+
+  it('suspends archive tasks while the source is in the trash', async () => {
+    vi.setSystemTime(START + 1000);
+    enableArchive();
+    worker = new MediaArchiveWorker({ api, store, events, workspacePath: workspace });
+
+    const hash = saveImage('trashed later');
+    worker.enqueue(hash);
+    api.trashFile({ hash });
+
+    await worker.runOnce();
+
+    expect(archivedFiles()).toEqual([]);
+    const task = api.getTasksByHash(hash).find((row) => row.task_type === ARCHIVE_TASK_TYPE);
+    expect(task?.status).toBe('pending');
+  });
+
+  it('keeps the archived copy while the source is trashed and deletes it on purge', async () => {
+    vi.setSystemTime(START + 1000);
+    enableArchive();
+    worker = new MediaArchiveWorker({ api, store, events, workspacePath: workspace });
+    api.setPurgeHook((hash, metadata) => worker?.deleteArchived(hash, metadata.blob_ext));
+
+    const hash = saveImage('archive then purge');
+    worker.enqueue(hash);
+    await worker.runOnce();
+    expect(archivedFiles()).toEqual([`${hash}.jpg`]);
+
+    api.trashFile({ hash });
+    expect(archivedFiles()).toEqual([`${hash}.jpg`]);
+
+    await api.purgeFile({ hash });
+    expect(archivedFiles()).toEqual([]);
+  });
+
+  it('removes a copy that finishes after the source is permanently deleted', async () => {
+    vi.setSystemTime(START + 1000);
+    enableArchive();
+    let purgedHash: string | null = null;
+    worker = new MediaArchiveWorker({
+      api,
+      store,
+      events,
+      workspacePath: workspace,
+      copyFile: async (source, destination) => {
+        await fs.promises.copyFile(source, destination);
+        if (purgedHash) await api.purgeFile({ hash: purgedHash });
+      },
+    });
+
+    const hash = saveImage('race purge');
+    purgedHash = hash;
+    worker.enqueue(hash);
+    await worker.runOnce();
+
+    expect(archivedFiles()).toEqual([]);
   });
 
   it('requeues and backfills since activation when the target changes', async () => {

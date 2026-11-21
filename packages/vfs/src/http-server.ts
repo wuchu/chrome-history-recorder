@@ -14,6 +14,86 @@ import { ThumbnailSize } from './thumbnail';
  */
 export const DEFAULT_MAX_UPLOAD_SIZE = 200 * 1024 * 1024;
 
+const WINDOWS_RESERVED_NAMES = new Set([
+  'con',
+  'prn',
+  'aux',
+  'nul',
+  'com1',
+  'com2',
+  'com3',
+  'com4',
+  'com5',
+  'com6',
+  'com7',
+  'com8',
+  'com9',
+  'lpt1',
+  'lpt2',
+  'lpt3',
+  'lpt4',
+  'lpt5',
+  'lpt6',
+  'lpt7',
+  'lpt8',
+  'lpt9',
+]);
+
+/**
+ * Make an AI-generated name safe for a download header and a ZIP entry.
+ */
+export function sanitizeDownloadName(raw: string): string {
+  let name = raw
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^[.\s]+|[.\s]+$/g, '');
+
+  if (!name) name = 'media';
+  if (WINDOWS_RESERVED_NAMES.has(name.toLowerCase())) {
+    name = `_${name}`;
+  }
+  return name.slice(0, 120) || 'media';
+}
+
+function sanitizeExtension(raw: string): string {
+  return (
+    raw
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '')
+      .slice(0, 10) || 'bin'
+  );
+}
+
+/**
+ * Build a readable download name from AI metadata with a hash fallback.
+ */
+export function buildDownloadName(metadata: {
+  hash: string;
+  blob_ext: string;
+  ai_filename?: string | null;
+}): { fullName: string; asciiName: string; encodedName: string } {
+  const extension = sanitizeExtension(metadata.blob_ext);
+  let base = sanitizeDownloadName(metadata.ai_filename || metadata.hash);
+  const suffix = `.${extension}`;
+  if (base.toLowerCase().endsWith(suffix)) {
+    base = base.slice(0, -suffix.length) || metadata.hash;
+  }
+  const fullName = `${base}${suffix}`;
+  const asciiName =
+    fullName
+      .replace(/[^\x20-\x7e]/g, '_')
+      .replace(/["\\]/g, '_')
+      .trim() || `${metadata.hash}.${extension}`;
+  const encodedName = encodeURIComponent(fullName).replace(
+    /['()*]/g,
+    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`
+  );
+  return { fullName, asciiName, encodedName };
+}
+
 /**
  * HTTP Server configuration
  */
@@ -283,10 +363,15 @@ export class VFSHTTPServer {
     }
 
     // Set response headers
+    const download = buildDownloadName(result.metadata);
     res.setHeader('Content-Type', result.mimeType);
     res.setHeader('Content-Length', result.size);
     res.setHeader('Cache-Control', 'max-age=3600');
-    res.setHeader('Content-Disposition', `inline; filename="${hash}"`);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${download.asciiName}"; filename*=UTF-8''${download.encodedName}`
+    );
+    res.setHeader('X-Content-Type-Options', 'nosniff');
 
     res.writeHead(200);
     res.end(result.buffer);

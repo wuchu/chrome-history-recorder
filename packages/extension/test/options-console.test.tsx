@@ -157,7 +157,8 @@ describe('MediaDetail metadata and actions', () => {
     expect(screen.getAllByText('abc123').length).toBeGreaterThan(0);
     expect(screen.getByText('image/png')).toBeTruthy();
     expect(screen.getByText('2.0 KB')).toBeTruthy();
-    expect(screen.getByText('cat · system:image')).toBeTruthy();
+    expect(screen.getByText('#cat')).toBeTruthy();
+    expect(screen.getByText('#image')).toBeTruthy();
     expect(screen.getByText('llava:7b')).toBeTruthy();
   });
 
@@ -180,5 +181,32 @@ describe('MediaDetail metadata and actions', () => {
     expect(onRefreshTask).toHaveBeenNthCalledWith(1, 'classify', 'abc123');
     expect(onRefreshTask).toHaveBeenNthCalledWith(2, 'rename', 'abc123');
     expect(onDeleteRequest).toHaveBeenCalledWith('abc123');
+  });
+
+  it('supports curation, download, and navigation', () => {
+    const onToggleStar = vi.fn();
+    const onDownload = vi.fn();
+    const onNavigate = vi.fn();
+
+    render(
+      <MediaDetail
+        item={{ ...item, isStarred: false }}
+        onClose={() => {}}
+        onToggleStar={onToggleStar}
+        onDownload={onDownload}
+        onNavigate={onNavigate}
+        hasPrev
+        hasNext
+      />
+    );
+
+    fireEvent.click(screen.getByTitle('收藏'));
+    expect(onToggleStar).toHaveBeenCalledWith('abc123', true);
+
+    fireEvent.click(screen.getByTitle('下载'));
+    expect(onDownload).toHaveBeenCalledWith(expect.objectContaining({ hash: 'abc123' }));
+
+    fireEvent.click(screen.getByTitle('下一张'));
+    expect(onNavigate).toHaveBeenCalledWith('next');
   });
 });

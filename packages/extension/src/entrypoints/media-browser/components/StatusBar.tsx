@@ -5,6 +5,7 @@ import {
   PauseCircleOutlined,
   ClearOutlined,
   SettingOutlined,
+  FileImageOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import styles from './StatusBar.module.css';
@@ -20,6 +21,8 @@ interface StatusBarProps {
   onToggleCapture: () => void;
   onOpenOptions: () => void;
   onClearEvents: () => void;
+  onScanPage?: () => void;
+  scanDisabled?: boolean;
   disableCaptureToggle?: boolean;
 }
 
@@ -38,6 +41,8 @@ const StatusBar = memo(function StatusBar({
   onToggleCapture,
   onOpenOptions,
   onClearEvents,
+  onScanPage,
+  scanDisabled,
   disableCaptureToggle,
 }: StatusBarProps) {
   const { t } = useTranslation();
@@ -104,6 +109,19 @@ const StatusBar = memo(function StatusBar({
       </div>
 
       <div className={styles.rightSection}>
+        {onScanPage && (
+          <Tooltip title={t('status.scanPage', '抓取本页媒体')}>
+            <button
+              onClick={onScanPage}
+              className={styles.iconButton}
+              disabled={scanDisabled}
+              aria-label={t('status.scanPage', '抓取本页媒体')}
+            >
+              <FileImageOutlined />
+            </button>
+          </Tooltip>
+        )}
+
         <Tooltip
           title={
             isCapturing ? t('status.stopCapture', '停止捕获') : t('status.startCapture', '开始捕获')

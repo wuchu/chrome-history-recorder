@@ -36,6 +36,16 @@ const MAX_UPLOAD_SIZE = process.env.VFS_MAX_UPLOAD_SIZE
   ? parseInt(process.env.VFS_MAX_UPLOAD_SIZE, 10)
   : undefined;
 
+function sourceDomainOf(sourceUrl: string | null | undefined): string | null {
+  if (!sourceUrl) return null;
+  try {
+    const host = new URL(sourceUrl).hostname.toLowerCase();
+    return host.startsWith('www.') ? host.slice(4) : host;
+  } catch {
+    return null;
+  }
+}
+
 async function main(): Promise<void> {
   const resolution = resolveWorkspace(process.argv.slice(2));
 
@@ -111,16 +121,33 @@ async function main(): Promise<void> {
     wsServer.broadcastEvent(event, data);
   });
 
-  // Auto-enqueue AI work and announce captured files on ingest.
+  // Auto-enqueue AI work and announce captured or restored files on ingest.
   api.setIngestHook((result) => {
-    events.emit('file:captured', {
-      hash: result.hash,
-      mimeType: result.mimeType,
-      size: result.size,
-      duplicate: false,
-    });
+    if (result.restored) {
+      events.emit('file:restored', {
+        hash: result.hash,
+        restoredAt: new Date().toISOString(),
+      });
+    } else {
+      events.emit('file:captured', {
+        hash: result.hash,
+        mimeType: result.mimeType,
+        size: result.size,
+        duplicate: false,
+        sourceUrl: result.sourceUrl ?? null,
+        sourceDomain: sourceDomainOf(result.sourceUrl),
+        capturedAt: result.capturedAt,
+      });
+    }
     void scheduler.enqueuePair(result.hash);
     mediaArchive.enqueue(result.hash);
+  });
+
+  // Permanent deletion removes app-owned copies (archive target) before the
+  // file row disappears. Restore re-enqueues archiving when it is enabled.
+  api.setPurgeHook((hash, metadata) => mediaArchive.deleteArchived(hash, metadata.blob_ext));
+  api.setRestoreHook((hash) => {
+    mediaArchive.enqueue(hash);
   });
 
   const applyConfig = (next: AppConfig) => {

@@ -18,6 +18,9 @@ interface MasonryItemProps {
   onClick?: () => void;
   onDelete?: (hash: string) => void;
   onDeleteRequest?: (hash: string) => void;
+  selectionMode?: boolean;
+  selected?: boolean;
+  onToggleSelect?: (hash: string) => void;
 }
 
 /**
@@ -28,6 +31,9 @@ const MasonryItem = memo(function MasonryItem({
   onClick,
   onDelete,
   onDeleteRequest,
+  selectionMode = false,
+  selected = false,
+  onToggleSelect,
 }: MasonryItemProps) {
   const { t } = useTranslation();
   const imageRef = useRef<HTMLImageElement>(null);
@@ -81,8 +87,30 @@ const MasonryItem = memo(function MasonryItem({
     }
   };
 
+  const handleActivate = () => {
+    if (selectionMode) {
+      onToggleSelect?.(item.hash);
+      return;
+    }
+    onClick?.();
+  };
+
   return (
-    <button type="button" className={styles.item} onClick={onClick} aria-label="打开媒体">
+    <div
+      className={styles.item}
+      role="button"
+      tabIndex={0}
+      aria-label={selectionMode ? '选择媒体' : '打开媒体'}
+      aria-pressed={selectionMode ? selected : undefined}
+      style={selected ? { outline: '3px solid #1677ff', outlineOffset: -3 } : undefined}
+      onClick={handleActivate}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          handleActivate();
+        }
+      }}
+    >
       <div className={styles.thumbnailWrapper}>
         {!imageLoaded && !imageError && <div className={styles.placeholder}>加载中...</div>}
         {imageError && (
@@ -103,20 +131,47 @@ const MasonryItem = memo(function MasonryItem({
             onError={handleImageError}
           />
         )}
+        {selectionMode && (
+          <span
+            aria-hidden="true"
+            style={{
+              position: 'absolute',
+              top: 6,
+              left: 6,
+              width: 22,
+              height: 22,
+              borderRadius: 11,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: selected ? '#1677ff' : 'rgba(255,255,255,0.9)',
+              color: selected ? '#fff' : '#555',
+              border: '1px solid #1677ff',
+              fontSize: 14,
+            }}
+          >
+            {selected ? '✓' : ''}
+          </span>
+        )}
+        {item.isStarred && (
+          <span title="已收藏" style={{ position: 'absolute', top: 6, right: 32, fontSize: 14 }}>
+            ⭐
+          </span>
+        )}
         {primaryTag && <span className={styles.tagBadge}>#{primaryTag}</span>}
-        {(onDelete || onDeleteRequest) && (
+        {!selectionMode && (onDelete || onDeleteRequest) && (
           <button
             type="button"
             className={styles.deleteButton}
             onClick={handleDelete}
-            aria-label={t('delete.button')}
-            title={t('delete.title')}
+            aria-label={t('delete.button', '删除')}
+            title={t('delete.title', '删除')}
           >
             ×
           </button>
         )}
       </div>
-    </button>
+    </div>
   );
 });
 

@@ -93,6 +93,8 @@ class VFSAPI {
     thumbnailStorage;
     workspacePath;
     ingestHook;
+    purgeHook;
+    restoreHook;
     constructor(db, blobStorage, thumbnailStorage, workspacePath) {
         this.db = db;
         this.blobStorage = blobStorage;
@@ -108,6 +110,41 @@ class VFSAPI {
         this.ingestHook = hook;
     }
     /**
+     * Register a callback invoked before a file row is permanently removed, so
+     * the app can delete copies it owns (for example the archive target copy).
+     * Hook failures are logged and never block the purge.
+     */
+    setPurgeHook(hook) {
+        this.purgeHook = hook;
+    }
+    /**
+     * Register a callback invoked after a file is restored from the recycle bin,
+     * so the app can re-enqueue work such as archiving.
+     */
+    setRestoreHook(hook) {
+        this.restoreHook = hook;
+    }
+    async runPurgeHook(hash, metadata) {
+        if (!this.purgeHook)
+            return;
+        try {
+            await this.purgeHook(hash, metadata);
+        }
+        catch (error) {
+            console.warn(`[VFSAPI] Purge hook failed for ${hash}:`, error instanceof Error ? error.message : error);
+        }
+    }
+    async runRestoreHook(hash) {
+        if (!this.restoreHook)
+            return;
+        try {
+            await this.restoreHook(hash);
+        }
+        catch (error) {
+            console.warn(`[VFSAPI] Restore hook failed for ${hash}:`, error instanceof Error ? error.message : error);
+        }
+    }
+    /**
      * Save file API
      */
     saveFile(params) {
@@ -121,6 +158,20 @@ class VFSAPI {
         // Check if file already exists
         const existing = this.db.getFile(hash);
         if (existing) {
+            if (existing.is_deleted === 1) {
+                this.db.restoreFile(hash);
+                const restored = {
+                    hash,
+                    duplicate: true,
+                    restored: true,
+                    size: buffer.length,
+                    mimeType,
+                    sourceUrl: sourceUrl || null,
+                    capturedAt,
+                };
+                this.ingestHook?.(restored);
+                return restored;
+            }
             return {
                 hash,
                 duplicate: true,
@@ -142,6 +193,8 @@ class VFSAPI {
             duplicate: false,
             size: result.size,
             mimeType,
+            sourceUrl: sourceUrl || null,
+            capturedAt,
         };
         this.ingestHook?.(saved);
         return saved;
@@ -186,6 +239,20 @@ class VFSAPI {
         const existing = this.db.getFile(hash);
         if (existing) {
             this.blobStorage.removeTempFile(tempPath);
+            if (existing.is_deleted === 1) {
+                this.db.restoreFile(hash);
+                const restored = {
+                    hash,
+                    duplicate: true,
+                    restored: true,
+                    size,
+                    mimeType,
+                    sourceUrl: sourceUrl || null,
+                    capturedAt,
+                };
+                this.ingestHook?.(restored);
+                return restored;
+            }
             return { hash, duplicate: true, size, mimeType };
         }
         let blob;
@@ -209,6 +276,8 @@ class VFSAPI {
             duplicate: false,
             size: blob.size,
             mimeType,
+            sourceUrl: sourceUrl || null,
+            capturedAt,
         };
         this.ingestHook?.(saved);
         return saved;
@@ -264,29 +333,83 @@ class VFSAPI {
         };
     }
     /**
-     * Delete file API
+     * Move a file into the recycle bin. The blob, thumbnails, and archived copy
+     * are retained so the file can be restored or previewed.
      */
-    deleteFile(params) {
-        const { hash, hard } = params;
-        if (hard) {
-            // Hard delete: remove blob and database record
-            const metadata = this.db.getFile(hash);
-            if (metadata) {
-                this.blobStorage.deleteBlob(hash, metadata.blob_ext);
-            }
-            this.db.hardDeleteFile(hash);
+    trashFile(params) {
+        return { success: this.db.softDeleteFile(params.hash) };
+    }
+    /**
+     * Restore a file from the recycle bin.
+     */
+    async restoreFile(params) {
+        const success = this.db.restoreFile(params.hash);
+        if (success) {
+            await this.runRestoreHook(params.hash);
         }
-        else {
-            // Soft delete: just mark as deleted
-            this.db.softDeleteFile(hash);
+        return { success };
+    }
+    /**
+     * Restore every file currently in the recycle bin.
+     */
+    async restoreAll() {
+        const hashes = this.db.listTrashedFiles().map((file) => file.hash);
+        const count = this.db.restoreAllFiles();
+        for (const hash of hashes) {
+            await this.runRestoreHook(hash);
         }
+        return { success: true, count };
+    }
+    /**
+     * Permanently delete a file: thumbnails, blob, app-owned copies, tasks, and
+     * the database row.
+     */
+    async purgeFile(params) {
+        await this.purgeHashes([params.hash]);
         return { success: true };
+    }
+    /**
+     * Permanently delete every file in the recycle bin.
+     */
+    async emptyTrash() {
+        const hashes = this.db.listTrashedFiles().map((file) => file.hash);
+        const result = await this.purgeHashes(hashes);
+        return { success: true, count: result.count };
+    }
+    async purgeHashes(hashes) {
+        const metadataList = hashes
+            .map((hash) => this.db.getFile(hash))
+            .filter((metadata) => metadata !== null);
+        for (const metadata of metadataList) {
+            this.thumbnailStorage.deleteByHash(metadata.hash);
+            try {
+                this.blobStorage.deleteBlob(metadata.hash, metadata.blob_ext);
+            }
+            catch (error) {
+                console.warn(`[VFSAPI] Failed to delete blob for ${metadata.hash}:`, error instanceof Error ? error.message : error);
+            }
+            await this.runPurgeHook(metadata.hash, metadata);
+        }
+        const count = this.db.hardDeleteFiles(metadataList.map((metadata) => metadata.hash));
+        return { success: true, count };
     }
     /**
      * List files API
      */
     listFiles(query) {
         return this.db.listFiles(query);
+    }
+    /**
+     * Distinct source domains for the library filter.
+     */
+    getSourceDomains(params = {}) {
+        return this.db.getSourceDomains(params.limit);
+    }
+    /**
+     * Whether the full-text search index is available.
+     */
+    isSearchIndexAvailable() {
+        return this.db.isSearchIndexAvailable();
     }
     /**
      * List files strictly after a `(created_at, hash)` cursor.
@@ -328,6 +451,30 @@ class VFSAPI {
      */
     getMetadata(hash) {
         return this.db.getFile(hash);
+    }
+    /**
+     * Set the star state of a file.
+     */
+    setFileStarred(params) {
+        return this.db.setFileStarred(params.hash, params.starred);
+    }
+    /**
+     * Update a file's user notes.
+     */
+    updateFileNotes(params) {
+        return this.db.updateFileNotes(params.hash, params.notes);
+    }
+    /**
+     * Add user tags to a file.
+     */
+    addFileTags(params) {
+        return this.db.addFileTags(params.hash, params.tags);
+    }
+    /**
+     * Remove user tags from a file.
+     */
+    removeFileTags(params) {
+        return this.db.removeFileTags(params.hash, params.tags);
     }
     /**
      * Get thumbnail API

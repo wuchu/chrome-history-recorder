@@ -249,6 +249,32 @@ export class ThumbnailStorage {
   }
 
   /**
+   * Delete every cached thumbnail for a hash, including video frame scratch
+   * files. Missing directories or files are treated as success.
+   */
+  deleteByHash(hash: string): number {
+    let files: string[];
+    try {
+      files = fs.readdirSync(this.thumbnailsPath);
+    } catch {
+      return 0;
+    }
+
+    const prefix = `${hash}-`;
+    let removed = 0;
+    for (const file of files) {
+      if (!file.startsWith(prefix)) continue;
+      try {
+        fs.unlinkSync(path.join(this.thumbnailsPath, file));
+        removed += 1;
+      } catch {
+        // Best-effort cleanup.
+      }
+    }
+    return removed;
+  }
+
+  /**
    * Clear thumbnail cache
    */
   clearCache(): void {

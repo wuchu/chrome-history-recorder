@@ -27,6 +27,8 @@ interface MediaDetailData {
   classified_at?: string;
   model_used?: string;
   outputPath?: string;
+  deletedAt?: string;
+  isStarred?: boolean;
 }
 
 interface MediaDetailProps {
@@ -36,6 +38,15 @@ interface MediaDetailProps {
   onDeleteRequest?: (hash: string) => void;
   /** Requeue one AI task type for this file (single-file refresh). */
   onRefreshTask?: (taskType: 'classify' | 'rename', hash: string) => void;
+  /** `trash` swaps management actions for restore / permanent delete. */
+  mode?: 'library' | 'trash';
+  onRestore?: (hash: string) => void;
+  onPurgeRequest?: (hash: string) => void;
+  onToggleStar?: (hash: string, starred: boolean) => void;
+  onDownload?: (item: MediaDetailData) => void;
+  onNavigate?: (direction: 'prev' | 'next') => void;
+  hasPrev?: boolean;
+  hasNext?: boolean;
 }
 
 function formatSize(bytes: number): string {
@@ -70,6 +81,14 @@ const MediaDetail = memo(function MediaDetail({
   onDelete,
   onDeleteRequest,
   onRefreshTask,
+  mode = 'library',
+  onRestore,
+  onPurgeRequest,
+  onToggleStar,
+  onDownload,
+  onNavigate,
+  hasPrev = false,
+  hasNext = false,
 }: MediaDetailProps) {
   const { t } = useTranslation();
   const modalRef = useRef<HTMLDivElement>(null);
@@ -90,6 +109,19 @@ const MediaDetail = memo(function MediaDetail({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         onClose();
+        return;
+      }
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+      ) {
+        return;
+      }
+      if (e.key === 'ArrowLeft' && hasPrev) {
+        onNavigate?.('prev');
+      } else if (e.key === 'ArrowRight' && hasNext) {
+        onNavigate?.('next');
       }
     };
 
@@ -100,7 +132,7 @@ const MediaDetail = memo(function MediaDetail({
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [item, onClose]);
+  }, [item, onClose, onNavigate, hasPrev, hasNext]);
 
   useEffect(() => {
     setImageLoaded(false);
@@ -111,6 +143,10 @@ const MediaDetail = memo(function MediaDetail({
   if (!item) return null;
 
   const handleDelete = () => {
+    if (mode === 'trash' && onPurgeRequest) {
+      onPurgeRequest(item.hash);
+      return;
+    }
     if (onDeleteRequest) {
       onDeleteRequest(item.hash);
       return;
@@ -125,6 +161,14 @@ const MediaDetail = memo(function MediaDetail({
   const filename = item.ai_filename || item.hash;
   const isImage = item.mimeType.startsWith('image/');
   const tags = normalizeTagList(item.tags);
+
+  const handleDownload = () => {
+    if (onDownload) {
+      onDownload(item);
+      return;
+    }
+    void chrome.downloads.download({ url: imageUrl, saveAs: true });
+  };
 
   return (
     <div ref={modalRef} className={styles.modal} onClick={handleBackdropClick}>
@@ -189,6 +233,12 @@ const MediaDetail = memo(function MediaDetail({
             <span>{t('mediaDetail.hash', 'Hash')}</span>
             <span className={styles.metadataMono}>{item.hash}</span>
           </div>
+          {item.deletedAt && (
+            <div className={styles.metadataRow}>
+              <span>{t('mediaDetail.deletedAt', '删除时间')}</span>
+              <span>{new Date(item.deletedAt).toLocaleString()}</span>
+            </div>
+          )}
           {item.sourceUrl && (
             <div className={styles.metadataRow}>
               <span>{t('mediaDetail.source', '来源')}</span>
@@ -206,7 +256,11 @@ const MediaDetail = memo(function MediaDetail({
           {tags.length > 0 && (
             <div className={styles.metadataRow}>
               <span>{t('mediaDetail.tags', '标签')}</span>
-              <span>{tags.join(' · ')}</span>
+              <span style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {tags.map((tag) => (
+                  <span key={tag}>#{tag.replace(/^system:/, '')}</span>
+                ))}
+              </span>
             </div>
           )}
           {item.model_used && (
@@ -224,7 +278,49 @@ const MediaDetail = memo(function MediaDetail({
         </div>
 
         <div className={styles.toolbar}>
-          {onRefreshTask && (
+          {onNavigate && (
+            <>
+              <button
+                type="button"
+                className={styles.refreshButton}
+                title={t('mediaDetail.previous', '上一张')}
+                disabled={!hasPrev}
+                onClick={() => onNavigate('prev')}
+              >
+                ‹
+              </button>
+              <button
+                type="button"
+                className={styles.refreshButton}
+                title={t('mediaDetail.next', '下一张')}
+                disabled={!hasNext}
+                onClick={() => onNavigate('next')}
+              >
+                ›
+              </button>
+            </>
+          )}
+          {onToggleStar && (
+            <button
+              type="button"
+              className={styles.refreshButton}
+              title={item.isStarred ? '取消收藏' : '收藏'}
+              onClick={() => onToggleStar(item.hash, !item.isStarred)}
+            >
+              {item.isStarred ? '⭐' : '☆'}
+            </button>
+          )}
+          {onDownload && (
+            <button
+              type="button"
+              className={styles.refreshButton}
+              title={t('mediaDetail.download', '下载原图')}
+              onClick={handleDownload}
+            >
+              ⬇️
+            </button>
+          )}
+          {mode !== 'trash' && onRefreshTask && (
             <>
               <button
                 type="button"
@@ -244,11 +340,21 @@ const MediaDetail = memo(function MediaDetail({
               </button>
             </>
           )}
-          {(onDelete || onDeleteRequest) && (
+          {mode === 'trash' && onRestore && (
+            <button
+              type="button"
+              className={styles.refreshButton}
+              title={t('trash.restore', '恢复')}
+              onClick={() => onRestore(item.hash)}
+            >
+              ♻️
+            </button>
+          )}
+          {(onDelete || onDeleteRequest || (mode === 'trash' && onPurgeRequest)) && (
             <button
               type="button"
               className={styles.deleteButton}
-              title={t('delete.title')}
+              title={mode === 'trash' ? t('trash.purge', '永久删除') : t('delete.title')}
               onClick={handleDelete}
             >
               🗑️

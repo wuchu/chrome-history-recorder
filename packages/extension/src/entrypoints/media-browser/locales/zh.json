@@ -11,7 +11,8 @@
     "stopCapture": "停止捕获",
     "wsConnected": "WS 已连接",
     "wsDisconnected": "WS 断开",
-    "classifying": "分类中 {{count}} 个，等待 {{pending}} 个"
+    "classifying": "分类中 {{count}} 个，等待 {{pending}} 个",
+    "scanPage": "抓取本页媒体"
   },
   "stats": {
     "images": "图片",
@@ -150,7 +151,8 @@
       "unsupportedDescription": "Chrome 不允许扩展捕获此页面。请切换到普通网页后再试。",
       "starting": "正在开始…",
       "action": "开始捕获",
-      "hint": "全局同时只会运行一个捕获会话。"
+      "hint": "全局同时只会运行一个捕获会话。",
+      "scanPage": "抓取本页媒体"
     },
     "confirm": {
       "title": "切换捕获会话？",
@@ -158,5 +160,27 @@
       "cancel": "取消",
       "confirm": "停止并开始"
     }
+  },
+  "oneShot": {
+    "title": "抓取本页媒体",
+    "action": "抓取本页",
+    "scanning": "正在扫描页面…",
+    "empty": "没有找到可保存的媒体",
+    "found": "找到 {{count}} 个候选",
+    "selected": "已选 {{selected}} / {{total}} 个",
+    "skippedSmall": "跳过过小 {{count}}",
+    "skippedSvg": "跳过 SVG {{count}}",
+    "skippedIframes": "跳过 iframe {{count}}",
+    "capped": "超出上限 {{count}}",
+    "selectAll": "全选",
+    "clear": "清空",
+    "save": "保存选中",
+    "saving": "保存中…",
+    "savingShort": "保存中…",
+    "close": "关闭",
+    "retry": "重试",
+    "resultSummary": "已保存 {{saved}}，重复 {{duplicate}}，跳过 {{skipped}}，失败 {{failed}}",
+    "unknownDimensions": "未知尺寸",
+    "blobPreview": "blob"
   }
 }

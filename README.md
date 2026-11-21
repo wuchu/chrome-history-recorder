@@ -11,7 +11,10 @@
 - **Chrome 专属**: 支持 Chrome 88+，使用 Manifest V3、Side Panel API 和 debugger/CDP Network API
 - **WebSocket + HTTP 双通道**: WebSocket 用于实时通信和事件推送，HTTP 用于文件下载和缩略图获取
 - **Side Panel + Options 分工**: Side Panel 是当前标签页的捕获驾驶舱，Options 是全局媒体库与控制台
+- **一次性捕获**: 右键图片直接保存，或在侧栏「抓取本页媒体」扫描页面后预览、多选、批量保存；不需要 debugger，也不会创建捕获会话
 - **智能去重**: 基于 SHA-256 内容哈希，自动防止重复保存
+- **检索与批量**: 媒体库支持文本搜索、类型/站点/时间/标签/分类状态筛选、排序，以及多选批量移入回收站、重新入队和导出
+- **可读导出**: 单文件下载与 zip 导出使用 AI 文件名；zip 内附 `metadata.json`，保留来源、标签、备注和分类信息
 - **多格式支持**: 图片（JPEG、PNG、WebP、GIF、BMP）和视频（MP4、WebM、MOV、AVI）
 - **AI 分类**: 集成 Ollama，使用视觉模型自动分类和命名文件
 
@@ -34,9 +37,9 @@ chrome-history-recorder/
 本项目使用 **WebSocket + HTTP 双通道**架构：
 
 1. **WebSocket Server (端口 8765)**: 用于 API 调用和实时事件推送
-   - 文件操作 API（保存、删除、列表）
+   - 文件操作 API（保存、回收站、恢复、永久删除、列表）
    - 分类队列管理
-   - 实时事件广播（文件捕获、删除、分类完成）
+   - 实时事件广播（文件捕获、移入回收站、恢复、永久删除、分类完成）
 
 2. **HTTP Server (端口 8766)**: 用于文件下载和缩略图获取
    - 文件下载 (`GET /files/:hash`)
@@ -107,11 +110,17 @@ pnpm dev
 5. 捕获的图片将自动保存到 `~/.vfs-workspace/`
 6. 在 Options 控制台的「媒体库」中浏览和管理全局媒体
 
+媒体库顶部提供搜索、类型/来源站点/时间/标签/分类状态筛选和排序。点击「选择」进入多选模式后，可以批量移入回收站、重新排队 AI 分类/命名，或把选中的原图导出为 zip；导出目录内会附带 `metadata.json`。单文件下载会优先使用 AI 文件名和真实扩展名。
+
 Side Panel 只显示当前会话的媒体流和诊断日志；全局历史瀑布流、标签治理、AI 配置和任务队列都在 Options 控制台。切换到其他标签页时，Side Panel 会显示「另一个标签页正在捕获」横幅，并提供切换或停止会话的操作。
+
+在媒体库中删除媒体会将条目移入 Options 控制台的「回收站」，原始文件、缩略图和归档副本都会保留，可随时恢复；只有执行「永久删除」或「清空回收站」才会释放磁盘并移除归档副本。
 
 捕获启用时，Chrome 会授予扩展 `debugger` 权限并可能显示当前标签页正在被调试的提示。这是 Side Panel 模式下读取图片响应体所需的 Chrome 能力；点击「停止捕获」会释放该标签页的 debugger 会话。
 
-当前 Side Panel 捕获第一版聚焦网络图片响应：暂不支持 Canvas/WebGL 生成的 `data:` 图片、页面内组装的 `blob:` 图片，也不承诺还原复杂视频流、Range 分片或 MSE 播放内容。
+不想开启捕获会话时，可以直接在页面上右键图片选择「保存图片到媒体库」，或在 Side Panel 右上角点击「抓取本页媒体」图标扫描当前页面。扫描结果会先进入预览，你可以全选、取消或只保存一部分。一次性保存复用同一套入库、去重、AI 和归档链路，但不会创建或修改捕获会话，也不会进入会话计数和会话 feed。
+
+持续捕获会话聚焦网络图片响应：不还原 Canvas/WebGL 生成的 `data:` 图片或页面内组装的 `blob:` 图片，也不承诺还原复杂视频流、Range 分片或 MSE 播放内容。一次性捕获会尝试保存页面中已经存在的 `data:` / `blob:` 图片（受页面 CSP、blob 生命周期和跨域限制），但不扫描 canvas 像素本身。
 
 ### 配置 AI 分类
 
@@ -152,8 +161,12 @@ AI 只能处理能产出代表性图像的媒体（视觉模型原生格式，�
 
 - `saveFile`: 保存文件
 - `getFile`: 获取文件
-- `deleteFile`: 删除文件
-- `listFiles`: 列出文件
+- `trashFile`: 移入回收站
+- `restoreFile`: 从回收站恢复
+- `restoreAll`: 恢复回收站中的全部文件
+- `purgeFile`: 永久删除单个文件
+- `emptyTrash`: 清空回收站
+- `listFiles`: 列出文件（`status`: `active` / `trashed` / `all`）
 - `updateMetadata`: 更新元数据
 - `getMetadata`: 获取元数据
 - `getThumbnail`: 获取缩略图（WebSocket 方式）
@@ -184,7 +197,11 @@ WebSocket 会广播以下事件：
 - `vfs:connected`: VFS 连接确认
 - `vfs:disconnected`: VFS 断开通知
 - `file:captured`: 文件捕获完成
-- `file:deleted`: 文件删除完成
+- `file:trashed`: 文件移入回收站
+- `file:restored`: 文件从回收站恢复（含重复采集自动恢复）
+- `file:purged`: 文件被永久删除
+- `trash:emptied`: 回收站清空完成
+- `trash:restored-all`: 回收站全部恢复完成
 - `classify:queued`: AI 分类任务已入队
 - `classify:started`: AI 分类任务开始处理
 - `classify:complete`: AI 分类任务处理完成
@@ -324,7 +341,7 @@ Windows  %APPDATA%\browser-media-recorder\config.json
 - 每个新增文件是一条「媒体归档」任务；归档由独立 runner 消费，分类暂停或 Ollama 不可用时照常运行。
 - 目标必须是**已存在**的绝对目录；NAS 需先挂载，应用不会自动创建目录，也不会在未挂载的挂载点写入本地文件。
 - 只归档**首次启用之后**新增的媒体；停用后重新启用会补上停用期间的新增，但启用前的存量永远不会自动归档。
-- 目标文件使用内容哈希命名 `<hash>.<ext>`，扁平存放；不复制缩略图、AI 元数据或 sidecar，也不镜像删除。
+- 目标文件使用内容哈希命名 `<hash>.<ext>`，扁平存放；不复制缩略图、AI 元数据或 sidecar。移入回收站不会改动归档副本；永久删除媒体时会同时移除当前归档目标中的对应副本。
 - 更换目标目录时，会重建启用以来的归档任务，把新目标中缺失的文件补齐。
 - 复制先写入目标目录内的 `.<hash>.<ext>.part` 再 `rename`，避免出现半截文件；单个文件失败会留在任务队列中无限重试（指数退避，上限 1 小时），不会阻塞后续文件。
 

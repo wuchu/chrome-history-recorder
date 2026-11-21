@@ -4,7 +4,7 @@
  * Tests for all VFS API methods including file operations, metadata, queue, and stats.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { VFSAPI } from '../src/api';
 import { SQLiteDatabase, ensureWorkspace } from '../src/sqlite';
 import { BlobStorage, calculateHash } from '../src/blob';
@@ -48,6 +48,28 @@ describe('VFSAPI', () => {
   });
 
   describe('saveFile API', () => {
+    it('calls the ingest hook with source metadata for one-shot saves', () => {
+      const hook = vi.fn();
+      api.setIngestHook(hook);
+
+      const capturedAt = '2026-01-01T00:00:00.000Z';
+      const result = api.saveFile({
+        buffer: Buffer.from('one-shot image'),
+        mimeType: 'image/png',
+        sourceUrl: 'https://www.example.com/one-shot.png',
+        capturedAt,
+      });
+
+      expect(hook).toHaveBeenCalledWith(
+        expect.objectContaining({
+          hash: result.hash,
+          mimeType: 'image/png',
+          sourceUrl: 'https://www.example.com/one-shot.png',
+          capturedAt,
+        })
+      );
+    });
+
     it('should save new file and return hash', () => {
       const buffer = Buffer.from('test image content');
       const result = api.saveFile({
@@ -203,9 +225,9 @@ describe('VFSAPI', () => {
       expect(items.every((item) => item.is_deleted === 0)).toBe(true);
     });
 
-    it('should exclude soft-deleted files', () => {
+    it('should exclude trashed files', () => {
       const saved = api.saveFile({ buffer: Buffer.from('deleted'), mimeType: 'image/jpeg' });
-      api.deleteFile({ hash: saved.hash });
+      api.trashFile({ hash: saved.hash });
 
       const items = api.listFilesCreatedAfter({
         createdAt: '1970-01-01T00:00:00.000Z',
@@ -217,15 +239,15 @@ describe('VFSAPI', () => {
     });
   });
 
-  describe('deleteFile API', () => {
-    it('should soft delete file by default', () => {
+  describe('trash lifecycle API', () => {
+    it('should move a file to the trash and keep the blob', async () => {
       const buffer = Buffer.from('test');
       const saveResult = api.saveFile({
         buffer,
         mimeType: 'image/jpeg',
       });
 
-      const result = api.deleteFile({ hash: saveResult.hash });
+      const result = await api.trashFile({ hash: saveResult.hash });
 
       expect(result.success).toBe(true);
       const metadata = db.getFile(saveResult.hash);
@@ -234,33 +256,113 @@ describe('VFSAPI', () => {
       expect(blobStorage.blobExists(saveResult.hash, 'jpg')).toBe(true);
     });
 
-    it('should hard delete file with hard=true', () => {
-      const buffer = Buffer.from('test');
-      const saveResult = api.saveFile({
-        buffer,
-        mimeType: 'image/jpeg',
-      });
-
-      const result = api.deleteFile({ hash: saveResult.hash, hard: true });
-
-      expect(result.success).toBe(true);
-      const metadata = db.getFile(saveResult.hash);
-      expect(metadata).toBeNull();
-      expect(blobStorage.blobExists(saveResult.hash, 'jpg')).toBe(false);
+    it('should fail to trash a missing file', async () => {
+      const result = await api.trashFile({ hash: 'does-not-exist' });
+      expect(result.success).toBe(false);
     });
 
-    it('should hard delete file from queue too', () => {
-      const buffer = Buffer.from('test');
-      const saveResult = api.saveFile({
-        buffer,
-        mimeType: 'image/jpeg',
+    it('should restore a file from the trash', async () => {
+      const saved = api.saveFile({ buffer: Buffer.from('restore me'), mimeType: 'image/jpeg' });
+      await api.trashFile({ hash: saved.hash });
+
+      const restored = await api.restoreFile({ hash: saved.hash });
+
+      expect(restored.success).toBe(true);
+      const metadata = db.getFile(saved.hash);
+      expect(metadata?.is_deleted).toBe(0);
+      expect(metadata?.deleted_at).toBeNull();
+      expect(blobStorage.blobExists(saved.hash, 'jpg')).toBe(true);
+    });
+
+    it('should invoke the restore hook', async () => {
+      const saved = api.saveFile({ buffer: Buffer.from('hook restore'), mimeType: 'image/jpeg' });
+      await api.trashFile({ hash: saved.hash });
+      const seen: string[] = [];
+      api.setRestoreHook((hash) => {
+        seen.push(hash);
       });
 
-      api.enqueueClassification({ hash: saveResult.hash });
-      api.deleteFile({ hash: saveResult.hash, hard: true });
+      await api.restoreFile({ hash: saved.hash });
+      expect(seen).toEqual([saved.hash]);
+    });
 
-      const queueStatus = api.getQueueStatus();
-      expect(queueStatus.total).toBe(0);
+    it('should restore all trashed files', async () => {
+      const first = api.saveFile({ buffer: Buffer.from('first'), mimeType: 'image/jpeg' });
+      const second = api.saveFile({ buffer: Buffer.from('second'), mimeType: 'image/jpeg' });
+      await api.trashFile({ hash: first.hash });
+      await api.trashFile({ hash: second.hash });
+
+      const result = await api.restoreAll();
+
+      expect(result).toEqual({ success: true, count: 2 });
+      expect(api.listFiles({}).total).toBe(2);
+      expect(api.listFiles({ status: 'trashed' }).total).toBe(0);
+    });
+
+    it('should permanently delete blob and thumbnails', async () => {
+      const saved = api.saveFile({ buffer: Buffer.from('purge me'), mimeType: 'image/jpeg' });
+      const thumbnailPath = thumbnailStorage.getThumbnailPath(saved.hash, 'medium');
+      fs.mkdirSync(path.dirname(thumbnailPath), { recursive: true });
+      fs.writeFileSync(thumbnailPath, Buffer.from('thumb'));
+      await api.trashFile({ hash: saved.hash });
+
+      const result = await api.purgeFile({ hash: saved.hash });
+
+      expect(result.success).toBe(true);
+      expect(db.getFile(saved.hash)).toBeNull();
+      expect(blobStorage.blobExists(saved.hash, 'jpg')).toBe(false);
+      expect(fs.existsSync(thumbnailPath)).toBe(false);
+    });
+
+    it('should invoke the purge hook', async () => {
+      const saved = api.saveFile({ buffer: Buffer.from('hook purge'), mimeType: 'image/jpeg' });
+      const seen: string[] = [];
+      api.setPurgeHook((hash) => {
+        seen.push(hash);
+      });
+
+      await api.purgeFile({ hash: saved.hash });
+      expect(seen).toEqual([saved.hash]);
+    });
+
+    it('should purge idempotently for a missing hash', async () => {
+      const result = await api.purgeFile({ hash: 'missing' });
+      expect(result.success).toBe(true);
+    });
+
+    it('should remove tasks when purging', async () => {
+      const saved = api.saveFile({ buffer: Buffer.from('task purge'), mimeType: 'image/jpeg' });
+      api.enqueueClassification({ hash: saved.hash });
+
+      await api.purgeFile({ hash: saved.hash });
+
+      expect(api.getQueueStatus().total).toBe(0);
+    });
+
+    it('should empty the trash', async () => {
+      const first = api.saveFile({ buffer: Buffer.from('empty 1'), mimeType: 'image/jpeg' });
+      const second = api.saveFile({ buffer: Buffer.from('empty 2'), mimeType: 'image/jpeg' });
+      await api.trashFile({ hash: first.hash });
+      await api.trashFile({ hash: second.hash });
+
+      const result = await api.emptyTrash();
+
+      expect(result).toEqual({ success: true, count: 2 });
+      expect(api.listFiles({ status: 'all' }).total).toBe(0);
+      expect(blobStorage.blobExists(first.hash, 'jpg')).toBe(false);
+      expect(blobStorage.blobExists(second.hash, 'jpg')).toBe(false);
+    });
+
+    it('should restore a trashed duplicate on save', () => {
+      const buffer = Buffer.from('duplicate restore');
+      const first = api.saveFile({ buffer, mimeType: 'image/jpeg' });
+      api.trashFile({ hash: first.hash });
+
+      const again = api.saveFile({ buffer, mimeType: 'image/jpeg' });
+
+      expect(again.duplicate).toBe(true);
+      expect(again.restored).toBe(true);
+      expect(db.getFile(first.hash)?.is_deleted).toBe(0);
     });
   });
 
@@ -311,15 +413,25 @@ describe('VFSAPI', () => {
       expect(result.items[0].captured_at > result.items[1].captured_at).toBe(true);
     });
 
-    it('should exclude deleted files by default', () => {
+    it('should exclude trashed files by default', () => {
       const hashes = [calculateHash(Buffer.from('file1')), calculateHash(Buffer.from('file2'))];
 
-      api.deleteFile({ hash: hashes[0] });
+      api.trashFile({ hash: hashes[0] });
 
       const result = api.listFiles({});
-      // Total should be 4 (file2-5 are not deleted, file1 is deleted)
+      // Total should be 4 (file2-5 are not trashed, file1 is trashed)
       expect(result.total).toBe(4);
       expect(result.items.every((f) => f.is_deleted === 0)).toBe(true);
+    });
+
+    it('should list trashed files', () => {
+      const hashes = [calculateHash(Buffer.from('file1')), calculateHash(Buffer.from('file2'))];
+      api.trashFile({ hash: hashes[0] });
+
+      const trashed = api.listFiles({ status: 'trashed' });
+      expect(trashed.total).toBe(1);
+      expect(trashed.items[0].hash).toBe(hashes[0]);
+      expect(api.listFiles({ status: 'all' }).total).toBe(5);
     });
   });
 
@@ -496,10 +608,10 @@ describe('VFSAPI', () => {
       expect(after).toEqual(before);
     });
 
-    it('should preserve soft-deleted indexed hashes', () => {
+    it('should preserve trashed indexed hashes', () => {
       const buffer = Buffer.from('soft deleted content');
       const saveResult = api.saveFile({ buffer, mimeType: 'image/png' });
-      api.deleteFile({ hash: saveResult.hash });
+      api.trashFile({ hash: saveResult.hash });
       const before = db.getFile(saveResult.hash);
 
       const result = api.syncBlobsToIndex();

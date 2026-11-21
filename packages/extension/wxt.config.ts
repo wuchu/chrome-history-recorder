@@ -21,6 +21,8 @@ export default defineConfig({
       'sidePanel',
       'debugger',
       'offscreen',
+      'contextMenus',
+      'scripting',
     ],
     host_permissions: [
       '<all_urls>', // 允许访问所有域名，用于拦截所有网站的媒体

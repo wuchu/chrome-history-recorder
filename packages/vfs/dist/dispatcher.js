@@ -57,13 +57,31 @@ async function dispatchMethod(api, method, params) {
             return api.saveFile(params);
         case 'getFile':
             return api.getFile(params.hash);
-        case 'deleteFile':
-            return api.deleteFile(params);
+        case 'trashFile':
+            return api.trashFile(params);
+        case 'restoreFile':
+            return api.restoreFile(params);
+        case 'restoreAll':
+            return api.restoreAll();
+        case 'purgeFile':
+            return api.purgeFile(params);
+        case 'emptyTrash':
+            return api.emptyTrash();
         case 'listFiles':
             return api.listFiles(params);
+        case 'getSourceDomains':
+            return api.getSourceDomains(params);
         // Metadata operations
         case 'updateMetadata':
             return api.updateMetadata(params);
+        case 'setFileStarred':
+            return api.setFileStarred(params);
+        case 'updateFileNotes':
+            return api.updateFileNotes(params);
+        case 'addFileTags':
+            return api.addFileTags(params);
+        case 'removeFileTags':
+            return api.removeFileTags(params);
         case 'getMetadata':
             return api.getMetadata(params.hash);
         // Thumbnail operations

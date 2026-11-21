@@ -1,4 +1,4 @@
-export const CONSOLE_TABS = ['overview', 'library', 'tags', 'tasks', 'settings'] as const;
+export const CONSOLE_TABS = ['overview', 'library', 'tags', 'tasks', 'trash', 'settings'] as const;
 
 export type ConsoleTab = (typeof CONSOLE_TABS)[number];
 

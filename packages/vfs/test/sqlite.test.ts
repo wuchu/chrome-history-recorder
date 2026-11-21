@@ -303,10 +303,22 @@ describe('SQLiteDatabase', () => {
       expect(result.total).toBe(10);
     });
 
-    it('should include deleted files when requested', () => {
-      const result = db.listFiles({ includeDeleted: true });
+    it('should list only trashed files', () => {
+      const result = db.listFiles({ status: 'trashed' });
+      expect(result.total).toBe(1);
+      expect(result.items[0].hash).toBe('deleted001');
+      expect(result.items.every((f) => f.is_deleted === 1)).toBe(true);
+    });
+
+    it('should include deleted files with status all', () => {
+      const result = db.listFiles({ status: 'all' });
       expect(result.total).toBe(11);
       expect(result.items.some((f) => f.is_deleted === 1)).toBe(true);
+    });
+
+    it('should order trashed files by deleted_at descending', () => {
+      const result = db.listFiles({ status: 'trashed' });
+      expect(result.items[0].deleted_at).toBeDefined();
     });
   });
 
@@ -423,7 +435,7 @@ describe('SQLiteDatabase', () => {
   });
 
   describe('Typed task claiming', () => {
-    function insert(hash: string): void {
+    function insert(hash: string, isDeleted = 0): void {
       db.insertFile({
         hash,
         blob_ext: 'jpg',
@@ -439,8 +451,8 @@ describe('SQLiteDatabase', () => {
         model_used: null,
         is_starred: 0,
         user_notes: null,
-        is_deleted: 0,
-        deleted_at: null,
+        is_deleted: isDeleted,
+        deleted_at: isDeleted ? '2024-01-02T00:00:00.000Z' : null,
       });
     }
 
@@ -467,6 +479,30 @@ describe('SQLiteDatabase', () => {
 
       const tasks = db.claimTasks(10);
       expect(tasks.map((task) => task.task_type).sort()).toEqual(['archive', 'classify']);
+    });
+
+    it('does not claim tasks whose target is in the trash', () => {
+      insert('active');
+      insert('trashed', 1);
+      db.enqueueTask({ taskType: 'classify', hash: 'active' });
+      db.enqueueTask({ taskType: 'classify', hash: 'trashed' });
+
+      const tasks = db.claimTasks(10, ['classify']);
+      expect(tasks.map((task) => task.target_hash)).toEqual(['active']);
+      const status = db.getQueueStatus();
+      expect(status.pending).toBe(0);
+      expect(status.processing).toBe(1);
+      expect(status.total).toBe(1);
+    });
+
+    it('restores claimability after a file leaves the trash', () => {
+      insert('trashed', 1);
+      db.enqueueTask({ taskType: 'classify', hash: 'trashed' });
+      expect(db.claimTasks(10, ['classify'])).toEqual([]);
+
+      db.restoreFile('trashed');
+      const tasks = db.claimTasks(10, ['classify']);
+      expect(tasks.map((task) => task.target_hash)).toEqual(['trashed']);
     });
   });
 
@@ -558,6 +594,8 @@ describe('SQLiteDatabase', () => {
       expect(stats.videos).toBe(1);
       expect(stats.byCategory['cats']).toBe(2);
       expect(stats.byCategory['dogs']).toBe(1);
+      expect(stats.trashFiles).toBe(1);
+      expect(stats.trashSize).toBe(512);
     });
   });
 

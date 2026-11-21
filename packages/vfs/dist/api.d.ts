@@ -4,7 +4,7 @@
  * Implements all VFS API methods.
  */
 import { type Readable } from 'stream';
-import { SQLiteDatabase, FileMetadata, MetadataUpdate, ListQuery, ListFilesCreatedAfterParams, EnqueueTaskParams, TaskType, TaskStatus, TaskItem, QueueStatus, TagRecord, ApplyClassificationParams, RecordSkippedTaskParams, RetryFailedParams, RequeueAllParams, SkipIneligibleTasksParams } from './sqlite';
+import { SQLiteDatabase, FileMetadata, MetadataUpdate, ListQuery, ListFilesResult, ListFilesCreatedAfterParams, SourceDomainCount, EnqueueTaskParams, TaskType, TaskStatus, TaskItem, QueueStatus, TagRecord, ApplyClassificationParams, RecordSkippedTaskParams, RetryFailedParams, RequeueAllParams, SkipIneligibleTasksParams } from './sqlite';
 import { BlobStorage } from './blob';
 import { ThumbnailStorage, ThumbnailSize } from './thumbnail';
 export interface SyncBlobsToIndexError {
@@ -24,6 +24,10 @@ export interface SaveFileResult {
     duplicate: boolean;
     size: number;
     mimeType?: string;
+    /** True when a duplicate save restored the file from the recycle bin. */
+    restored?: boolean;
+    sourceUrl?: string | null;
+    capturedAt?: string;
 }
 export interface BlobPathInfo {
     path: string;
@@ -58,6 +62,8 @@ export declare class VFSAPI {
     private thumbnailStorage;
     private workspacePath;
     private ingestHook?;
+    private purgeHook?;
+    private restoreHook?;
     constructor(db: SQLiteDatabase, blobStorage: BlobStorage, thumbnailStorage: ThumbnailStorage, workspacePath: string);
     /**
      * Register a callback invoked after a new (non-duplicate) file is stored.
@@ -65,6 +71,19 @@ export declare class VFSAPI {
      * task policy.
      */
     setIngestHook(hook: (result: SaveFileResult) => void): void;
+    /**
+     * Register a callback invoked before a file row is permanently removed, so
+     * the app can delete copies it owns (for example the archive target copy).
+     * Hook failures are logged and never block the purge.
+     */
+    setPurgeHook(hook: (hash: string, metadata: FileMetadata) => void | Promise<void>): void;
+    /**
+     * Register a callback invoked after a file is restored from the recycle bin,
+     * so the app can re-enqueue work such as archiving.
+     */
+    setRestoreHook(hook: (hash: string) => void | Promise<void>): void;
+    private runPurgeHook;
+    private runRestoreHook;
     /**
      * Save file API
      */
@@ -100,22 +119,60 @@ export declare class VFSAPI {
         metadata: FileMetadata;
     } | null;
     /**
-     * Delete file API
+     * Move a file into the recycle bin. The blob, thumbnails, and archived copy
+     * are retained so the file can be restored or previewed.
      */
-    deleteFile(params: {
+    trashFile(params: {
         hash: string;
-        hard?: boolean;
     }): {
         success: boolean;
     };
     /**
+     * Restore a file from the recycle bin.
+     */
+    restoreFile(params: {
+        hash: string;
+    }): Promise<{
+        success: boolean;
+    }>;
+    /**
+     * Restore every file currently in the recycle bin.
+     */
+    restoreAll(): Promise<{
+        success: boolean;
+        count: number;
+    }>;
+    /**
+     * Permanently delete a file: thumbnails, blob, app-owned copies, tasks, and
+     * the database row.
+     */
+    purgeFile(params: {
+        hash: string;
+    }): Promise<{
+        success: boolean;
+    }>;
+    /**
+     * Permanently delete every file in the recycle bin.
+     */
+    emptyTrash(): Promise<{
+        success: boolean;
+        count: number;
+    }>;
+    private purgeHashes;
+    /**
      * List files API
      */
-    listFiles(query: ListQuery): {
-        items: FileMetadata[];
-        total: number;
-        hasMore: boolean;
-    };
+    listFiles(query: ListQuery): ListFilesResult;
+    /**
+     * Distinct source domains for the library filter.
+     */
+    getSourceDomains(params?: {
+        limit?: number;
+    }): SourceDomainCount[];
+    /**
+     * Whether the full-text search index is available.
+     */
+    isSearchIndexAvailable(): boolean;
     /**
      * List files strictly after a `(created_at, hash)` cursor.
      */
@@ -139,6 +196,38 @@ export declare class VFSAPI {
      */
     getMetadata(hash: string): FileMetadata | null;
     /**
+     * Set the star state of a file.
+     */
+    setFileStarred(params: {
+        hash: string;
+        starred: boolean;
+    }): FileMetadata | null;
+    /**
+     * Update a file's user notes.
+     */
+    updateFileNotes(params: {
+        hash: string;
+        notes: string;
+    }): FileMetadata | null;
+    /**
+     * Add user tags to a file.
+     */
+    addFileTags(params: {
+        hash: string;
+        tags: string[];
+    }): {
+        tags: string[];
+    };
+    /**
+     * Remove user tags from a file.
+     */
+    removeFileTags(params: {
+        hash: string;
+        tags: string[];
+    }): {
+        tags: string[];
+    };
+    /**
      * Get thumbnail API
      */
     getThumbnail(params: {
@@ -157,6 +246,8 @@ export declare class VFSAPI {
         images: number;
         videos: number;
         byCategory: Record<string, number>;
+        trashFiles: number;
+        trashSize: number;
     };
     /**
      * Get workspace config API

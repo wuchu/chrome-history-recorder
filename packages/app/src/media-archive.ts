@@ -603,8 +603,16 @@ export class MediaArchiveWorker {
     this.emitEvent('task:started', { task_type: ARCHIVE_TASK_TYPE, hash });
 
     const metadata = this.api.getMetadata(hash);
-    if (!metadata || metadata.is_deleted === 1) {
+    if (!metadata) {
       this.completeTask(hash);
+      return;
+    }
+    if (metadata.is_deleted === 1) {
+      // The file was moved to the trash after this task was claimed. Release
+      // it back to pending without consuming an attempt; the claim filter
+      // suspends it until the file is restored.
+      this.api.updateTaskStatus({ taskType: ARCHIVE_TASK_TYPE, hash, status: 'pending' });
+      this.emitQueueUpdated();
       return;
     }
 
@@ -677,6 +685,16 @@ export class MediaArchiveWorker {
         throw new Error(`复制后大小不一致（期望 ${source.size}，实际 ${copied.size}）`);
       }
       await fs.promises.rename(tempPath, destination);
+
+      // A permanent delete may have completed while the copy was in flight.
+      // Do not resurrect the archived copy in that case.
+      if (!this.api.getMetadata(metadata.hash)) {
+        try {
+          fs.unlinkSync(destination);
+        } catch {
+          // Best-effort cleanup.
+        }
+      }
     } catch (error) {
       try {
         if (fs.existsSync(tempPath)) {
@@ -686,6 +704,44 @@ export class MediaArchiveWorker {
         // Ignore cleanup errors.
       }
       throw error;
+    }
+  }
+
+  /**
+   * Remove the archived copy of a permanently deleted source file.
+   *
+   * Best-effort: a disabled archive, unavailable target, or missing copy is
+   * not an error and must not block local deletion.
+   */
+  deleteArchived(hash: string, ext: string): void {
+    const config = this.store.get();
+    if (!config.mediaArchiveEnabled || !config.mediaArchiveTargetPath) {
+      return;
+    }
+
+    let target: string;
+    try {
+      target = validateMediaArchiveTarget(config.mediaArchiveTargetPath, {
+        workspacePath: this.workspacePath,
+      });
+    } catch (error) {
+      this.logger.warn(
+        '[MediaArchive] Cannot remove archived copy:',
+        error instanceof Error ? error.message : String(error)
+      );
+      return;
+    }
+
+    const destination = path.join(target, `${hash}.${ext}`);
+    try {
+      fs.unlinkSync(destination);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        this.logger.warn(
+          `[MediaArchive] Failed to remove archived copy ${destination}:`,
+          error instanceof Error ? error.message : String(error)
+        );
+      }
     }
   }
 

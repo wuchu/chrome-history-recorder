@@ -9,6 +9,22 @@ import { VFSAPI } from './api';
  */
 export declare const DEFAULT_MAX_UPLOAD_SIZE: number;
 /**
+ * Make an AI-generated name safe for a download header and a ZIP entry.
+ */
+export declare function sanitizeDownloadName(raw: string): string;
+/**
+ * Build a readable download name from AI metadata with a hash fallback.
+ */
+export declare function buildDownloadName(metadata: {
+    hash: string;
+    blob_ext: string;
+    ai_filename?: string | null;
+}): {
+    fullName: string;
+    asciiName: string;
+    encodedName: string;
+};
+/**
  * HTTP Server configuration
  */
 export interface HTTPServerConfig {

@@ -155,19 +155,8 @@ export class VFSSWebSocketServer {
           error: response.error,
         });
 
-        // Broadcast events for certain operations
-        if (response.success && message.method === 'deleteFile') {
-          this.broadcast({
-            type: 'event',
-            event: 'file:deleted',
-            data: {
-              hash: message.params?.hash,
-              hard: message.params?.hard || false,
-              deletedAt: new Date().toISOString(),
-            },
-            timestamp: new Date().toISOString(),
-          });
-        }
+        // Lifecycle events (trash/restore/purge) are emitted by the app through
+        // the event bus, which forwards them to this server.
 
         const taskMutationMethods = new Set([
           'enqueueClassification',

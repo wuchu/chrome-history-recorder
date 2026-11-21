@@ -11,7 +11,8 @@
     "stopCapture": "Stop Capture",
     "wsConnected": "WS Connected",
     "wsDisconnected": "WS Disconnected",
-    "classifying": "Classifying {{count}}, pending {{pending}}"
+    "classifying": "Classifying {{count}}, pending {{pending}}",
+    "scanPage": "Capture page media"
   },
   "stats": {
     "images": "Images",
@@ -150,7 +151,8 @@
       "unsupportedDescription": "Chrome does not allow extensions to capture this page. Switch to a regular web page and try again.",
       "starting": "Starting…",
       "action": "Start capture",
-      "hint": "Only one capture session can run at a time."
+      "hint": "Only one capture session can run at a time.",
+      "scanPage": "Capture page media"
     },
     "confirm": {
       "title": "Switch capture session?",
@@ -158,5 +160,27 @@
       "cancel": "Cancel",
       "confirm": "Stop and start"
     }
+  },
+  "oneShot": {
+    "title": "Capture page media",
+    "action": "Capture page",
+    "scanning": "Scanning the page…",
+    "empty": "No saveable media found",
+    "found": "{{count}} candidates",
+    "selected": "{{selected}} / {{total}} selected",
+    "skippedSmall": "{{count}} too small",
+    "skippedSvg": "{{count}} SVG skipped",
+    "skippedIframes": "{{count}} iframes skipped",
+    "capped": "{{count}} over the cap",
+    "selectAll": "Select all",
+    "clear": "Clear",
+    "save": "Save selected",
+    "saving": "Saving…",
+    "savingShort": "Saving…",
+    "close": "Close",
+    "retry": "Retry",
+    "resultSummary": "Saved {{saved}}, duplicate {{duplicate}}, skipped {{skipped}}, failed {{failed}}",
+    "unknownDimensions": "Unknown dimensions",
+    "blobPreview": "blob"
   }
 }

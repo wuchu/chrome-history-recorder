@@ -97,7 +97,7 @@ Define the image capture and interception behavior of the Chrome Extension, usin
 - **AND** 文档和主流程必须 (SHALL) 将 Side Panel 作为支持的主要入口
 
 ### Requirement: 扩展激活控制
-扩展必须 (SHALL) 在 Side Panel 中允许用户启用或禁用当前标签页的图片捕获。
+扩展必须 (SHALL) 在 Side Panel 中允许用户启用或禁用当前标签页的图片捕获；捕获会话是全局单会话，而不是每个标签页各自维护一个活动会话。
 
 #### Scenario: 在 Side Panel 中切换捕获开关
 - **WHEN** 用户在 Side Panel 点击切换按钮
@@ -111,10 +111,10 @@ Define the image capture and interception behavior of the Chrome Extension, usin
 - **原因**: 用户主动控制更符合预期，避免打开 Side Panel 就自动捕获大量图片导致性能或隐私问题
 
 **捕获开关作用范围**:
-- **范围**: 仅当前标签页（不影响其他标签页）
-- **每个标签页独立控制**: 不同标签页可独立启用/禁用
-- **状态存储**: Background 必须 (SHALL) 使用 tab-scoped capture state 管理捕获状态
-- **关闭标签页**: Background 必须 (SHALL) 停止并清理该标签页的捕获状态
+- **范围**: 全局单会话；同一时间最多一个标签页处于捕获状态
+- **切换标签页**: 在另一个标签页开始捕获时，系统必须 (SHALL) 先停止旧会话（Side Panel 要求用户确认）
+- **状态存储**: Background 必须 (SHALL) 使用全局会话状态管理当前捕获标签页
+- **关闭标签页**: Background 必须 (SHALL) 停止并清理该标签页的捕获会话
 
 #### Scenario: 面板显示状态指示器
 - **WHEN** 扩展处于活动状态
@@ -251,3 +251,37 @@ Define the image capture and interception behavior of the Chrome Extension, usin
 - **WHEN** 用户指定允许的域名
 - **THEN** 扩展必须 (SHALL) 仅捕获来自这些域名的图片
 - **AND** 未配置白名单时捕获所有域名的图片
+
+### Requirement: One-shot capture fallback for page-local images
+
+The extension SHALL provide a user-initiated one-shot path for images that the CDP network path cannot read, while leaving the network capture path unchanged.
+
+#### Scenario: Data and blob images
+- **WHEN** the user saves an image or runs a page scan on an explicit action
+- **THEN** the one-shot path SHALL attempt to save `data:` and `blob:` images
+- **AND** it SHALL NOT attach the debugger
+- **AND** it SHALL NOT create or modify a capture session
+
+#### Scenario: Network capture remains network-only
+- **WHEN** the global CDP capture session is active
+- **THEN** `Network.responseReceived` handling SHALL continue to ignore `data:` and `blob:` URLs
+- **AND** the one-shot path SHALL be the supported way to save them
+
+#### Scenario: No automatic scanning
+- **WHEN** no one-shot action is invoked
+- **THEN** the extension SHALL NOT read page DOM for capture
+
+### Requirement: One-shot capture permissions
+
+The extension manifest SHALL include the permissions required for user-initiated one-shot capture without broadening host access.
+
+#### Scenario: Manifest permissions
+- **WHEN** `wxt.config.ts` generates the manifest
+- **THEN** it SHALL include `contextMenus` and `scripting`
+- **AND** it SHALL keep the existing `<all_urls>` host permission
+- **AND** it SHALL NOT add a new host permission for one-shot capture
+
+#### Scenario: Context menu registration
+- **WHEN** the extension starts or is installed
+- **THEN** it SHALL register the image context menu item
+- **AND** repeated registration SHALL be idempotent

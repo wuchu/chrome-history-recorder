@@ -16,7 +16,11 @@ const HTTP_BASE_URL = 'http://localhost:8766';
  */
 export type FileEventType =
   | 'file:captured'
-  | 'file:deleted'
+  | 'file:trashed'
+  | 'file:restored'
+  | 'file:purged'
+  | 'trash:emptied'
+  | 'trash:restored-all'
   | 'file:classified'
   | 'vfs:connected'
   | 'vfs:disconnected'
@@ -145,22 +149,71 @@ export class FileManager {
   async handleListFiles(query?: {
     category?: string;
     tag?: string;
+    q?: string;
+    mimeType?: 'image' | 'video';
+    sourceDomain?: string;
+    capturedFrom?: string;
+    capturedTo?: string;
+    starred?: boolean;
+    classifyStatus?: 'pending' | 'processing' | 'completed' | 'failed' | 'skipped';
+    tags?: string[];
+    tagMode?: 'and' | 'or';
     limit?: number;
     offset?: number;
+    cursor?: string;
+    orderBy?:
+      | 'captured_at'
+      | 'size'
+      | 'confidence'
+      | 'ai_filename'
+      | 'category'
+      | 'classified_at'
+      | 'deleted_at';
+    order?: 'asc' | 'desc';
+    status?: 'active' | 'trashed' | 'all';
   }): Promise<{
     items: VFSFileMetadata[];
     total: number;
     hasMore: boolean;
+    nextCursor?: string;
   }> {
     return this.vfsWsClient.listFiles(query);
   }
 
   /**
-   * Handle delete file request from DevTools Panel
+   * Move a file to the recycle bin.
    */
-  async handleDeleteFile(hash: string, hard?: boolean): Promise<{ success: boolean }> {
-    // The app broadcasts file:deleted; the extension relays it.
-    return this.vfsWsClient.deleteFile(hash, hard);
+  async handleTrashFile(hash: string): Promise<{ success: boolean }> {
+    // The app broadcasts file:trashed; the extension relays it.
+    return this.vfsWsClient.trashFile(hash);
+  }
+
+  /**
+   * Restore a file from the recycle bin.
+   */
+  async handleRestoreFile(hash: string): Promise<{ success: boolean }> {
+    return this.vfsWsClient.restoreFile(hash);
+  }
+
+  /**
+   * Restore every trashed file.
+   */
+  async handleRestoreAll(): Promise<{ success: boolean; count: number }> {
+    return this.vfsWsClient.restoreAll();
+  }
+
+  /**
+   * Permanently delete a file.
+   */
+  async handlePurgeFile(hash: string): Promise<{ success: boolean }> {
+    return this.vfsWsClient.purgeFile(hash);
+  }
+
+  /**
+   * Permanently delete every trashed file.
+   */
+  async handleEmptyTrash(): Promise<{ success: boolean; count: number }> {
+    return this.vfsWsClient.emptyTrash();
   }
 
   /**

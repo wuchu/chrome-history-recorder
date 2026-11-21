@@ -28,6 +28,7 @@ import {
 } from 'antd';
 import {
   DashboardOutlined,
+  DeleteOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   PictureOutlined,
@@ -51,6 +52,7 @@ import { useTaskQueue } from './hooks/useTaskQueue';
 import TaskConsole from './components/TaskConsole';
 import OverviewTab from './components/OverviewTab';
 import MediaLibrary from './components/MediaLibrary';
+import TrashPage from './components/TrashPage';
 import MediaArchiveCard from './components/MediaArchiveCard';
 import { consoleTabHash, isConsoleTab, readConsoleTabFromHash, type ConsoleTab } from './tabs';
 import { useTheme } from '../media-browser/hooks/useTheme';
@@ -63,6 +65,7 @@ const NAV_ITEMS: MenuProps['items'] = [
   { key: 'library', icon: <PictureOutlined />, label: '媒体库' },
   { key: 'tags', icon: <TagsOutlined />, label: '标签' },
   { key: 'tasks', icon: <ThunderboltOutlined />, label: '任务' },
+  { key: 'trash', icon: <DeleteOutlined />, label: '回收站' },
   { key: 'settings', icon: <SettingOutlined />, label: '设置' },
 ];
 
@@ -727,6 +730,11 @@ function App() {
                     />
                   </Space>
                 ),
+              },
+              {
+                key: 'trash',
+                label: '回收站',
+                children: <TrashPage />,
               },
               {
                 key: 'settings',

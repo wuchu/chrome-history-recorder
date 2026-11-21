@@ -39,6 +39,28 @@ function parseTagList(raw: string | null): string[] {
   }
 }
 
+/**
+ * Normalize a source URL into a hostname used for site filtering. The `www.`
+ * prefix is removed so `www.example.com` and `example.com` group together.
+ */
+function extractSourceDomain(sourceUrl: string | null | undefined): string | null {
+  if (!sourceUrl) return null;
+  try {
+    const host = new URL(sourceUrl).hostname.toLowerCase();
+    return host.startsWith('www.') ? host.slice(4) : host;
+  } catch {
+    return null;
+  }
+}
+
+function escapeLikePattern(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+}
+
+const MAX_PAGE_SIZE = 500;
+const SEARCH_SCHEMA_VERSION = 1;
+const RESERVED_TAG_NAMES = new Set(['image', 'video', 'starred', 'uncategorized']);
+
 // SQLite schema constants
 const FILES_TABLE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS files (
@@ -48,6 +70,7 @@ CREATE TABLE IF NOT EXISTS files (
     mime_type       TEXT NOT NULL,
     size            INTEGER NOT NULL,
     source_url      TEXT,
+    source_domain   TEXT,
     captured_at     TEXT NOT NULL,
 
     -- Mutable (AI classification)
@@ -61,6 +84,8 @@ CREATE TABLE IF NOT EXISTS files (
     -- Mutable (user)
     is_starred      INTEGER DEFAULT 0,
     user_notes      TEXT,
+    -- Trash state: is_deleted = 1 means "in the recycle bin". Together with
+    -- deleted_at it is only written by the trash/restore operations.
     is_deleted      INTEGER DEFAULT 0,
     deleted_at      TEXT,
 
@@ -70,6 +95,7 @@ CREATE TABLE IF NOT EXISTS files (
 );
 
 CREATE INDEX IF NOT EXISTS idx_files_category ON files(category) WHERE is_deleted = 0;
+CREATE INDEX IF NOT EXISTS idx_files_trash ON files(deleted_at) WHERE is_deleted = 1;
 CREATE INDEX IF NOT EXISTS idx_files_captured_at ON files(captured_at);
 CREATE INDEX IF NOT EXISTS idx_files_created_at ON files(created_at);
 CREATE INDEX IF NOT EXISTS idx_files_classified ON files(classified_at) WHERE classified_at IS NOT NULL;
@@ -131,6 +157,8 @@ export interface FileMetadata {
   mime_type: string;
   size: number;
   source_url: string | null;
+  /** Normalized hostname derived from `source_url`. */
+  source_domain: string | null;
   captured_at: string;
   category: string;
   ai_filename: string | null;
@@ -140,7 +168,9 @@ export interface FileMetadata {
   model_used: string | null;
   is_starred: number;
   user_notes: string | null;
+  /** 1 = in the recycle bin (still recoverable). */
   is_deleted: number;
+  /** When the file entered the recycle bin; null for active files. */
   deleted_at: string | null;
   created_at: string;
   updated_at: string;
@@ -270,16 +300,121 @@ export interface ApplyClassificationParams {
 }
 
 /**
- * List query parameters
+ * Supported sort fields for media queries.
+ */
+export type MediaSortField =
+  | 'captured_at'
+  | 'size'
+  | 'confidence'
+  | 'ai_filename'
+  | 'category'
+  | 'classified_at'
+  | 'deleted_at';
+
+export type MediaTagMode = 'and' | 'or';
+
+/**
+ * List query parameters.
+ *
+ * `category`/`tag` are retained for compatibility. The newer fields are
+ * additive and combine with them.
  */
 export interface ListQuery {
   category?: string;
   tag?: string;
+  /** Free-text search over AI filename, tags, source URL, and notes. */
+  q?: string;
+  mimeType?: 'image' | 'video';
+  sourceDomain?: string;
+  capturedFrom?: string;
+  capturedTo?: string;
+  starred?: boolean;
+  classifyStatus?: TaskStatus;
+  /** Multi-tag selection. Combined with `tagMode`. */
+  tags?: string[];
+  tagMode?: MediaTagMode;
   limit?: number;
   offset?: number;
-  orderBy?: 'captured_at' | 'category' | 'classified_at';
+  /** Opaque keyset cursor. Mutually exclusive with `offset`. */
+  cursor?: string;
+  orderBy?: MediaSortField;
   order?: 'asc' | 'desc';
-  includeDeleted?: boolean;
+  /** Which lifecycle state to include; defaults to active files only. */
+  status?: 'active' | 'trashed' | 'all';
+}
+
+export interface ListFilesResult {
+  items: FileMetadata[];
+  total: number;
+  hasMore: boolean;
+  nextCursor?: string;
+}
+
+export interface SourceDomainCount {
+  domain: string;
+  count: number;
+}
+
+interface CursorPayload {
+  v: 1;
+  sort: MediaSortField;
+  order: 'asc' | 'desc';
+  value: string | number;
+  hash: string;
+}
+
+const SORT_EXPRESSIONS: Record<MediaSortField, string> = {
+  captured_at: 'captured_at',
+  size: 'size',
+  confidence: 'confidence',
+  ai_filename: "COALESCE(ai_filename, '')",
+  category: 'category',
+  classified_at: "COALESCE(classified_at, '')",
+  deleted_at: "COALESCE(deleted_at, '')",
+};
+
+function encodeCursor(payload: CursorPayload): string {
+  return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+}
+
+function decodeCursor(raw: string): CursorPayload | null {
+  try {
+    const parsed = JSON.parse(
+      Buffer.from(raw, 'base64url').toString('utf8')
+    ) as Partial<CursorPayload>;
+    if (
+      parsed.v !== 1 ||
+      typeof parsed.sort !== 'string' ||
+      !(parsed.sort in SORT_EXPRESSIONS) ||
+      (parsed.order !== 'asc' && parsed.order !== 'desc') ||
+      (typeof parsed.value !== 'string' && typeof parsed.value !== 'number') ||
+      typeof parsed.hash !== 'string'
+    ) {
+      return null;
+    }
+    return parsed as CursorPayload;
+  } catch {
+    return null;
+  }
+}
+
+function cursorValueOf(item: FileMetadata, field: MediaSortField): string | number {
+  switch (field) {
+    case 'ai_filename':
+      return item.ai_filename ?? '';
+    case 'classified_at':
+      return item.classified_at ?? '';
+    case 'deleted_at':
+      return item.deleted_at ?? '';
+    case 'captured_at':
+      return item.captured_at;
+    case 'category':
+      return item.category;
+    case 'size':
+      return item.size;
+    case 'confidence':
+      return item.confidence;
+  }
 }
 
 /**
@@ -314,6 +449,8 @@ export interface StatsResult {
   images: number;
   videos: number;
   byCategory: Record<string, number>;
+  trashFiles: number;
+  trashSize: number;
 }
 
 /**
@@ -339,6 +476,7 @@ function databaseOpenError(dbPath: string, error: unknown): Error {
 export class SQLiteDatabase {
   private db: Database.Database;
   private dbPath: string;
+  private ftsAvailable = false;
 
   constructor(workspacePath: string) {
     this.dbPath = path.join(workspacePath, 'vfs.db');
@@ -384,8 +522,127 @@ export class SQLiteDatabase {
     this.db.exec(FILES_TABLE_SCHEMA);
     this.db.exec(TASKS_TABLE_SCHEMA);
     this.db.exec(TAGS_TABLE_SCHEMA);
+    this.migrateSourceDomainColumn();
+    this.migrateSearchIndex();
     this.migrateClassifyQueue();
     this.backfillTagVocabulary();
+  }
+
+  /**
+   * Add `source_domain` to pre-existing databases and backfill hostnames.
+   */
+  private migrateSourceDomainColumn(): void {
+    const columns = this.db.prepare('PRAGMA table_info(files)').all() as Array<{
+      name: string;
+    }>;
+    if (!columns.some((column) => column.name === 'source_domain')) {
+      this.db.exec('ALTER TABLE files ADD COLUMN source_domain TEXT');
+    }
+    this.db.exec(
+      'CREATE INDEX IF NOT EXISTS idx_files_source_domain ON files(source_domain) WHERE is_deleted = 0'
+    );
+
+    const rows = this.db
+      .prepare(
+        `SELECT hash, source_url FROM files
+         WHERE source_url IS NOT NULL AND (source_domain IS NULL OR source_domain = '')`
+      )
+      .all() as Array<{ hash: string; source_url: string | null }>;
+    if (rows.length === 0) return;
+
+    const update = this.db.prepare('UPDATE files SET source_domain = ? WHERE hash = ?');
+    const transaction = this.db.transaction(() => {
+      for (const row of rows) {
+        update.run(extractSourceDomain(row.source_url), row.hash);
+      }
+    });
+    transaction();
+  }
+
+  /**
+   * Create and backfill the FTS5 search index when the bundled SQLite
+   * supports it. A missing FTS5 build degrades to LIKE substring matching.
+   */
+  private migrateSearchIndex(): void {
+    const existing = this.db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'files_fts'")
+      .get() as { name: string } | undefined;
+
+    if (!existing) {
+      try {
+        this.db.exec(
+          `CREATE VIRTUAL TABLE files_fts USING fts5(hash UNINDEXED, search_text, tokenize='trigram')`
+        );
+      } catch {
+        try {
+          this.db.exec(`CREATE VIRTUAL TABLE files_fts USING fts5(hash UNINDEXED, search_text)`);
+        } catch (error) {
+          this.ftsAvailable = false;
+          console.warn(
+            '[VFS] FTS5 is unavailable; media text search will use substring matching.',
+            error instanceof Error ? error.message : error
+          );
+          return;
+        }
+      }
+    }
+
+    this.ftsAvailable = true;
+    this.db.exec(`
+      CREATE TRIGGER IF NOT EXISTS files_fts_ai AFTER INSERT ON files BEGIN
+        INSERT INTO files_fts(hash, search_text)
+        VALUES (
+          new.hash,
+          COALESCE(new.ai_filename, '') || ' ' ||
+          COALESCE(new.tags, '') || ' ' ||
+          COALESCE(new.source_url, '') || ' ' ||
+          COALESCE(new.user_notes, '')
+        );
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS files_fts_ad AFTER DELETE ON files BEGIN
+        DELETE FROM files_fts WHERE hash = old.hash;
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS files_fts_au
+      AFTER UPDATE OF ai_filename, tags, source_url, user_notes ON files BEGIN
+        DELETE FROM files_fts WHERE hash = old.hash;
+        INSERT INTO files_fts(hash, search_text)
+        VALUES (
+          new.hash,
+          COALESCE(new.ai_filename, '') || ' ' ||
+          COALESCE(new.tags, '') || ' ' ||
+          COALESCE(new.source_url, '') || ' ' ||
+          COALESCE(new.user_notes, '')
+        );
+      END;
+    `);
+
+    const version = this.db.pragma('user_version', { simple: true }) as number;
+    if (version < SEARCH_SCHEMA_VERSION) {
+      const transaction = this.db.transaction(() => {
+        this.db.exec('DELETE FROM files_fts');
+        this.db.exec(`
+          INSERT INTO files_fts(hash, search_text)
+          SELECT
+            hash,
+            COALESCE(ai_filename, '') || ' ' ||
+            COALESCE(tags, '') || ' ' ||
+            COALESCE(source_url, '') || ' ' ||
+            COALESCE(user_notes, '')
+          FROM files
+        `);
+        this.db.pragma(`user_version = ${SEARCH_SCHEMA_VERSION}`);
+      });
+      transaction();
+    }
+  }
+
+  /**
+   * Whether FTS5 tokenization is available for text queries.
+   */
+  isSearchIndexAvailable(): boolean {
+    return this.ftsAvailable;
   }
 
   /**
@@ -459,15 +716,20 @@ export class SQLiteDatabase {
   /**
    * Insert a new file record
    */
-  insertFile(metadata: Omit<FileMetadata, 'created_at' | 'updated_at'>): void {
+  insertFile(
+    metadata: Omit<FileMetadata, 'created_at' | 'updated_at' | 'source_domain'> & {
+      source_domain?: string | null;
+    }
+  ): void {
     const now = new Date().toISOString();
+    const sourceDomain = metadata.source_domain ?? extractSourceDomain(metadata.source_url ?? null);
     const stmt = this.db.prepare(`
       INSERT INTO files (
-        hash, blob_ext, mime_type, size, source_url, captured_at,
+        hash, blob_ext, mime_type, size, source_url, source_domain, captured_at,
         category, ai_filename, tags, confidence, classified_at, model_used,
         is_starred, user_notes, is_deleted, deleted_at,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     stmt.run(
       metadata.hash,
@@ -475,6 +737,7 @@ export class SQLiteDatabase {
       metadata.mime_type,
       metadata.size,
       metadata.source_url,
+      sourceDomain,
       metadata.captured_at,
       metadata.category,
       metadata.ai_filename,
@@ -589,7 +852,129 @@ export class SQLiteDatabase {
   }
 
   /**
-   * Soft delete file
+   * Set the star state while preserving every other tag.
+   */
+  setFileStarred(hash: string, starred: boolean): FileMetadata | null {
+    const file = this.getFile(hash);
+    if (!file) return null;
+
+    const now = new Date().toISOString();
+    const tags = parseTagList(file.tags).filter((tag) => tag !== 'system:starred');
+    if (starred) {
+      tags.push('system:starred');
+    }
+
+    const transaction = this.db.transaction(() => {
+      this.db
+        .prepare('UPDATE files SET is_starred = ?, tags = ?, updated_at = ? WHERE hash = ?')
+        .run(starred ? 1 : 0, tags.length > 0 ? JSON.stringify(tags) : null, now, hash);
+    });
+    transaction();
+    return this.getFile(hash);
+  }
+
+  /**
+   * Update user notes. The search trigger refreshes the FTS row.
+   */
+  updateFileNotes(hash: string, notes: string): FileMetadata | null {
+    const file = this.getFile(hash);
+    if (!file) return null;
+    const now = new Date().toISOString();
+    this.db
+      .prepare('UPDATE files SET user_notes = ?, updated_at = ? WHERE hash = ?')
+      .run(notes, now, hash);
+    return this.getFile(hash);
+  }
+
+  /**
+   * Add user tags to a file, creating vocabulary entries as needed.
+   */
+  addFileTags(hash: string, names: string[]): { tags: string[] } {
+    const file = this.getFile(hash);
+    if (!file) throw new Error(`File not found: ${hash}`);
+
+    const normalized = names.map((name) => normalizeTagName(name)).filter(Boolean);
+    for (const name of normalized) {
+      if (name.startsWith('system:') || RESERVED_TAG_NAMES.has(name)) {
+        throw new Error(`Reserved tag name: ${name}`);
+      }
+    }
+
+    const now = new Date().toISOString();
+    let nextTags: string[] = [];
+
+    const transaction = this.db.transaction(() => {
+      const tags = parseTagList(file.tags);
+      const added: string[] = [];
+      for (const name of normalized) {
+        const tag = this.ensureTag(name, 'user');
+        if (!tags.includes(tag.name)) {
+          tags.push(tag.name);
+          added.push(tag.name);
+        }
+      }
+      if (added.length > 0) {
+        this.db
+          .prepare('UPDATE files SET tags = ?, updated_at = ? WHERE hash = ?')
+          .run(JSON.stringify(tags), now, hash);
+        if (file.is_deleted === 0) {
+          const bump = this.db.prepare(
+            'UPDATE tags SET usage_count = usage_count + 1, updated_at = ? WHERE name = ?'
+          );
+          for (const name of added) {
+            bump.run(now, name);
+          }
+        }
+      }
+      nextTags = tags;
+    });
+    transaction();
+
+    return { tags: nextTags };
+  }
+
+  /**
+   * Remove user tags from a file. System tags are never removed.
+   */
+  removeFileTags(hash: string, names: string[]): { tags: string[] } {
+    const file = this.getFile(hash);
+    if (!file) throw new Error(`File not found: ${hash}`);
+
+    const targets = new Set(
+      names
+        .map((name) => normalizeTagName(name))
+        .filter((name) => name && !name.startsWith('system:'))
+    );
+    const now = new Date().toISOString();
+    let nextTags: string[] = [];
+
+    const transaction = this.db.transaction(() => {
+      const tags = parseTagList(file.tags);
+      const removed = tags.filter((tag) => targets.has(tag.toLowerCase()));
+      const remaining = tags.filter((tag) => !targets.has(tag.toLowerCase()));
+      if (removed.length > 0) {
+        this.db
+          .prepare('UPDATE files SET tags = ?, updated_at = ? WHERE hash = ?')
+          .run(remaining.length > 0 ? JSON.stringify(remaining) : null, now, hash);
+        if (file.is_deleted === 0) {
+          const decrement = this.db.prepare(
+            'UPDATE tags SET usage_count = MAX(0, usage_count - 1), updated_at = ? WHERE name = ?'
+          );
+          for (const name of removed) {
+            decrement.run(now, name);
+          }
+        }
+      }
+      nextTags = remaining;
+    });
+    transaction();
+
+    return { tags: nextTags };
+  }
+
+  /**
+   * Move a file into the recycle bin. The blob and thumbnails are retained so
+   * the file can be restored or previewed.
    */
   softDeleteFile(hash: string): boolean {
     const now = new Date().toISOString();
@@ -597,24 +982,42 @@ export class SQLiteDatabase {
       UPDATE files SET is_deleted = 1, deleted_at = ?, updated_at = ? WHERE hash = ?
     `);
     const result = stmt.run(now, now, hash);
+    if (result.changes > 0) this.recomputeTagUsage();
     return result.changes > 0;
   }
 
   /**
-   * Hard delete file (remove record)
+   * Permanently delete a file row and its tasks.
    */
   hardDeleteFile(hash: string): boolean {
-    // First remove any tasks for this hash
-    const taskStmt = this.db.prepare('DELETE FROM tasks WHERE target_hash = ?');
-    taskStmt.run(hash);
-
-    const stmt = this.db.prepare('DELETE FROM files WHERE hash = ?');
-    const result = stmt.run(hash);
-    return result.changes > 0;
+    return this.hardDeleteFiles([hash]) > 0;
   }
 
   /**
-   * Restore soft-deleted file
+   * Permanently delete multiple file rows and their tasks in one transaction.
+   */
+  hardDeleteFiles(hashes: string[]): number {
+    if (hashes.length === 0) return 0;
+
+    const deleteTasks = this.db.prepare('DELETE FROM tasks WHERE target_hash = ?');
+    const deleteFile = this.db.prepare('DELETE FROM files WHERE hash = ?');
+
+    const remove = this.db.transaction((items: string[]) => {
+      let removed = 0;
+      for (const hash of items) {
+        deleteTasks.run(hash);
+        removed += deleteFile.run(hash).changes;
+      }
+      return removed;
+    });
+
+    const removed = remove(hashes);
+    if (removed > 0) this.recomputeTagUsage();
+    return removed;
+  }
+
+  /**
+   * Restore a file from the recycle bin.
    */
   restoreFile(hash: string): boolean {
     const now = new Date().toISOString();
@@ -622,75 +1025,240 @@ export class SQLiteDatabase {
       UPDATE files SET is_deleted = 0, deleted_at = NULL, updated_at = ? WHERE hash = ?
     `);
     const result = stmt.run(now, hash);
+    if (result.changes > 0) this.recomputeTagUsage();
     return result.changes > 0;
   }
 
   /**
-   * List files with pagination and filters
+   * Restore every file in the recycle bin.
    */
-  listFiles(query: ListQuery): { items: FileMetadata[]; total: number; hasMore: boolean } {
-    const limit = query.limit ?? 50;
-    const offset = query.offset ?? 0;
-    const orderBy = query.orderBy ?? 'captured_at';
-    const order = query.order ?? 'desc';
-    const includeDeleted = query.includeDeleted ?? false;
+  restoreAllFiles(): number {
+    const now = new Date().toISOString();
+    const stmt = this.db.prepare(`
+      UPDATE files SET is_deleted = 0, deleted_at = NULL, updated_at = ? WHERE is_deleted = 1
+    `);
+    const result = stmt.run(now);
+    if (result.changes > 0) this.recomputeTagUsage();
+    return result.changes;
+  }
 
-    let whereClause = includeDeleted ? '' : 'WHERE is_deleted = 0';
-    const whereValues: unknown[] = [];
+  /**
+   * List every file currently in the recycle bin.
+   */
+  listTrashedFiles(): FileMetadata[] {
+    return this.db
+      .prepare(`SELECT * FROM files WHERE is_deleted = 1 ORDER BY deleted_at DESC`)
+      .all() as FileMetadata[];
+  }
+
+  /**
+   * List files with pagination, text search, structured filters, and sorting.
+   */
+  listFiles(query: ListQuery): ListFilesResult {
+    const status = query.status ?? 'active';
+    const orderBy = query.orderBy ?? (status === 'trashed' ? 'deleted_at' : 'captured_at');
+    const sortExpr = SORT_EXPRESSIONS[orderBy];
+    if (!sortExpr) {
+      throw new Error(`Invalid orderBy: ${String(orderBy)}`);
+    }
+    const order = query.order === 'asc' ? 'asc' : 'desc';
+    const direction = order === 'desc' ? 'DESC' : 'ASC';
+
+    const rawLimit = query.limit ?? 50;
+    if (!Number.isFinite(rawLimit)) {
+      throw new Error('Invalid limit');
+    }
+    const limit = Math.min(MAX_PAGE_SIZE, Math.max(1, Math.floor(rawLimit)));
+
+    const rawOffset = query.offset ?? 0;
+    if (!Number.isFinite(rawOffset) || rawOffset < 0) {
+      throw new Error('Invalid offset');
+    }
+    const offset = Math.floor(rawOffset);
+
+    const conditions: string[] = [];
+    const baseValues: unknown[] = [];
+
+    if (status === 'active') {
+      conditions.push('is_deleted = 0');
+    } else if (status === 'trashed') {
+      conditions.push('is_deleted = 1');
+    }
 
     if (query.category) {
-      whereClause = includeDeleted ? 'WHERE category = ?' : 'WHERE is_deleted = 0 AND category = ?';
-      whereValues.push(query.category);
-    } else if (query.tag) {
-      // Tag filtering - unified logic
-      const tag = query.tag;
-      if (tag === 'all') {
-        // No filter needed
-      } else if (tag === 'uncategorized') {
-        // Files without any user tags (tags is null/empty, or no tags without "system:" prefix)
-        whereClause = includeDeleted
-          ? `WHERE (tags IS NULL OR tags = '[]' OR NOT EXISTS (
-              SELECT 1 FROM json_each(tags) WHERE json_each.value NOT LIKE 'system:%'
-            ))`
-          : `WHERE is_deleted = 0 AND (tags IS NULL OR tags = '[]' OR NOT EXISTS (
-              SELECT 1 FROM json_each(tags) WHERE json_each.value NOT LIKE 'system:%'
-            ))`;
-      } else {
-        // Filter by user tag or system tag (check both tag name and system:tag name)
-        whereClause = includeDeleted
-          ? `WHERE (
-              EXISTS (SELECT 1 FROM json_each(tags) WHERE json_each.value = ?)
-              OR EXISTS (SELECT 1 FROM json_each(tags) WHERE json_each.value = ?)
-            )`
-          : `WHERE is_deleted = 0 AND (
-              EXISTS (SELECT 1 FROM json_each(tags) WHERE json_each.value = ?)
-              OR EXISTS (SELECT 1 FROM json_each(tags) WHERE json_each.value = ?)
-            )`;
-        whereValues.push(tag);
-        whereValues.push(`system:${tag}`);
+      conditions.push('category = ?');
+      baseValues.push(query.category);
+    }
+
+    if (query.tag) {
+      const tagCondition = this.buildSingleTagCondition(query.tag);
+      if (tagCondition.sql) {
+        conditions.push(tagCondition.sql);
+        baseValues.push(...tagCondition.values);
       }
     }
 
-    // Count total
-    const countStmt = this.db.prepare(`
-      SELECT COUNT(*) as count FROM files ${whereClause}
-    `);
-    const countResult = countStmt.get(...whereValues) as { count: number };
-    const total = countResult.count;
+    if (query.tags && query.tags.length > 0) {
+      const tagConditions = query.tags
+        .map((tag) => this.buildSingleTagCondition(tag))
+        .filter((condition) => condition.sql);
+      if (tagConditions.length > 0) {
+        const joiner = query.tagMode === 'and' ? ' AND ' : ' OR ';
+        conditions.push(`(${tagConditions.map((condition) => condition.sql).join(joiner)})`);
+        for (const condition of tagConditions) {
+          baseValues.push(...condition.values);
+        }
+      }
+    }
 
-    // Query items
-    const itemsStmt = this.db.prepare(`
-      SELECT * FROM files ${whereClause}
-      ORDER BY ${orderBy} ${order === 'desc' ? 'DESC' : 'ASC'}
-      LIMIT ? OFFSET ?
-    `);
-    const items = itemsStmt.all(...whereValues, limit, offset) as FileMetadata[];
+    if (query.mimeType === 'image' || query.mimeType === 'video') {
+      conditions.push('mime_type LIKE ?');
+      baseValues.push(`${query.mimeType}/%`);
+    }
 
+    if (query.sourceDomain) {
+      conditions.push('source_domain = ?');
+      baseValues.push(query.sourceDomain.toLowerCase());
+    }
+
+    if (query.capturedFrom) {
+      conditions.push('captured_at >= ?');
+      baseValues.push(query.capturedFrom);
+    }
+
+    if (query.capturedTo) {
+      conditions.push('captured_at <= ?');
+      baseValues.push(query.capturedTo);
+    }
+
+    if (query.starred === true) {
+      conditions.push('is_starred = 1');
+    }
+
+    if (query.classifyStatus) {
+      if (query.classifyStatus === 'pending') {
+        conditions.push(`(
+          NOT EXISTS (SELECT 1 FROM tasks t WHERE t.target_hash = files.hash AND t.task_type = 'classify')
+          OR EXISTS (SELECT 1 FROM tasks t WHERE t.target_hash = files.hash AND t.task_type = 'classify' AND t.status = 'pending')
+        )`);
+      } else {
+        conditions.push(
+          `EXISTS (SELECT 1 FROM tasks t WHERE t.target_hash = files.hash AND t.task_type = 'classify' AND t.status = ?)`
+        );
+        baseValues.push(query.classifyStatus);
+      }
+    }
+
+    const textQuery = query.q?.trim();
+    if (textQuery) {
+      const hasCjk = /[㐀-鿿]/.test(textQuery);
+      if (this.ftsAvailable && textQuery.length >= 3 && !hasCjk) {
+        conditions.push('hash IN (SELECT hash FROM files_fts WHERE files_fts MATCH ?)');
+        baseValues.push(`"${textQuery.replace(/"/g, '""')}"`);
+      } else {
+        conditions.push(`(
+          COALESCE(ai_filename, '') || ' ' ||
+          COALESCE(tags, '') || ' ' ||
+          COALESCE(source_url, '') || ' ' ||
+          COALESCE(user_notes, '')
+        ) LIKE ? ESCAPE '\\'`);
+        baseValues.push(`%${escapeLikePattern(textQuery)}%`);
+      }
+    }
+
+    // Count ignores the cursor so the caller always sees the full result size.
+    const baseWhere = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const countStmt = this.db.prepare(`SELECT COUNT(*) as count FROM files ${baseWhere}`);
+    const total = (countStmt.get(...baseValues) as { count: number }).count;
+
+    let cursor: CursorPayload | null = null;
+    if (query.cursor) {
+      const decoded = decodeCursor(query.cursor);
+      if (decoded && decoded.sort === orderBy && decoded.order === order) {
+        cursor = decoded;
+      }
+    }
+
+    const pageConditions = [...conditions];
+    const pageValues = [...baseValues];
+    if (cursor) {
+      const compare = order === 'desc' ? '<' : '>';
+      pageConditions.push(`(${sortExpr} ${compare} ? OR (${sortExpr} = ? AND hash ${compare} ?))`);
+      pageValues.push(cursor.value, cursor.value, cursor.hash);
+    }
+
+    const whereClause = pageConditions.length > 0 ? `WHERE ${pageConditions.join(' AND ')}` : '';
+    const pageLimit = cursor ? limit + 1 : limit;
+    const pageSql = `SELECT * FROM files ${whereClause} ORDER BY ${sortExpr} ${direction}, hash ${direction} LIMIT ?${
+      cursor ? '' : ' OFFSET ?'
+    }`;
+    const pageParams = cursor ? [...pageValues, pageLimit] : [...pageValues, pageLimit, offset];
+
+    const rows = this.db.prepare(pageSql).all(...pageParams) as FileMetadata[];
+
+    const hasMore = cursor ? rows.length > limit : offset + rows.length < total;
+    const items = cursor ? rows.slice(0, limit) : rows;
+    const nextCursor =
+      hasMore && items.length > 0
+        ? encodeCursor({
+            v: 1,
+            sort: orderBy,
+            order,
+            value: cursorValueOf(items[items.length - 1], orderBy),
+            hash: items[items.length - 1].hash,
+          })
+        : undefined;
+
+    return { items, total, hasMore, nextCursor };
+  }
+
+  /**
+   * Build the WHERE fragment for one tag, handling legacy special names and
+   * both plain and `system:` storage forms.
+   */
+  private buildSingleTagCondition(tag: string): { sql: string; values: unknown[] } {
+    const normalized = tag.trim();
+    if (!normalized || normalized === 'all') {
+      return { sql: '', values: [] };
+    }
+    if (normalized === 'uncategorized') {
+      return {
+        sql: `(tags IS NULL OR tags = '[]' OR NOT EXISTS (
+          SELECT 1 FROM json_each(tags) WHERE json_each.value NOT LIKE 'system:%'
+        ))`,
+        values: [],
+      };
+    }
+    if (normalized === 'image' || normalized === 'video') {
+      return { sql: 'mime_type LIKE ?', values: [`${normalized}/%`] };
+    }
+    if (normalized === 'starred') {
+      return { sql: 'is_starred = 1', values: [] };
+    }
     return {
-      items,
-      total,
-      hasMore: offset + limit < total,
+      sql: `(
+        EXISTS (SELECT 1 FROM json_each(tags) WHERE json_each.value = ?)
+        OR EXISTS (SELECT 1 FROM json_each(tags) WHERE json_each.value = ?)
+      )`,
+      values: [normalized, `system:${normalized}`],
     };
+  }
+
+  /**
+   * Distinct source domains for the library filter, ordered by file count.
+   */
+  getSourceDomains(limit: number = 100): SourceDomainCount[] {
+    const bounded = Math.min(500, Math.max(1, Math.floor(limit)));
+    return this.db
+      .prepare(
+        `SELECT source_domain AS domain, COUNT(*) AS count
+         FROM files
+         WHERE is_deleted = 0 AND source_domain IS NOT NULL AND source_domain != ''
+         GROUP BY source_domain
+         ORDER BY count DESC, source_domain ASC
+         LIMIT ?`
+      )
+      .all(bounded) as SourceDomainCount[];
   }
 
   /**
@@ -807,12 +1375,21 @@ export class SQLiteDatabase {
       byCategory[row.category] = row.count;
     }
 
+    // Trash totals
+    const trashStmt = this.db.prepare(`
+      SELECT COUNT(*) as count, SUM(size) as total_size
+      FROM files WHERE is_deleted = 1
+    `);
+    const trashResult = trashStmt.get() as { count: number; total_size: number | null };
+
     return {
       totalFiles: totalResult.count,
       totalSize: totalResult.total_size ?? 0,
       images: imagesResult.count,
       videos: videosResult.count,
       byCategory,
+      trashFiles: trashResult.count,
+      trashSize: trashResult.total_size ?? 0,
     };
   }
 
@@ -880,6 +1457,9 @@ export class SQLiteDatabase {
     const selectStmt = this.db.prepare(`
       SELECT * FROM tasks
       WHERE status = 'pending' AND (next_run_at IS NULL OR next_run_at <= ?) ${typeFilter}
+        AND EXISTS (
+          SELECT 1 FROM files f WHERE f.hash = tasks.target_hash AND f.is_deleted = 0
+        )
       ORDER BY priority DESC, created_at ASC
       LIMIT ?
     `);
@@ -1168,6 +1748,9 @@ export class SQLiteDatabase {
     const row = this.db
       .prepare(
         `SELECT * FROM tasks WHERE task_type = 'classify' AND status = 'pending'
+         AND EXISTS (
+           SELECT 1 FROM files f WHERE f.hash = tasks.target_hash AND f.is_deleted = 0
+         )
          ORDER BY priority DESC, created_at ASC LIMIT 1`
       )
       .get() as TaskItem | undefined;
@@ -1193,7 +1776,11 @@ export class SQLiteDatabase {
    */
   getQueueStatus(): QueueStatus {
     const stmt = this.db.prepare(`
-      SELECT task_type, status, COUNT(*) as count FROM tasks GROUP BY task_type, status
+      SELECT task_type, status, COUNT(*) as count FROM tasks
+      WHERE NOT EXISTS (
+        SELECT 1 FROM files f WHERE f.hash = tasks.target_hash AND f.is_deleted = 1
+      )
+      GROUP BY task_type, status
     `);
     const rows = stmt.all() as { task_type: string; status: string; count: number }[];
 
@@ -1231,6 +1818,9 @@ export class SQLiteDatabase {
     const rows = this.db
       .prepare(
         `SELECT * FROM tasks WHERE task_type = 'classify' AND status = 'pending'
+         AND EXISTS (
+           SELECT 1 FROM files f WHERE f.hash = tasks.target_hash AND f.is_deleted = 0
+         )
          ORDER BY priority DESC, created_at ASC LIMIT ?`
       )
       .all(limit) as TaskItem[];

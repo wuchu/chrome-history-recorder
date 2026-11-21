@@ -37,12 +37,51 @@ export interface AppHandlerDependencies {
 }
 
 export function createAppExternalHandler(dependencies: AppHandlerDependencies): ExternalHandler {
-  const { api, ai, store, scheduler, workspace, mediaArchive } = dependencies;
+  const { api, ai, store, scheduler, events, workspace, mediaArchive } = dependencies;
 
   return async (method: string, params: Record<string, unknown>) => {
     switch (method) {
       case 'getConfig':
         return store.get();
+
+      case 'trashFile': {
+        const hash = typeof params.hash === 'string' ? params.hash : '';
+        const result = api.trashFile({ hash });
+        if (result.success) {
+          events.emit('file:trashed', { hash, deletedAt: new Date().toISOString() });
+        }
+        return result;
+      }
+
+      case 'restoreFile': {
+        const hash = typeof params.hash === 'string' ? params.hash : '';
+        const result = await api.restoreFile({ hash });
+        if (result.success) {
+          events.emit('file:restored', { hash, restoredAt: new Date().toISOString() });
+        }
+        return result;
+      }
+
+      case 'restoreAll': {
+        const result = await api.restoreAll();
+        events.emit('trash:restored-all', { count: result.count });
+        return result;
+      }
+
+      case 'purgeFile': {
+        const hash = typeof params.hash === 'string' ? params.hash : '';
+        const result = await api.purgeFile({ hash });
+        if (result.success) {
+          events.emit('file:purged', { hash });
+        }
+        return result;
+      }
+
+      case 'emptyTrash': {
+        const result = await api.emptyTrash();
+        events.emit('trash:emptied', { count: result.count });
+        return result;
+      }
 
       case 'getWorkspaceConfig':
         return workspace.getInfo();

@@ -480,8 +480,16 @@ class MediaArchiveWorker {
         const hash = task.target_hash;
         this.emitEvent('task:started', { task_type: exports.ARCHIVE_TASK_TYPE, hash });
         const metadata = this.api.getMetadata(hash);
-        if (!metadata || metadata.is_deleted === 1) {
+        if (!metadata) {
             this.completeTask(hash);
+            return;
+        }
+        if (metadata.is_deleted === 1) {
+            // The file was moved to the trash after this task was claimed. Release
+            // it back to pending without consuming an attempt; the claim filter
+            // suspends it until the file is restored.
+            this.api.updateTaskStatus({ taskType: exports.ARCHIVE_TASK_TYPE, hash, status: 'pending' });
+            this.emitQueueUpdated();
             return;
         }
         const source = this.api.getBlobPath(hash);
@@ -543,6 +551,16 @@ class MediaArchiveWorker {
                 throw new Error(`复制后大小不一致（期望 ${source.size}，实际 ${copied.size}）`);
             }
             await fs_1.default.promises.rename(tempPath, destination);
+            // A permanent delete may have completed while the copy was in flight.
+            // Do not resurrect the archived copy in that case.
+            if (!this.api.getMetadata(metadata.hash)) {
+                try {
+                    fs_1.default.unlinkSync(destination);
+                }
+                catch {
+                    // Best-effort cleanup.
+                }
+            }
         }
         catch (error) {
             try {
@@ -554,6 +572,37 @@ class MediaArchiveWorker {
                 // Ignore cleanup errors.
             }
             throw error;
+        }
+    }
+    /**
+     * Remove the archived copy of a permanently deleted source file.
+     *
+     * Best-effort: a disabled archive, unavailable target, or missing copy is
+     * not an error and must not block local deletion.
+     */
+    deleteArchived(hash, ext) {
+        const config = this.store.get();
+        if (!config.mediaArchiveEnabled || !config.mediaArchiveTargetPath) {
+            return;
+        }
+        let target;
+        try {
+            target = validateMediaArchiveTarget(config.mediaArchiveTargetPath, {
+                workspacePath: this.workspacePath,
+            });
+        }
+        catch (error) {
+            this.logger.warn('[MediaArchive] Cannot remove archived copy:', error instanceof Error ? error.message : String(error));
+            return;
+        }
+        const destination = path_1.default.join(target, `${hash}.${ext}`);
+        try {
+            fs_1.default.unlinkSync(destination);
+        }
+        catch (error) {
+            if (error.code !== 'ENOENT') {
+                this.logger.warn(`[MediaArchive] Failed to remove archived copy ${destination}:`, error instanceof Error ? error.message : String(error));
+            }
         }
     }
     retryDelayFor(attempt) {

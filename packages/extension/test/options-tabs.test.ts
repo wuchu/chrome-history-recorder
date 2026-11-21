@@ -9,6 +9,7 @@ describe('Options console tabs', () => {
   it('reads supported tabs from a hash', () => {
     expect(readConsoleTabFromHash('#overview')).toBe('overview');
     expect(readConsoleTabFromHash('#library')).toBe('library');
+    expect(readConsoleTabFromHash('#trash')).toBe('trash');
     expect(readConsoleTabFromHash('#settings')).toBe('settings');
   });
 

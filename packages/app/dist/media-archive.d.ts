@@ -159,6 +159,13 @@ export declare class MediaArchiveWorker {
     private processTask;
     private completeTask;
     private copyOne;
+    /**
+     * Remove the archived copy of a permanently deleted source file.
+     *
+     * Best-effort: a disabled archive, unavailable target, or missing copy is
+     * not an error and must not block local deletion.
+     */
+    deleteArchived(hash: string, ext: string): void;
     private retryDelayFor;
     private ensureBaseline;
     private applyTargetChange;

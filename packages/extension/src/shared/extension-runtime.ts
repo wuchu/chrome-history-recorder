@@ -524,6 +524,71 @@ export interface TagCounts {
   [tag: string]: number;
 }
 
+export interface MediaListQuery {
+  category?: string;
+  tag?: string;
+  q?: string;
+  mimeType?: 'image' | 'video';
+  sourceDomain?: string;
+  capturedFrom?: string;
+  capturedTo?: string;
+  starred?: boolean;
+  classifyStatus?: TaskStatus;
+  tags?: string[];
+  tagMode?: 'and' | 'or';
+  limit?: number;
+  offset?: number;
+  cursor?: string;
+  orderBy?:
+    | 'captured_at'
+    | 'size'
+    | 'confidence'
+    | 'ai_filename'
+    | 'category'
+    | 'classified_at'
+    | 'deleted_at';
+  order?: 'asc' | 'desc';
+  status?: 'active' | 'trashed' | 'all';
+}
+
+export interface MediaListResult<T = unknown> {
+  items: T[];
+  total: number;
+  hasMore: boolean;
+  nextCursor?: string;
+}
+
+export interface SourceDomainCount {
+  domain: string;
+  count: number;
+}
+
+export async function listMediaFiles<T = unknown>(
+  query: MediaListQuery = {}
+): Promise<MediaListResult<T>> {
+  return sendRuntimeMessage<MediaListResult<T>>({ type: 'listFiles', query });
+}
+
+export async function getSourceDomains(limit = 100): Promise<SourceDomainCount[]> {
+  return sendRuntimeMessage<SourceDomainCount[]>({ type: 'getSourceDomains', limit });
+}
+
+export async function setFileStarred<T = unknown>(hash: string, starred: boolean): Promise<T> {
+  return sendRuntimeMessage<T>({ type: 'setFileStarred', hash, starred });
+}
+
+export async function updateFileNotes<T = unknown>(hash: string, notes: string): Promise<T> {
+  return sendRuntimeMessage<T>({ type: 'updateFileNotes', hash, notes });
+}
+
+export async function addFileTags(hash: string, tags: string[]): Promise<{ tags: string[] }> {
+  return sendRuntimeMessage<{ tags: string[] }>({ type: 'addFileTags', hash, tags });
+}
+
+export async function removeFileTags(hash: string, tags: string[]): Promise<{ tags: string[] }> {
+  return sendRuntimeMessage<{ tags: string[] }>({ type: 'removeFileTags', hash, tags });
+}
+
 export async function getTagCounts(): Promise<TagCounts> {
   return sendRuntimeMessage<TagCounts>({ type: 'getTagCounts' });
 }
@@ -538,4 +603,67 @@ export async function loadServiceStatus(): Promise<ServiceStatus> {
 
 export async function clearIndex(): Promise<{ success: boolean }> {
   return sendRuntimeMessage<{ success: boolean }>({ type: 'clearIndex' });
+}
+
+/**
+ * One-shot capture (right-click save / page scan).
+ */
+export type OneShotCandidateKind = 'img' | 'background' | 'poster';
+
+export interface OneShotMediaCandidate {
+  id: string;
+  kind: OneShotCandidateKind;
+  url: string;
+  pageUrl: string;
+  width?: number;
+  height?: number;
+  mimeHint?: string;
+  sizeHint?: number;
+  label?: string;
+}
+
+export interface PageScanResult {
+  candidates: OneShotMediaCandidate[];
+  totalFound: number;
+  skippedSmall: number;
+  skippedSvg: number;
+  skippedIframes: number;
+  capped: number;
+}
+
+export type OneShotErrorCode =
+  | 'fetch-failed'
+  | 'unsupported-mime'
+  | 'too-large'
+  | 'too-small'
+  | 'expired-blob'
+  | 'restricted-page'
+  | 'vfs-disconnected'
+  | 'timeout'
+  | 'decode-failed'
+  | 'unknown';
+
+export interface OneShotSaveResult {
+  candidateId: string;
+  hash?: string;
+  duplicate: boolean;
+  saved: boolean;
+  skipped?: boolean;
+  errorCode?: OneShotErrorCode;
+  error?: string;
+}
+
+export async function scanPageMedia(tabId: number): Promise<PageScanResult> {
+  return sendRuntimeMessage<PageScanResult>({ type: 'capture:scan-page', tabId });
+}
+
+export async function saveOneShotCandidate(
+  tabId: number,
+  candidate: OneShotMediaCandidate
+): Promise<OneShotSaveResult> {
+  return sendRuntimeMessage<OneShotSaveResult>({
+    type: 'capture:save-candidate',
+    tabId,
+    candidate,
+  });
 }

@@ -18,6 +18,8 @@ export interface FileMetadata {
     mime_type: string;
     size: number;
     source_url: string | null;
+    /** Normalized hostname derived from `source_url`. */
+    source_domain: string | null;
     captured_at: string;
     category: string;
     ai_filename: string | null;
@@ -27,7 +29,9 @@ export interface FileMetadata {
     model_used: string | null;
     is_starred: number;
     user_notes: string | null;
+    /** 1 = in the recycle bin (still recoverable). */
     is_deleted: number;
+    /** When the file entered the recycle bin; null for active files. */
     deleted_at: string | null;
     created_at: string;
     updated_at: string;
@@ -142,16 +146,48 @@ export interface ApplyClassificationParams {
     classifiedAt?: string;
 }
 /**
- * List query parameters
+ * Supported sort fields for media queries.
+ */
+export type MediaSortField = 'captured_at' | 'size' | 'confidence' | 'ai_filename' | 'category' | 'classified_at' | 'deleted_at';
+export type MediaTagMode = 'and' | 'or';
+/**
+ * List query parameters.
+ *
+ * `category`/`tag` are retained for compatibility. The newer fields are
+ * additive and combine with them.
  */
 export interface ListQuery {
     category?: string;
     tag?: string;
+    /** Free-text search over AI filename, tags, source URL, and notes. */
+    q?: string;
+    mimeType?: 'image' | 'video';
+    sourceDomain?: string;
+    capturedFrom?: string;
+    capturedTo?: string;
+    starred?: boolean;
+    classifyStatus?: TaskStatus;
+    /** Multi-tag selection. Combined with `tagMode`. */
+    tags?: string[];
+    tagMode?: MediaTagMode;
     limit?: number;
     offset?: number;
-    orderBy?: 'captured_at' | 'category' | 'classified_at';
+    /** Opaque keyset cursor. Mutually exclusive with `offset`. */
+    cursor?: string;
+    orderBy?: MediaSortField;
     order?: 'asc' | 'desc';
-    includeDeleted?: boolean;
+    /** Which lifecycle state to include; defaults to active files only. */
+    status?: 'active' | 'trashed' | 'all';
+}
+export interface ListFilesResult {
+    items: FileMetadata[];
+    total: number;
+    hasMore: boolean;
+    nextCursor?: string;
+}
+export interface SourceDomainCount {
+    domain: string;
+    count: number;
 }
 /**
  * Query for files indexed after a `(created_at, hash)` cursor.
@@ -183,6 +219,8 @@ export interface StatsResult {
     images: number;
     videos: number;
     byCategory: Record<string, number>;
+    trashFiles: number;
+    trashSize: number;
 }
 /**
  * SQLiteDatabase class
@@ -190,6 +228,7 @@ export interface StatsResult {
 export declare class SQLiteDatabase {
     private db;
     private dbPath;
+    private ftsAvailable;
     constructor(workspacePath: string);
     /**
      * Prefer WAL, but tolerate volumes where WAL is unavailable. A database
@@ -201,6 +240,19 @@ export declare class SQLiteDatabase {
      * Initialize database schema
      */
     private initializeSchema;
+    /**
+     * Add `source_domain` to pre-existing databases and backfill hostnames.
+     */
+    private migrateSourceDomainColumn;
+    /**
+     * Create and backfill the FTS5 search index when the bundled SQLite
+     * supports it. A missing FTS5 build degrades to LIKE substring matching.
+     */
+    private migrateSearchIndex;
+    /**
+     * Whether FTS5 tokenization is available for text queries.
+     */
+    isSearchIndexAvailable(): boolean;
     /**
      * Seed the vocabulary from tags already present on files (legacy user tags).
      * Runs once, when the vocabulary is still empty.
@@ -214,7 +266,9 @@ export declare class SQLiteDatabase {
     /**
      * Insert a new file record
      */
-    insertFile(metadata: Omit<FileMetadata, 'created_at' | 'updated_at'>): void;
+    insertFile(metadata: Omit<FileMetadata, 'created_at' | 'updated_at' | 'source_domain'> & {
+        source_domain?: string | null;
+    }): void;
     /**
      * Get file metadata by hash
      */
@@ -228,25 +282,63 @@ export declare class SQLiteDatabase {
      */
     updateMetadata(hash: string, updates: MetadataUpdate): boolean;
     /**
-     * Soft delete file
+     * Set the star state while preserving every other tag.
+     */
+    setFileStarred(hash: string, starred: boolean): FileMetadata | null;
+    /**
+     * Update user notes. The search trigger refreshes the FTS row.
+     */
+    updateFileNotes(hash: string, notes: string): FileMetadata | null;
+    /**
+     * Add user tags to a file, creating vocabulary entries as needed.
+     */
+    addFileTags(hash: string, names: string[]): {
+        tags: string[];
+    };
+    /**
+     * Remove user tags from a file. System tags are never removed.
+     */
+    removeFileTags(hash: string, names: string[]): {
+        tags: string[];
+    };
+    /**
+     * Move a file into the recycle bin. The blob and thumbnails are retained so
+     * the file can be restored or previewed.
      */
     softDeleteFile(hash: string): boolean;
     /**
-     * Hard delete file (remove record)
+     * Permanently delete a file row and its tasks.
      */
     hardDeleteFile(hash: string): boolean;
     /**
-     * Restore soft-deleted file
+     * Permanently delete multiple file rows and their tasks in one transaction.
+     */
+    hardDeleteFiles(hashes: string[]): number;
+    /**
+     * Restore a file from the recycle bin.
      */
     restoreFile(hash: string): boolean;
     /**
-     * List files with pagination and filters
+     * Restore every file in the recycle bin.
      */
-    listFiles(query: ListQuery): {
-        items: FileMetadata[];
-        total: number;
-        hasMore: boolean;
-    };
+    restoreAllFiles(): number;
+    /**
+     * List every file currently in the recycle bin.
+     */
+    listTrashedFiles(): FileMetadata[];
+    /**
+     * List files with pagination, text search, structured filters, and sorting.
+     */
+    listFiles(query: ListQuery): ListFilesResult;
+    /**
+     * Build the WHERE fragment for one tag, handling legacy special names and
+     * both plain and `system:` storage forms.
+     */
+    private buildSingleTagCondition;
+    /**
+     * Distinct source domains for the library filter, ordered by file count.
+     */
+    getSourceDomains(limit?: number): SourceDomainCount[];
     /**
      * List files strictly after a keyset cursor, ordered by `(created_at, hash)`.
      * Used by incremental consumers such as the media archive worker.

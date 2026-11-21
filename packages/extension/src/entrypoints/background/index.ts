@@ -20,7 +20,18 @@ import {
   type VideoDownloadResult,
 } from '../../background/video-download';
 import { initCaptureSessionStore, getCaptureSessionStore } from '../../background/capture-session';
-import type { SessionAiStatus } from '../../shared/extension-runtime';
+import {
+  ONE_SHOT_MENU_ID,
+  handleOneShotContextMenuClick,
+  registerOneShotContextMenu,
+} from '../../background/one-shot-context-menu';
+import {
+  saveOneShotCandidate,
+  scanTabForMedia,
+  type OneShotSaveDependencies,
+} from '../../background/one-shot-capture';
+import { defaultOneShotFeedback, reportOneShotResult } from '../../background/one-shot-feedback';
+import type { OneShotMediaCandidate, SessionAiStatus } from '../../shared/extension-runtime';
 import { DEFAULT_EXTENSION_CONFIG, type ExtensionConfig } from '../../shared/extension-runtime';
 
 export default defineBackground(() => {
@@ -32,6 +43,35 @@ export default defineBackground(() => {
       console.warn('[Media Extension] Failed to configure side panel behavior:', error);
     });
   }
+
+  // One-shot image save from the page context menu. This path never attaches
+  // the debugger or creates a capture session.
+  registerOneShotContextMenu();
+  chrome.runtime.onInstalled.addListener(() => registerOneShotContextMenu());
+  chrome.runtime.onStartup.addListener(() => registerOneShotContextMenu());
+  chrome.contextMenus.onClicked.addListener((info, tab) => {
+    if (info.menuItemId !== ONE_SHOT_MENU_ID) return;
+    void (async () => {
+      try {
+        await ensureInitialized();
+        handleOneShotContextMenuClick(info, tab, {
+          ...getOneShotSaveDependencies(),
+          report: (result) => reportOneShotResult(result, defaultOneShotFeedback),
+        });
+      } catch (error) {
+        reportOneShotResult(
+          {
+            candidateId: 'context-menu',
+            saved: false,
+            duplicate: false,
+            errorCode: 'unknown',
+            error: error instanceof Error ? error.message : 'Context-menu save failed',
+          },
+          defaultOneShotFeedback
+        );
+      }
+    })();
+  });
 
   let mirroredConfig: ExtensionConfig = {
     ...DEFAULT_EXTENSION_CONFIG,
@@ -288,6 +328,12 @@ export default defineBackground(() => {
     }
   }
 
+  function getOneShotSaveDependencies(): OneShotSaveDependencies {
+    return {
+      saveMedia: (data) => getFileManager().handleCaptureMedia(data),
+    };
+  }
+
   function ensureInitialized(): Promise<void> {
     if (!initializationPromise) {
       initializationPromise = initialize();
@@ -316,6 +362,28 @@ export default defineBackground(() => {
             break;
           }
 
+          case 'capture:scan-page': {
+            if (typeof message.tabId !== 'number') {
+              throw new Error('No active tab to scan');
+            }
+            const scanResult = await scanTabForMedia(message.tabId);
+            sendResponse({ success: true, data: scanResult });
+            break;
+          }
+
+          case 'capture:save-candidate': {
+            if (typeof message.tabId !== 'number' || !message.candidate) {
+              throw new Error('Invalid one-shot save request');
+            }
+            const saveResult = await saveOneShotCandidate(
+              message.tabId,
+              message.candidate as OneShotMediaCandidate,
+              getOneShotSaveDependencies()
+            );
+            sendResponse({ success: true, data: saveResult });
+            break;
+          }
+
           case 'listFiles':
           case 'list-files': {
             const listQuery = message.query ?? {
@@ -323,15 +391,82 @@ export default defineBackground(() => {
               offset: message.offset,
               category: message.category,
               tag: message.tag,
+              q: message.q,
+              mimeType: message.mimeType,
+              sourceDomain: message.sourceDomain,
+              capturedFrom: message.capturedFrom,
+              capturedTo: message.capturedTo,
+              starred: message.starred,
+              classifyStatus: message.classifyStatus,
+              tags: message.tags,
+              tagMode: message.tagMode,
+              cursor: message.cursor,
+              orderBy: message.orderBy,
+              order: message.order,
+              status: message.status,
             };
             const listResult = await fileManager.handleListFiles(listQuery);
             sendResponse({ success: true, data: listResult, ...listResult });
             break;
           }
 
-          case 'deleteFile': {
-            const deleteResult = await fileManager.handleDeleteFile(message.hash, message.hard);
-            sendResponse({ success: true, data: deleteResult });
+          case 'getSourceDomains': {
+            const domains = await vfsWsClient.getSourceDomains(message.limit);
+            sendResponse({ success: true, data: domains });
+            break;
+          }
+
+          case 'setFileStarred': {
+            const updated = await vfsWsClient.setFileStarred(message.hash, message.starred);
+            sendResponse({ success: true, data: updated });
+            break;
+          }
+
+          case 'updateFileNotes': {
+            const updated = await vfsWsClient.updateFileNotes(message.hash, message.notes);
+            sendResponse({ success: true, data: updated });
+            break;
+          }
+
+          case 'addFileTags': {
+            const result = await vfsWsClient.addFileTags(message.hash, message.tags ?? []);
+            sendResponse({ success: true, data: result });
+            break;
+          }
+
+          case 'removeFileTags': {
+            const result = await vfsWsClient.removeFileTags(message.hash, message.tags ?? []);
+            sendResponse({ success: true, data: result });
+            break;
+          }
+
+          case 'trashFile': {
+            const result = await fileManager.handleTrashFile(message.hash);
+            sendResponse({ success: true, data: result });
+            break;
+          }
+
+          case 'restoreFile': {
+            const result = await fileManager.handleRestoreFile(message.hash);
+            sendResponse({ success: true, data: result });
+            break;
+          }
+
+          case 'restoreAll': {
+            const result = await fileManager.handleRestoreAll();
+            sendResponse({ ...result, data: result });
+            break;
+          }
+
+          case 'purgeFile': {
+            const result = await fileManager.handlePurgeFile(message.hash);
+            sendResponse({ success: true, data: result });
+            break;
+          }
+
+          case 'emptyTrash': {
+            const result = await fileManager.handleEmptyTrash();
+            sendResponse({ ...result, data: result });
             break;
           }
 

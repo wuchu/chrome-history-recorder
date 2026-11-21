@@ -95,15 +95,42 @@ async function dispatchMethod(
     case 'getFile':
       return api.getFile(params.hash as string);
 
-    case 'deleteFile':
-      return api.deleteFile(params as Parameters<typeof api.deleteFile>[0]);
+    case 'trashFile':
+      return api.trashFile(params as Parameters<typeof api.trashFile>[0]);
+
+    case 'restoreFile':
+      return api.restoreFile(params as Parameters<typeof api.restoreFile>[0]);
+
+    case 'restoreAll':
+      return api.restoreAll();
+
+    case 'purgeFile':
+      return api.purgeFile(params as Parameters<typeof api.purgeFile>[0]);
+
+    case 'emptyTrash':
+      return api.emptyTrash();
 
     case 'listFiles':
       return api.listFiles(params as Parameters<typeof api.listFiles>[0]);
 
+    case 'getSourceDomains':
+      return api.getSourceDomains(params as Parameters<typeof api.getSourceDomains>[0]);
+
     // Metadata operations
     case 'updateMetadata':
       return api.updateMetadata(params as Parameters<typeof api.updateMetadata>[0]);
+
+    case 'setFileStarred':
+      return api.setFileStarred(params as Parameters<typeof api.setFileStarred>[0]);
+
+    case 'updateFileNotes':
+      return api.updateFileNotes(params as Parameters<typeof api.updateFileNotes>[0]);
+
+    case 'addFileTags':
+      return api.addFileTags(params as Parameters<typeof api.addFileTags>[0]);
+
+    case 'removeFileTags':
+      return api.removeFileTags(params as Parameters<typeof api.removeFileTags>[0]);
 
     case 'getMetadata':
       return api.getMetadata(params.hash as string);

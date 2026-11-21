@@ -93,11 +93,12 @@ The Media Library SHALL provide a media detail view for a selected item.
 - **THEN** the Media Library SHALL return to the grid without losing the current scroll position
 
 ### Requirement: Media management actions
-The Media Library SHALL allow users to delete media and requeue AI work for a single item.
+The Media Library SHALL allow users to delete media into the trash and requeue AI work for a single item.
 
 #### Scenario: Delete from detail view
 - **WHEN** the user deletes the item shown in the detail view and confirms
-- **THEN** the Media Library SHALL send a `deleteFile` message to the Background
+- **THEN** the Media Library SHALL send a `trashFile` message to the Background
+- **AND** the confirmation SHALL state that the item moves to the trash and can be restored
 - **AND** upon success it SHALL close the detail view and remove the item from the grid
 
 #### Scenario: Requeue classification
@@ -111,7 +112,7 @@ The Media Library SHALL allow users to delete media and requeue AI work for a si
 - **AND** it SHALL show an error message if the requeue fails
 
 ### Requirement: Grid item quick delete
-The Media Library SHALL provide a delete action on each media grid item.
+The Media Library SHALL provide a trash action on each media grid item.
 
 #### Scenario: Show delete action on hover
 - **WHEN** the user hovers over a media grid item
@@ -120,7 +121,7 @@ The Media Library SHALL provide a delete action on each media grid item.
 #### Scenario: Delete without opening detail
 - **WHEN** the user clicks the grid item's delete button
 - **THEN** the media detail view SHALL NOT open
-- **AND** the Media Library SHALL ask for confirmation
+- **AND** the Media Library SHALL ask for confirmation that the item moves to the trash
 
 #### Scenario: Remove deleted item without scroll jump
 - **WHEN** the user confirms deletion from the grid
@@ -139,11 +140,16 @@ The Media Library SHALL update from Background events without requiring a full r
 - **WHEN** the Background relays a classification, rename, or task completion event for a visible item
 - **THEN** the Media Library SHALL update that item's tags or display filename without reloading the list
 
-#### Scenario: Remove deleted media
-- **WHEN** the Background relays a `file:deleted` event
+#### Scenario: Remove trashed media
+- **WHEN** the Background relays a `file:trashed` event
 - **THEN** the Media Library SHALL remove the item from the grid
 - **AND** it SHALL close the detail view if it was showing that item
 - **AND** the scroll position SHALL remain stable
+
+#### Scenario: Return restored media
+- **WHEN** the Background relays a `file:restored` event
+- **THEN** the Media Library SHALL make the restored item visible again if it matches the active filter
+- **AND** it SHALL NOT require a full page reload
 
 ### Requirement: Library is not a capture surface
 The Media Library SHALL manage captured media only and SHALL NOT control capture sessions.
@@ -152,3 +158,176 @@ The Media Library SHALL manage captured media only and SHALL NOT control capture
 - **WHEN** the Media Library tab renders
 - **THEN** it SHALL NOT show a capture start or stop action
 - **AND** it SHALL NOT show the active session live feed or event log
+
+### Requirement: Media library search and structured filters
+
+The Media Library SHALL let users narrow the global library with free-text search and structured filters.
+
+#### Scenario: Free-text search
+- **WHEN** the user enters a search term
+- **THEN** the Media Library SHALL request files whose AI filename, tags, source URL, or user notes match the term
+- **AND** the grid SHALL show only matching files
+
+#### Scenario: Type filter
+- **WHEN** the user selects an image or video type filter
+- **THEN** the Media Library SHALL show only files of that MIME family
+
+#### Scenario: Source site filter
+- **WHEN** the user selects a source site
+- **THEN** the Media Library SHALL show only files captured from that source domain
+
+#### Scenario: Date range filter
+- **WHEN** the user selects a captured-date range
+- **THEN** the Media Library SHALL show only files captured inside that range
+
+#### Scenario: Classification status filter
+- **WHEN** the user selects a classification status
+- **THEN** the Media Library SHALL show only files with that classify/rename task state
+
+#### Scenario: Starred filter
+- **WHEN** the user enables the starred filter
+- **THEN** the Media Library SHALL show only starred files
+
+#### Scenario: Combine filters
+- **WHEN** multiple filters are active
+- **THEN** the Media Library SHALL apply them together
+- **AND** it SHALL reset pagination to the first page
+
+#### Scenario: Clear filters
+- **WHEN** the user clears the search and filters
+- **THEN** the Media Library SHALL return to the unfiltered library
+
+#### Scenario: Persist the view
+- **WHEN** the user leaves the Media Library tab and returns
+- **THEN** the search, filters, sort, and active tag selection SHALL be restored for that Options page session
+
+### Requirement: Media library sort control
+
+The Media Library SHALL let users choose the ordering of the result set.
+
+#### Scenario: Sort options
+- **WHEN** the user opens the sort control
+- **THEN** the Media Library SHALL offer newest first, oldest first, largest first, smallest first, highest confidence first, and AI filename A–Z
+
+#### Scenario: Sort changes the query
+- **WHEN** the user selects a sort
+- **THEN** the Media Library SHALL request the filtered result set in that order
+- **AND** it SHALL reset pagination to the first page
+
+### Requirement: Multi-select and batch actions
+
+The Media Library SHALL support selecting multiple visible media items and acting on the selection.
+
+#### Scenario: Enter selection mode
+- **WHEN** the user activates selection mode
+- **THEN** each grid item SHALL expose a selection control
+- **AND** a selection toolbar SHALL show the selected count
+
+#### Scenario: Select and clear
+- **WHEN** the user toggles an item
+- **THEN** the item SHALL be added to or removed from the selection
+- **AND** the grid SHALL show the selected state without opening the detail view
+
+#### Scenario: Select the visible page
+- **WHEN** the user chooses "select visible"
+- **THEN** every currently loaded item that matches the active filters SHALL be selected
+
+#### Scenario: Batch trash
+- **WHEN** the user confirms trashing the selection
+- **THEN** the Media Library SHALL move each selected item to the trash
+- **AND** it SHALL remove successful items from the grid
+- **AND** it SHALL report how many items failed and why
+
+#### Scenario: Batch requeue
+- **WHEN** the user chooses classify or rename for the selection
+- **THEN** the Media Library SHALL requeue that task type for each selected item
+- **AND** it SHALL report per-item failures
+
+#### Scenario: Batch export
+- **WHEN** the user chooses export for the selection
+- **THEN** the Media Library SHALL start the export flow with the selected hashes
+
+#### Scenario: Leave selection mode
+- **WHEN** the user exits selection mode
+- **THEN** the selection SHALL be cleared
+- **AND** normal item click SHALL open the detail view again
+
+### Requirement: Media detail curation actions
+
+The Media Library SHALL let users star, download, and navigate a single item from the detail view. Tags SHALL be read-only, and the detail view SHALL NOT include a notes editor.
+
+#### Scenario: Star and unstar
+- **WHEN** the user toggles the star control in the detail view
+- **THEN** the item's star state SHALL be persisted through VFS
+- **AND** the detail view and grid SHALL reflect the new state
+
+#### Scenario: Tags are read-only
+- **WHEN** the detail view opens
+- **THEN** it SHALL display each tag as `#tag`
+- **AND** system tags SHALL display without the `system:` prefix
+- **AND** it SHALL NOT provide add, remove, or create-tag controls
+
+#### Scenario: No notes editor
+- **WHEN** the detail view opens
+- **THEN** it SHALL NOT show a notes field or a save-notes action
+
+#### Scenario: Download original
+- **WHEN** the user chooses download in the detail view
+- **THEN** the browser SHALL download the original file using the server-provided download name
+
+#### Scenario: Navigate between items
+- **WHEN** the user presses the previous or next control, or the left/right arrow key while the detail view is open
+- **THEN** the detail view SHALL show the adjacent item in the current filtered order
+- **AND** navigation SHALL stop at the first or last item
+- **AND** the detail view SHALL NOT close
+
+### Requirement: Empty and disconnected states
+
+The Media Library SHALL explain what to do when there is nothing to show or the backend is unavailable.
+
+#### Scenario: Empty library
+- **WHEN** the library has no media
+- **THEN** the grid SHALL show an empty state explaining that captured media will appear here
+- **AND** it SHALL point the user to the Side Panel to start a capture session
+
+#### Scenario: No matching results
+- **WHEN** filters or search produce no results
+- **THEN** the empty state SHALL offer to clear the filters
+
+#### Scenario: Backend disconnected
+- **WHEN** the VFS connection is unavailable
+- **THEN** the library SHALL show the existing warning with a reconnect action
+- **AND** it SHALL disable search, filters, and batch actions that require the backend
+
+#### Scenario: Reconnect
+- **WHEN** the VFS connection is restored
+- **THEN** the library SHALL refresh the current query automatically
+- **AND** it SHALL refresh tag counts
+
+### Requirement: Stable live list updates
+
+The Media Library SHALL merge live capture events without duplicating items, drifting the total, or degrading as the session grows.
+
+#### Scenario: New live item
+- **WHEN** no search or filters are active and a `file:captured` event arrives
+- **THEN** the Media Library SHALL insert the item once at the top of the grid
+- **AND** the header total SHALL increase by one if the item was not already loaded
+
+#### Scenario: Filters are active
+- **WHEN** a search or filter is active and a capture or classification event arrives
+- **THEN** the Media Library SHALL debounce a query refresh instead of inserting an unfiltered live item
+
+#### Scenario: Duplicate append
+- **WHEN** a page or event returns a hash that is already in the list
+- **THEN** the Media Library SHALL keep one item for that hash
+- **AND** it SHALL NOT create a duplicate grid entry
+
+#### Scenario: Bounded event history
+- **WHEN** capture runs for a long time
+- **THEN** the retained Background event log SHALL be capped
+- **AND** live item/status state SHALL be derived incrementally rather than by rescanning all retained events
+
+#### Scenario: Tag refresh is event-driven
+- **WHEN** the latest Background event is a classification or tag event
+- **THEN** the Media Library SHALL refresh tag counts and vocabulary once, debounced
+- **AND** unrelated events SHALL NOT trigger tag refreshes

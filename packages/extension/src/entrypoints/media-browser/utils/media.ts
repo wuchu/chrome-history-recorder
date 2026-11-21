@@ -24,6 +24,8 @@ export interface VFSRawMediaItem {
   captured_at?: string;
   sourceUrl?: string | null;
   source_url?: string | null;
+  sourceDomain?: string | null;
+  source_domain?: string | null;
   category?: string;
   ai_filename?: string | null;
   tags?: string[] | string | null;
@@ -31,6 +33,10 @@ export interface VFSRawMediaItem {
   classified_at?: string | null;
   model_used?: string | null;
   classifyStatus?: 'pending' | 'processing' | 'completed' | 'failed' | 'skipped';
+  is_starred?: number;
+  user_notes?: string | null;
+  is_deleted?: number;
+  deleted_at?: string | null;
 }
 
 export interface NormalizedMediaItem {
@@ -45,9 +51,13 @@ export interface NormalizedMediaItem {
   classified_at?: string;
   model_used?: string;
   classifyStatus?: 'pending' | 'processing' | 'completed' | 'failed' | 'skipped';
+  deletedAt?: string;
   url: string;
   thumbnailUrl: string;
   sourceUrl?: string;
+  sourceDomain?: string;
+  isStarred?: boolean;
+  notes?: string;
 }
 
 function normalizeTags(tags: VFSRawMediaItem['tags']): string[] | undefined {
@@ -86,8 +96,12 @@ export function normalizeMediaItem(item: VFSRawMediaItem): NormalizedMediaItem |
     classified_at: item.classified_at ?? undefined,
     model_used: item.model_used ?? undefined,
     classifyStatus: item.classifyStatus,
+    deletedAt: item.deleted_at ?? undefined,
     url: buildVfsFileUrl(hash),
     thumbnailUrl: buildVfsThumbnailUrl(hash),
     sourceUrl: item.sourceUrl ?? item.source_url ?? undefined,
+    sourceDomain: item.sourceDomain ?? item.source_domain ?? undefined,
+    isStarred: item.is_starred === 1,
+    notes: item.user_notes ?? undefined,
   };
 }
