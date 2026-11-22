@@ -58,7 +58,7 @@ function escapeLikePattern(value: string): string {
 }
 
 const MAX_PAGE_SIZE = 500;
-const SEARCH_SCHEMA_VERSION = 1;
+const SEARCH_SCHEMA_VERSION = 2;
 const RESERVED_TAG_NAMES = new Set(['image', 'video', 'starred', 'uncategorized']);
 
 // SQLite schema constants
@@ -323,10 +323,16 @@ export type MediaTagMode = 'and' | 'or';
 export interface ListQuery {
   category?: string;
   tag?: string;
-  /** Free-text search over AI filename, tags, source URL, and notes. */
+  /** Free-text search over AI filename, tags, source URL/domain, and notes. */
   q?: string;
+  /** Positive free-text terms. Every term must match; combined with `q`. */
+  terms?: string[];
+  /** Free-text terms that must not match anywhere in the searchable text. */
+  excludeTerms?: string[];
   mimeType?: 'image' | 'video';
   sourceDomain?: string;
+  /** Multiple source domains, matched with OR. */
+  sourceDomains?: string[];
   capturedFrom?: string;
   capturedTo?: string;
   starred?: boolean;
@@ -334,6 +340,8 @@ export interface ListQuery {
   /** Multi-tag selection. Combined with `tagMode`. */
   tags?: string[];
   tagMode?: MediaTagMode;
+  /** Tag groups: values inside a group are OR, groups are AND. */
+  tagGroups?: string[][];
   limit?: number;
   offset?: number;
   /** Opaque keyset cursor. Mutually exclusive with `offset`. */
@@ -594,23 +602,28 @@ export class SQLiteDatabase {
 
     this.ftsAvailable = true;
     this.db.exec(`
-      CREATE TRIGGER IF NOT EXISTS files_fts_ai AFTER INSERT ON files BEGIN
+      DROP TRIGGER IF EXISTS files_fts_ai;
+      DROP TRIGGER IF EXISTS files_fts_ad;
+      DROP TRIGGER IF EXISTS files_fts_au;
+
+      CREATE TRIGGER files_fts_ai AFTER INSERT ON files BEGIN
         INSERT INTO files_fts(hash, search_text)
         VALUES (
           new.hash,
           COALESCE(new.ai_filename, '') || ' ' ||
           COALESCE(new.tags, '') || ' ' ||
           COALESCE(new.source_url, '') || ' ' ||
+          COALESCE(new.source_domain, '') || ' ' ||
           COALESCE(new.user_notes, '')
         );
       END;
 
-      CREATE TRIGGER IF NOT EXISTS files_fts_ad AFTER DELETE ON files BEGIN
+      CREATE TRIGGER files_fts_ad AFTER DELETE ON files BEGIN
         DELETE FROM files_fts WHERE hash = old.hash;
       END;
 
-      CREATE TRIGGER IF NOT EXISTS files_fts_au
-      AFTER UPDATE OF ai_filename, tags, source_url, user_notes ON files BEGIN
+      CREATE TRIGGER files_fts_au
+      AFTER UPDATE OF ai_filename, tags, source_url, source_domain, user_notes ON files BEGIN
         DELETE FROM files_fts WHERE hash = old.hash;
         INSERT INTO files_fts(hash, search_text)
         VALUES (
@@ -618,6 +631,7 @@ export class SQLiteDatabase {
           COALESCE(new.ai_filename, '') || ' ' ||
           COALESCE(new.tags, '') || ' ' ||
           COALESCE(new.source_url, '') || ' ' ||
+          COALESCE(new.source_domain, '') || ' ' ||
           COALESCE(new.user_notes, '')
         );
       END;
@@ -634,6 +648,7 @@ export class SQLiteDatabase {
             COALESCE(ai_filename, '') || ' ' ||
             COALESCE(tags, '') || ' ' ||
             COALESCE(source_url, '') || ' ' ||
+            COALESCE(source_domain, '') || ' ' ||
             COALESCE(user_notes, '')
           FROM files
         `);
@@ -1164,6 +1179,17 @@ export class SQLiteDatabase {
       }
     }
 
+    for (const group of query.tagGroups ?? []) {
+      const tagConditions = group
+        .map((tag) => this.buildSingleTagCondition(tag))
+        .filter((condition) => condition.sql);
+      if (tagConditions.length === 0) continue;
+      conditions.push(`(${tagConditions.map((condition) => condition.sql).join(' OR ')})`);
+      for (const condition of tagConditions) {
+        baseValues.push(...condition.values);
+      }
+    }
+
     if (query.mimeType === 'image' || query.mimeType === 'video') {
       conditions.push('mime_type LIKE ?');
       baseValues.push(`${query.mimeType}/%`);
@@ -1172,6 +1198,12 @@ export class SQLiteDatabase {
     if (query.sourceDomain) {
       conditions.push('source_domain = ?');
       baseValues.push(query.sourceDomain.toLowerCase());
+    }
+
+    if (query.sourceDomains && query.sourceDomains.length > 0) {
+      const domains = [...new Set(query.sourceDomains.map((domain) => domain.toLowerCase()))];
+      conditions.push(`source_domain IN (${domains.map(() => '?').join(', ')})`);
+      baseValues.push(...domains);
     }
 
     if (query.capturedFrom) {
@@ -1202,21 +1234,21 @@ export class SQLiteDatabase {
       }
     }
 
-    const textQuery = query.q?.trim();
-    if (textQuery) {
-      const hasCjk = /[㐀-鿿]/.test(textQuery);
-      if (this.ftsAvailable && textQuery.length >= 3 && !hasCjk) {
-        conditions.push('hash IN (SELECT hash FROM files_fts WHERE files_fts MATCH ?)');
-        baseValues.push(`"${textQuery.replace(/"/g, '""')}"`);
-      } else {
-        conditions.push(`(
-          COALESCE(ai_filename, '') || ' ' ||
-          COALESCE(tags, '') || ' ' ||
-          COALESCE(source_url, '') || ' ' ||
-          COALESCE(user_notes, '')
-        ) LIKE ? ESCAPE '\\'`);
-        baseValues.push(`%${escapeLikePattern(textQuery)}%`);
-      }
+    const positiveTerms = [query.q, ...(query.terms ?? [])]
+      .map((term) => term?.trim())
+      .filter((term): term is string => Boolean(term));
+    for (const term of positiveTerms) {
+      const condition = this.buildTextTermCondition(term);
+      conditions.push(condition.sql);
+      baseValues.push(...condition.values);
+    }
+
+    for (const raw of query.excludeTerms ?? []) {
+      const term = raw.trim();
+      if (!term) continue;
+      const condition = this.buildTextTermCondition(term);
+      conditions.push(`NOT (${condition.sql})`);
+      baseValues.push(...condition.values);
     }
 
     // Count ignores the cursor so the caller always sees the full result size.
@@ -1263,6 +1295,32 @@ export class SQLiteDatabase {
         : undefined;
 
     return { items, total, hasMore, nextCursor };
+  }
+
+  /**
+   * Build the WHERE fragment for one free-text term. Non-CJK terms of at least
+   * three characters use the FTS index when available; everything else falls
+   * back to a field-concatenated substring match.
+   */
+  private buildTextTermCondition(term: string): { sql: string; values: unknown[] } {
+    const hasCjk = /[㐀-鿿]/.test(term);
+    const hasWordChar = /[\p{L}\p{N}]/u.test(term);
+    if (this.ftsAvailable && hasWordChar && term.length >= 3 && !hasCjk) {
+      return {
+        sql: 'hash IN (SELECT hash FROM files_fts WHERE files_fts MATCH ?)',
+        values: [`"${term.replace(/"/g, '""')}"`],
+      };
+    }
+    return {
+      sql: `(
+        COALESCE(ai_filename, '') || ' ' ||
+        COALESCE(tags, '') || ' ' ||
+        COALESCE(source_url, '') || ' ' ||
+        COALESCE(source_domain, '') || ' ' ||
+        COALESCE(user_notes, '')
+      ) LIKE ? ESCAPE '\\'`,
+      values: [`%${escapeLikePattern(term)}%`],
+    };
   }
 
   /**

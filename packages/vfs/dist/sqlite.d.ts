@@ -159,10 +159,16 @@ export type MediaTagMode = 'and' | 'or';
 export interface ListQuery {
     category?: string;
     tag?: string;
-    /** Free-text search over AI filename, tags, source URL, and notes. */
+    /** Free-text search over AI filename, tags, source URL/domain, and notes. */
     q?: string;
+    /** Positive free-text terms. Every term must match; combined with `q`. */
+    terms?: string[];
+    /** Free-text terms that must not match anywhere in the searchable text. */
+    excludeTerms?: string[];
     mimeType?: 'image' | 'video';
     sourceDomain?: string;
+    /** Multiple source domains, matched with OR. */
+    sourceDomains?: string[];
     capturedFrom?: string;
     capturedTo?: string;
     starred?: boolean;
@@ -170,6 +176,8 @@ export interface ListQuery {
     /** Multi-tag selection. Combined with `tagMode`. */
     tags?: string[];
     tagMode?: MediaTagMode;
+    /** Tag groups: values inside a group are OR, groups are AND. */
+    tagGroups?: string[][];
     limit?: number;
     offset?: number;
     /** Opaque keyset cursor. Mutually exclusive with `offset`. */
@@ -330,6 +338,12 @@ export declare class SQLiteDatabase {
      * List files with pagination, text search, structured filters, and sorting.
      */
     listFiles(query: ListQuery): ListFilesResult;
+    /**
+     * Build the WHERE fragment for one free-text term. Non-CJK terms of at least
+     * three characters use the FTS index when available; everything else falls
+     * back to a field-concatenated substring match.
+     */
+    private buildTextTermCondition;
     /**
      * Build the WHERE fragment for one tag, handling legacy special names and
      * both plain and `system:` storage forms.

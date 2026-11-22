@@ -157,14 +157,18 @@ export class FileManager {
     category?: string;
     tag?: string;
     q?: string;
+    terms?: string[];
+    excludeTerms?: string[];
     mimeType?: 'image' | 'video';
     sourceDomain?: string;
+    sourceDomains?: string[];
     capturedFrom?: string;
     capturedTo?: string;
     starred?: boolean;
     classifyStatus?: 'pending' | 'processing' | 'completed' | 'failed' | 'skipped';
     tags?: string[];
     tagMode?: 'and' | 'or';
+    tagGroups?: string[][];
     limit?: number;
     offset?: number;
     cursor?: string;

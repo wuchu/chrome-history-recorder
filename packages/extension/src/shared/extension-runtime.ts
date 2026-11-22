@@ -548,14 +548,18 @@ export interface MediaListQuery {
   category?: string;
   tag?: string;
   q?: string;
+  terms?: string[];
+  excludeTerms?: string[];
   mimeType?: 'image' | 'video';
   sourceDomain?: string;
+  sourceDomains?: string[];
   capturedFrom?: string;
   capturedTo?: string;
   starred?: boolean;
   classifyStatus?: TaskStatus;
   tags?: string[];
   tagMode?: 'and' | 'or';
+  tagGroups?: string[][];
   limit?: number;
   offset?: number;
   cursor?: string;

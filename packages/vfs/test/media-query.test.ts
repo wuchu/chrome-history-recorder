@@ -94,6 +94,75 @@ describe('media query, search, and curation', () => {
     expect(db.listFiles({ q: '日落' }).items.map((item) => item.hash)).toEqual(['hash-video']);
   });
 
+  it('matches multiple free terms with AND across fields', () => {
+    seed();
+
+    expect(db.listFiles({ terms: ['beach', 'cat'] }).items.map((item) => item.hash)).toEqual([
+      'hash-beach',
+    ]);
+    expect(db.listFiles({ terms: ['travel', 'sunset'] }).items.map((item) => item.hash)).toEqual([
+      'hash-video',
+    ]);
+    expect(db.listFiles({ terms: ['海边', '日落'] }).items.map((item) => item.hash)).toEqual([
+      'hash-video',
+    ]);
+  });
+
+  it('supports phrase terms and exclusions', () => {
+    seed();
+
+    expect(db.listFiles({ terms: ['sleeping cat'] }).items.map((item) => item.hash)).toEqual([
+      'hash-cat',
+    ]);
+    expect(
+      db.listFiles({ terms: ['cat'], excludeTerms: ['dog'] }).items.map((item) => item.hash)
+    ).toEqual(['hash-cat']);
+  });
+
+  it('treats q as an additional term', () => {
+    seed();
+
+    expect(db.listFiles({ q: 'cat', terms: ['sleeping'] }).items.map((item) => item.hash)).toEqual([
+      'hash-cat',
+    ]);
+    expect(db.listFiles({ q: 'beach' }).items.map((item) => item.hash)).toEqual(['hash-beach']);
+  });
+
+  it('supports tag groups with OR inside and AND across groups', () => {
+    seed();
+
+    expect(db.listFiles({ tagGroups: [['cat', 'travel']] }).items.map((item) => item.hash)).toEqual(
+      ['hash-video', 'hash-cat', 'hash-beach']
+    );
+    expect(
+      db
+        .listFiles({ tagGroups: [['cat', 'travel'], ['system:image']] })
+        .items.map((item) => item.hash)
+    ).toEqual(['hash-cat', 'hash-beach']);
+  });
+
+  it('supports multiple source domains with OR', () => {
+    seed();
+
+    expect(
+      db
+        .listFiles({ sourceDomains: ['example.com', 'blog.example.com'] })
+        .items.map((item) => item.hash)
+    ).toEqual(['hash-cat', 'hash-beach']);
+  });
+
+  it('falls back to substring matching for short and Chinese terms', () => {
+    seed();
+
+    expect(db.listFiles({ terms: ['su'] }).items.map((item) => item.hash)).toEqual([
+      'hash-video',
+      'hash-beach',
+    ]);
+    expect(db.listFiles({ terms: ['日落'] }).items.map((item) => item.hash)).toEqual([
+      'hash-video',
+    ]);
+  });
+
   it('combines structured filters', () => {
     seed();
 

@@ -19,10 +19,152 @@
 .mediaSurface {
   width: 100%;
   min-height: 420px;
-  border: 1px solid var(--border-color, #e5e5e5);
+  /* Keep the search suggestion panel visible outside the card. */
+  overflow: visible;
+  border: 1px solid var(--options-nav-border, #e5e5e5);
   border-radius: 10px;
+  background: var(--options-nav-bg, #fff);
+}
+
+.searchRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px 6px;
+}
+
+.searchWrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.suggestions {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  left: 0;
+  z-index: 40;
+  max-height: 360px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--options-nav-border, #e6ebf2);
+  border-radius: 10px;
+  background: var(--options-nav-bg, #fff);
+  box-shadow: var(--options-card-shadow, 0 8px 28px rgb(31 45 61 / 8%));
+}
+
+.suggestionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px 6px;
+  color: var(--options-meta, #8c8c8c);
+  font-size: 11px;
+}
+
+.suggestionClear {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #1677ff;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.suggestionGroup {
+  padding: 6px 8px 2px;
+  color: var(--options-meta, #8c8c8c);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.suggestionItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 7px 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--options-strong, #1f2937);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.suggestionItem:hover,
+.suggestionActive {
+  background: rgb(22 119 255 / 10%);
+}
+
+.suggestionLabel {
   overflow: hidden;
-  background: var(--bg-primary, #fff);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.suggestionDetail {
+  flex: 0 0 auto;
+  color: var(--options-meta, #8c8c8c);
+  font-size: 11px;
+}
+
+.suggestionFooter {
+  margin-top: 4px;
+  padding: 6px 8px 2px;
+  border-top: 1px solid var(--options-nav-border, #e6ebf2);
+  color: var(--options-meta, #8c8c8c);
+  font-size: 10px;
+}
+
+.appliedRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px 8px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 9px;
+  border: 1px solid rgb(22 119 255 / 25%);
+  border-radius: 999px;
+  background: rgb(22 119 255 / 8%);
+  color: #1677ff;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.chip:hover {
+  background: rgb(22 119 255 / 16%);
+}
+
+.resultCount {
+  margin-left: auto;
+}
+
+.selectionBar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 0 12px 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--options-nav-border, #e6ebf2);
+  border-radius: 8px;
+}
+
+.noResults {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
 }
 
 .loading {

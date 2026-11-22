@@ -157,7 +157,7 @@ describe('Options MediaLibrary', () => {
       expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'listFiles',
-          query: expect.objectContaining({ tag: 'image', offset: 0 }),
+          query: expect.objectContaining({ tags: ['image'], offset: 0 }),
         })
       );
     });
@@ -227,7 +227,7 @@ describe('Options MediaLibrary', () => {
     render(<MediaLibrary />);
     await screen.findByText('📷 图片');
 
-    fireEvent.change(screen.getByPlaceholderText('搜索文件名 / 标签 / 来源'), {
+    fireEvent.change(screen.getByPlaceholderText('搜索文件名、标签、站点、备注…'), {
       target: { value: 'beach' },
     });
 
@@ -235,7 +235,7 @@ describe('Options MediaLibrary', () => {
       expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'listFiles',
-          query: expect.objectContaining({ q: 'beach' }),
+          query: expect.objectContaining({ terms: ['beach'] }),
         })
       );
     });
@@ -345,5 +345,183 @@ describe('Options MediaLibrary', () => {
       scrollToSpy.mockRestore();
       document.documentElement.scrollTop = 0;
     }
+  });
+
+  it('renders one search input instead of the old filter row', async () => {
+    render(<MediaLibrary />);
+    await screen.findByText('📷 图片');
+
+    expect(screen.getAllByRole('textbox')).toHaveLength(1);
+    expect(screen.getByPlaceholderText('搜索文件名、标签、站点、备注…')).toBeTruthy();
+    expect(screen.queryByPlaceholderText('类型')).toBeNull();
+    expect(screen.queryByPlaceholderText('来源站点')).toBeNull();
+    expect(screen.queryByPlaceholderText('分类状态')).toBeNull();
+    expect(screen.queryByText('仅收藏')).toBeNull();
+  });
+
+  it('parses dimension tokens into the query and applied chips', async () => {
+    render(<MediaLibrary />);
+    await screen.findByText('📷 图片');
+
+    fireEvent.change(screen.getByPlaceholderText('搜索文件名、标签、站点、备注…'), {
+      target: { value: 'tag:cat site:example.com type:image' },
+    });
+
+    await waitFor(() => {
+      expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'listFiles',
+          query: expect.objectContaining({
+            tags: ['cat'],
+            tagMode: 'and',
+            sourceDomains: ['example.com'],
+            mimeType: 'image',
+          }),
+        })
+      );
+    });
+    expect(await screen.findByText('标签: cat')).toBeTruthy();
+    expect(screen.getByText('站点: example.com')).toBeTruthy();
+    expect(screen.getByText('类型: 图片')).toBeTruthy();
+  });
+
+  it('removes one condition chip without clearing the others', async () => {
+    render(<MediaLibrary />);
+    await screen.findByText('📷 图片');
+
+    fireEvent.change(screen.getByPlaceholderText('搜索文件名、标签、站点、备注…'), {
+      target: { value: 'tag:cat site:example.com' },
+    });
+    const tagChip = await screen.findByText('标签: cat');
+    await waitFor(() => {
+      expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'listFiles',
+          query: expect.objectContaining({ tags: ['cat'], sourceDomains: ['example.com'] }),
+        })
+      );
+    });
+
+    fireEvent.click(tagChip);
+
+    await waitFor(() => {
+      expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'listFiles',
+          query: expect.objectContaining({
+            tags: undefined,
+            sourceDomains: ['example.com'],
+          }),
+        })
+      );
+    });
+  });
+
+  it('migrates the legacy filter object into a raw query', async () => {
+    sessionStorage.setItem(
+      'media-library-filters-v1',
+      JSON.stringify({
+        q: 'beach',
+        mimeType: 'image',
+        sourceDomain: 'example.com',
+        datePreset: '7d',
+        starred: true,
+        classifyStatus: 'failed',
+        tags: ['cat'],
+        tagMode: 'and',
+        sort: 'size:desc',
+        activeTag: 'all',
+      })
+    );
+
+    render(<MediaLibrary />);
+    await screen.findByText('📷 图片');
+
+    const input = screen.getByPlaceholderText('搜索文件名、标签、站点、备注…') as HTMLInputElement;
+    expect(input.value).toContain('beach');
+    expect(input.value).toContain('tag:cat');
+    expect(input.value).toContain('type:image');
+    expect(input.value).toContain('site:example.com');
+    expect(input.value).toContain('date:7d');
+    expect(input.value).toContain('starred');
+    expect(input.value).toContain('status:failed');
+
+    await waitFor(() => {
+      expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'listFiles',
+          query: expect.objectContaining({
+            terms: ['beach'],
+            tags: ['cat'],
+            sourceDomains: ['example.com'],
+            mimeType: 'image',
+            starred: true,
+            classifyStatus: 'failed',
+            orderBy: 'size',
+            order: 'desc',
+          }),
+        })
+      );
+    });
+
+    expect(sessionStorage.getItem('media-library-filters-v1')).toBeNull();
+    expect(sessionStorage.getItem('media-library-query-v1')).toContain('beach');
+  });
+
+  it('persists the raw query for the Options session', async () => {
+    render(<MediaLibrary />);
+    await screen.findByText('📷 图片');
+
+    fireEvent.change(screen.getByPlaceholderText('搜索文件名、标签、站点、备注…'), {
+      target: { value: 'beach' },
+    });
+
+    await waitFor(() => {
+      expect(sessionStorage.getItem('media-library-query-v1')).toContain('beach');
+    });
+  });
+
+  it('offers no-result recovery actions', async () => {
+    const sendMessage = vi.mocked(chrome.runtime.sendMessage);
+    const original = sendMessage.getMockImplementation()!;
+    sendMessage.mockImplementation(async (message: { type?: string }) => {
+      if (message.type === 'listFiles') {
+        return { success: true, data: { items: [], total: 0, hasMore: false } };
+      }
+      return original(message);
+    });
+
+    render(<MediaLibrary />);
+    await screen.findByText('📷 图片');
+
+    fireEvent.change(screen.getByPlaceholderText('搜索文件名、标签、站点、备注…'), {
+      target: { value: 'beach' },
+    });
+
+    expect(await screen.findByText('没有匹配的媒体')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '清除全部条件' })).toBeTruthy();
+  });
+
+  it('does not query until Chinese input composition ends', async () => {
+    render(<MediaLibrary />);
+    await screen.findByText('📷 图片');
+    const input = screen.getByPlaceholderText('搜索文件名、标签、站点、备注…');
+
+    const listQueries = () =>
+      vi
+        .mocked(chrome.runtime.sendMessage)
+        .mock.calls.map(([request]) => request as { type?: string; query?: { terms?: string[] } })
+        .filter((request) => request.type === 'listFiles')
+        .map((request) => request.query?.terms);
+
+    fireEvent.compositionStart(input);
+    fireEvent.change(input, { target: { value: 'mao' } });
+    fireEvent.change(input, { target: { value: '猫' } });
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    expect(listQueries()).not.toContainEqual(['猫']);
+    expect(listQueries()).not.toContainEqual(['mao']);
+
+    fireEvent.compositionEnd(input);
+    await waitFor(() => expect(listQueries()).toContainEqual(['猫']));
   });
 });

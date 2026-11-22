@@ -29,14 +29,18 @@ interface UseHistoricalImagesOptions {
   category?: string;
   tag?: string;
   q?: string;
+  terms?: string[];
+  excludeTerms?: string[];
   mimeType?: 'image' | 'video';
   sourceDomain?: string;
+  sourceDomains?: string[];
   capturedFrom?: string;
   capturedTo?: string;
   starred?: boolean;
   classifyStatus?: 'pending' | 'processing' | 'completed' | 'failed' | 'skipped';
   tags?: string[];
   tagMode?: 'and' | 'or';
+  tagGroups?: string[][];
   status?: 'active' | 'trashed' | 'all';
   orderBy?:
     | 'captured_at'
@@ -73,14 +77,18 @@ export function useHistoricalImages({
   category,
   tag,
   q,
+  terms,
+  excludeTerms,
   mimeType,
   sourceDomain,
+  sourceDomains,
   capturedFrom,
   capturedTo,
   starred,
   classifyStatus,
   tags,
   tagMode,
+  tagGroups,
   status,
   orderBy,
   order,
@@ -101,14 +109,18 @@ export function useHistoricalImages({
     category,
     tag,
     q,
+    terms,
+    excludeTerms,
     mimeType,
     sourceDomain,
+    sourceDomains,
     capturedFrom,
     capturedTo,
     starred,
     classifyStatus,
     tagKey,
     tagMode,
+    tagGroups,
     status,
     orderBy,
     order,
@@ -145,14 +157,18 @@ export function useHistoricalImages({
             category,
             tag,
             q: q?.trim() || undefined,
+            terms: terms && terms.length > 0 ? terms : undefined,
+            excludeTerms: excludeTerms && excludeTerms.length > 0 ? excludeTerms : undefined,
             mimeType,
             sourceDomain,
+            sourceDomains,
             capturedFrom,
             capturedTo,
             starred,
             classifyStatus,
             tags: tags && tags.length > 0 ? tags : undefined,
             tagMode,
+            tagGroups: tagGroups && tagGroups.length > 0 ? tagGroups : undefined,
             status,
             orderBy,
             order,
