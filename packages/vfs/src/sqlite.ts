@@ -137,6 +137,7 @@ CREATE TABLE IF NOT EXISTS tags (
 );
 
 CREATE INDEX IF NOT EXISTS idx_tags_usage ON tags(usage_count DESC);
+CREATE INDEX IF NOT EXISTS idx_tags_name_nocase ON tags(name COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_tags_pinned ON tags(is_pinned) WHERE is_pinned = 1;
 
 CREATE TABLE IF NOT EXISTS tag_aliases (
@@ -526,6 +527,10 @@ export class SQLiteDatabase {
     this.migrateSearchIndex();
     this.migrateClassifyQueue();
     this.backfillTagVocabulary();
+    // Rebuild the incremental usage baseline so vocabulary counts stay
+    // authoritative after upgrades from versions that wrote tag lists
+    // directly. This is one O(files) pass at startup, not per task.
+    this.recomputeTagUsage();
   }
 
   /**
@@ -844,10 +849,25 @@ export class SQLiteDatabase {
     updateValues.push(now);
     updateValues.push(hash);
 
+    const tagDelta =
+      updates.tags !== undefined
+        ? {
+            oldTags: parseTagList(file.tags),
+            newTags: updates.tags,
+            active: file.is_deleted === 0,
+          }
+        : null;
+
     const stmt = this.db.prepare(`
       UPDATE files SET ${updateFields.join(', ')} WHERE hash = ?
     `);
-    stmt.run(...updateValues);
+    const apply = this.db.transaction(() => {
+      stmt.run(...updateValues);
+      if (tagDelta) {
+        this.applyTagUsageDelta(tagDelta.oldTags, tagDelta.newTags, tagDelta.active, now);
+      }
+    });
+    apply();
     return true;
   }
 
@@ -977,13 +997,21 @@ export class SQLiteDatabase {
    * the file can be restored or previewed.
    */
   softDeleteFile(hash: string): boolean {
+    const file = this.getFile(hash);
+    if (!file) return false;
+
     const now = new Date().toISOString();
     const stmt = this.db.prepare(`
       UPDATE files SET is_deleted = 1, deleted_at = ?, updated_at = ? WHERE hash = ?
     `);
-    const result = stmt.run(now, now, hash);
-    if (result.changes > 0) this.recomputeTagUsage();
-    return result.changes > 0;
+    const transaction = this.db.transaction(() => {
+      const result = stmt.run(now, now, hash);
+      if (result.changes > 0 && file.is_deleted === 0) {
+        this.applyTagUsageDelta(parseTagList(file.tags), [], true, now);
+      }
+      return result.changes > 0;
+    });
+    return transaction();
   }
 
   /**
@@ -1001,32 +1029,45 @@ export class SQLiteDatabase {
 
     const deleteTasks = this.db.prepare('DELETE FROM tasks WHERE target_hash = ?');
     const deleteFile = this.db.prepare('DELETE FROM files WHERE hash = ?');
+    const now = new Date().toISOString();
 
     const remove = this.db.transaction((items: string[]) => {
       let removed = 0;
+      const usageDelta = new Map<string, number>();
       for (const hash of items) {
+        const file = this.getFile(hash);
+        if (file && file.is_deleted === 0) {
+          this.addUserTagCounts(usageDelta, file.tags, -1);
+        }
         deleteTasks.run(hash);
         removed += deleteFile.run(hash).changes;
       }
+      if (removed > 0) this.updateTagUsageCounts(usageDelta, now);
       return removed;
     });
 
-    const removed = remove(hashes);
-    if (removed > 0) this.recomputeTagUsage();
-    return removed;
+    return remove(hashes);
   }
 
   /**
    * Restore a file from the recycle bin.
    */
   restoreFile(hash: string): boolean {
+    const file = this.getFile(hash);
+    if (!file) return false;
+
     const now = new Date().toISOString();
     const stmt = this.db.prepare(`
       UPDATE files SET is_deleted = 0, deleted_at = NULL, updated_at = ? WHERE hash = ?
     `);
-    const result = stmt.run(now, hash);
-    if (result.changes > 0) this.recomputeTagUsage();
-    return result.changes > 0;
+    const transaction = this.db.transaction(() => {
+      const result = stmt.run(now, hash);
+      if (result.changes > 0 && file.is_deleted === 1) {
+        this.applyTagUsageDelta([], parseTagList(file.tags), true, now);
+      }
+      return result.changes > 0;
+    });
+    return transaction();
   }
 
   /**
@@ -1037,9 +1078,21 @@ export class SQLiteDatabase {
     const stmt = this.db.prepare(`
       UPDATE files SET is_deleted = 0, deleted_at = NULL, updated_at = ? WHERE is_deleted = 1
     `);
-    const result = stmt.run(now);
-    if (result.changes > 0) this.recomputeTagUsage();
-    return result.changes;
+    const transaction = this.db.transaction(() => {
+      const rows = this.db.prepare('SELECT tags FROM files WHERE is_deleted = 1').all() as Array<{
+        tags: string | null;
+      }>;
+      const result = stmt.run(now);
+      if (result.changes > 0) {
+        const usageDelta = new Map<string, number>();
+        for (const row of rows) {
+          this.addUserTagCounts(usageDelta, row.tags, 1);
+        }
+        this.updateTagUsageCounts(usageDelta, now);
+      }
+      return result.changes;
+    });
+    return transaction();
   }
 
   /**
@@ -1303,21 +1356,16 @@ export class SQLiteDatabase {
     if (totals.video) counts.video = totals.video;
     if (totals.starred) counts.starred = totals.starred;
 
-    // User tags (non-system) via SQLite's json_each.
+    // User tags are maintained incrementally in the vocabulary; do not rescan
+    // every file's JSON tag list here.
     const tagRows = this.db
       .prepare(
-        `
-        SELECT json_each.value AS tag, COUNT(*) AS count
-        FROM files, json_each(files.tags)
-        WHERE files.is_deleted = 0
-          AND json_each.type = 'text'
-          AND json_each.value NOT LIKE 'system:%'
-        GROUP BY json_each.value
-      `
+        `SELECT name, usage_count FROM tags
+         WHERE name NOT LIKE 'system:%' AND usage_count > 0`
       )
-      .all() as Array<{ tag: string; count: number }>;
+      .all() as Array<{ name: string; usage_count: number }>;
     for (const row of tagRows) {
-      counts[row.tag] = (counts[row.tag] || 0) + row.count;
+      counts[row.name] = row.usage_count;
     }
 
     // Files with no user tags.
@@ -2071,7 +2119,7 @@ export class SQLiteDatabase {
 
       this.db.prepare(`UPDATE files SET ${fields.join(', ')} WHERE hash = ?`).run(...values);
 
-      this.recomputeTagUsage();
+      this.applyTagUsageDelta(parseTagList(file.tags), canonical, file.is_deleted === 0, now);
     });
     transaction();
 
@@ -2233,6 +2281,70 @@ export class SQLiteDatabase {
       if (!changed) continue;
       update.run(JSON.stringify([...new Set(next)]), now, row.hash);
     }
+  }
+
+  /**
+   * Normalize a tag list into unique user tags, dropping `system:*` entries.
+   */
+  private userTagSet(tags: Iterable<string>): Set<string> {
+    const result = new Set<string>();
+    for (const tag of tags) {
+      const normalized = normalizeTagName(tag);
+      if (!normalized || normalized.startsWith('system:')) continue;
+      result.add(normalized);
+    }
+    return result;
+  }
+
+  /**
+   * Accumulate per-tag usage deltas for one file's tag list.
+   */
+  private addUserTagCounts(
+    counts: Map<string, number>,
+    rawTags: string | null,
+    delta: number
+  ): void {
+    for (const tag of this.userTagSet(parseTagList(rawTags))) {
+      counts.set(tag, (counts.get(tag) ?? 0) + delta);
+    }
+  }
+
+  /**
+   * Apply usage deltas to the vocabulary. Unknown tags and zero deltas are
+   * ignored; counts are clamped at zero.
+   */
+  private updateTagUsageCounts(counts: Map<string, number>, now: string): void {
+    if (counts.size === 0) return;
+    const stmt = this.db.prepare(
+      'UPDATE tags SET usage_count = MAX(0, usage_count + ?), updated_at = ? WHERE name = ?'
+    );
+    for (const [name, delta] of counts) {
+      if (delta === 0) continue;
+      stmt.run(delta, now, name);
+    }
+  }
+
+  /**
+   * Update vocabulary usage counts from a single file's tag change.
+   */
+  private applyTagUsageDelta(
+    oldTags: Iterable<string>,
+    newTags: Iterable<string>,
+    active: boolean,
+    now: string
+  ): void {
+    if (!active) return;
+
+    const oldSet = this.userTagSet(oldTags);
+    const newSet = this.userTagSet(newTags);
+    const counts = new Map<string, number>();
+    for (const tag of oldSet) {
+      if (!newSet.has(tag)) counts.set(tag, -1);
+    }
+    for (const tag of newSet) {
+      if (!oldSet.has(tag)) counts.set(tag, 1);
+    }
+    this.updateTagUsageCounts(counts, now);
   }
 
   /**

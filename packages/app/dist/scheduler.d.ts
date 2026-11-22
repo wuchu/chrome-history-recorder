@@ -27,6 +27,7 @@ export interface SchedulerDependencies {
     config: ConfigStore;
     events: EventBus;
     pollInterval?: number;
+    coalesceWindowMs?: number;
 }
 type TaskHandlerResult = Record<string, unknown> | void;
 type TaskHandler = (task: TaskItem) => Promise<TaskHandlerResult>;
@@ -44,6 +45,8 @@ export declare class Scheduler {
     private intervalId;
     private handlers;
     private readonly gate;
+    private readonly queueCoalescer;
+    private readonly tagsCoalescer;
     constructor(dependencies: SchedulerDependencies);
     registerHandler(taskType: TaskType, handler: TaskHandler): void;
     start(): void;
@@ -87,7 +90,10 @@ export declare class Scheduler {
     private retryDelayFor;
     private broadcastEvent;
     private broadcastSchedulerStatus;
+    private scheduleTagsSnapshot;
+    private flushTagsSnapshot;
     private broadcastQueueUpdated;
+    private flushQueueSnapshot;
 }
 export {};
 //# sourceMappingURL=scheduler.d.ts.map

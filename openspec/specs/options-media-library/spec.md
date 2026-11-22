@@ -3,9 +3,7 @@
 ## Purpose
 
 Provide the global media library in the Options console, including browsing, tag filtering, media details, deletion, and AI requeue.
-
 ## Requirements
-
 ### Requirement: Global media library
 The Options Media Library SHALL provide the global VFS-backed media library for all captured files.
 
@@ -327,7 +325,22 @@ The Media Library SHALL merge live capture events without duplicating items, dri
 - **THEN** the retained Background event log SHALL be capped
 - **AND** live item/status state SHALL be derived incrementally rather than by rescanning all retained events
 
-#### Scenario: Tag refresh is event-driven
-- **WHEN** the latest Background event is a classification or tag event
-- **THEN** the Media Library SHALL refresh tag counts and vocabulary once, debounced
+#### Scenario: Tag refresh uses the event payload
+- **WHEN** the latest Background event is `tags:updated`
+- **THEN** the Media Library SHALL update its tag vocabulary and tag counts from the event's `{ tags, counts }` payload
+- **AND** it SHALL NOT issue another `getTagCounts` or `listTags` request for that event
 - **AND** unrelated events SHALL NOT trigger tag refreshes
+
+#### Scenario: Tag refresh falls back for payload-less events
+- **WHEN** a tag-related event arrives without a usable payload
+- **THEN** the Media Library MAY refresh tag counts and vocabulary once, debounced
+
+#### Scenario: Coalesced snapshots update once
+- **WHEN** several `tags:updated` events arrive in a burst
+- **THEN** the Media Library SHALL apply the latest snapshot once
+- **AND** it SHALL NOT queue one network request per event
+
+#### Scenario: Trash page does not retain the full event log
+- **WHEN** the Trash page observes Background events
+- **THEN** it SHALL handle only the events it needs through a listener
+- **AND** it SHALL NOT accumulate the full bounded event history

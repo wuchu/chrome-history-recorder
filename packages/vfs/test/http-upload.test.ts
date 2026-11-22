@@ -116,6 +116,42 @@ describe('Streaming upload', () => {
     expect(Buffer.from(await download.arrayBuffer()).equals(body)).toBe(true);
   });
 
+  it('stores a streamed image upload with metadata and system tag', async () => {
+    const baseUrl = await startServer();
+    const body = Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      Buffer.from('fake image bytes'),
+    ]);
+
+    const response = await fetch(`${baseUrl}/upload`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'image/png',
+        'X-Source-Url': 'https://example.com/photo.png',
+      },
+      body,
+    });
+
+    expect(response.status).toBe(200);
+    const result = (await response.json()) as {
+      hash: string;
+      duplicate: boolean;
+      size: number;
+      mimeType: string;
+    };
+
+    expect(result.duplicate).toBe(false);
+    expect(result.size).toBe(body.length);
+    expect(result.mimeType).toBe('image/png');
+    expect(result.hash).toBe(calculateHash(body));
+
+    const metadata = db.getFile(result.hash);
+    expect(metadata?.mime_type).toBe('image/png');
+    expect(metadata?.source_url).toBe('https://example.com/photo.png');
+    expect(JSON.parse(metadata?.tags ?? '[]')).toContain('system:image');
+    expect(api.getStats().images).toBe(1);
+  });
+
   it('reports duplicate content without inserting a second row', async () => {
     const baseUrl = await startServer();
     const body = fakeMp4('duplicate video bytes');

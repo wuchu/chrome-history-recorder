@@ -15,6 +15,11 @@ export function buildVfsFileUrl(hash: string): string {
   return `${VFS_HTTP_BASE_URL}/files/${hash}`;
 }
 
+/** Download URL that asks the server for an attachment disposition. */
+export function buildVfsDownloadUrl(hash: string): string {
+  return `${buildVfsFileUrl(hash)}?download=1`;
+}
+
 export interface VFSRawMediaItem {
   hash?: string;
   mimeType?: string;

@@ -504,6 +504,23 @@ export declare class SQLiteDatabase {
     private resolveOrCreateTag;
     private replaceFileTagName;
     /**
+     * Normalize a tag list into unique user tags, dropping `system:*` entries.
+     */
+    private userTagSet;
+    /**
+     * Accumulate per-tag usage deltas for one file's tag list.
+     */
+    private addUserTagCounts;
+    /**
+     * Apply usage deltas to the vocabulary. Unknown tags and zero deltas are
+     * ignored; counts are clamped at zero.
+     */
+    private updateTagUsageCounts;
+    /**
+     * Update vocabulary usage counts from a single file's tag change.
+     */
+    private applyTagUsageDelta;
+    /**
      * Recompute `usage_count` for every vocabulary tag from file tag lists.
      */
     recomputeTagUsage(): void;

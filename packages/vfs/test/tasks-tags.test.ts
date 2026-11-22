@@ -456,4 +456,79 @@ describe('SQLiteDatabase tasks and tags', () => {
       expect(db.getTagVocabulary(1)).toEqual(['dog']);
     });
   });
+
+  describe('incremental tag usage', () => {
+    function usage(): Record<string, number> {
+      return Object.fromEntries(
+        db.listTags({ limit: 500 }).map((tag) => [tag.name, tag.usage_count])
+      );
+    }
+
+    it('tracks classification changes', () => {
+      insertFile('h1');
+      insertFile('h2');
+      db.applyClassification({ hash: 'h1', tags: ['cat', 'dog'] });
+      db.applyClassification({ hash: 'h2', tags: ['cat'] });
+      expect(usage()).toMatchObject({ cat: 2, dog: 1 });
+
+      db.applyClassification({ hash: 'h1', tags: ['cat', 'bird'] });
+      expect(usage()).toMatchObject({ cat: 2, dog: 0, bird: 1 });
+      expect(db.getTagCounts()).toMatchObject({ cat: 2, bird: 1, all: 2 });
+    });
+
+    it('tracks trash, restore, and permanent delete', () => {
+      insertFile('h1');
+      insertFile('h2');
+      db.applyClassification({ hash: 'h1', tags: ['cat', 'bird'] });
+      db.applyClassification({ hash: 'h2', tags: ['cat'] });
+      expect(usage()).toMatchObject({ cat: 2, bird: 1 });
+
+      db.softDeleteFile('h1');
+      expect(usage()).toMatchObject({ cat: 1, bird: 0 });
+
+      db.restoreFile('h1');
+      expect(usage()).toMatchObject({ cat: 2, bird: 1 });
+
+      db.softDeleteFile('h1');
+      expect(usage()).toMatchObject({ cat: 1, bird: 0 });
+      db.hardDeleteFile('h1');
+      expect(usage()).toMatchObject({ cat: 1, bird: 0 });
+
+      db.softDeleteFile('h2');
+      expect(usage()).toMatchObject({ cat: 0 });
+      expect(db.restoreAllFiles()).toBe(1);
+      expect(usage()).toMatchObject({ cat: 1 });
+    });
+
+    it('tracks user tag add and remove without double counting', () => {
+      insertFile('h1');
+      db.addFileTags('h1', ['cat', 'dog']);
+      expect(usage()).toMatchObject({ cat: 1, dog: 1 });
+
+      db.addFileTags('h1', ['dog']);
+      expect(usage()).toMatchObject({ cat: 1, dog: 1 });
+
+      db.removeFileTags('h1', ['cat']);
+      expect(usage()).toMatchObject({ cat: 0, dog: 1 });
+    });
+
+    it('matches a full recompute after mixed operations', () => {
+      insertFile('h1');
+      insertFile('h2');
+      insertFile('h3');
+      db.applyClassification({ hash: 'h1', tags: ['cat', 'dog'] });
+      db.applyClassification({ hash: 'h2', tags: ['cat'] });
+      db.applyClassification({ hash: 'h3', tags: ['bird'] });
+      db.addFileTags('h2', ['sofa']);
+      db.removeFileTags('h3', ['bird']);
+      db.softDeleteFile('h1');
+      db.softDeleteFile('h2');
+      db.restoreFile('h2');
+      db.hardDeleteFile('h3');
+
+      const incremental = usage();
+      db.recomputeTagUsage();
+      expect(usage()).toEqual(incremental);
+    });
+  });
 });

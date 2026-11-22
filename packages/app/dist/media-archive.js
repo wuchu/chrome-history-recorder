@@ -27,6 +27,7 @@ const fs_1 = __importDefault(require("fs"));
 const os_1 = __importDefault(require("os"));
 const path_1 = __importDefault(require("path"));
 const vfs_1 = require("vfs");
+const event_coalescer_1 = require("./event-coalescer");
 const types_1 = require("./types");
 exports.MEDIA_ARCHIVE_STATE_FILE = 'media-archive-state.json';
 exports.MEDIA_ARCHIVE_STATE_VERSION = 1;
@@ -206,6 +207,8 @@ class MediaArchiveWorker {
     lastRunAt;
     lastError;
     lastKnownEnabled = false;
+    queueCoalescer = new event_coalescer_1.EventCoalescer(() => this.flushQueueUpdated());
+    statusCoalescer = new event_coalescer_1.EventCoalescer(() => this.flushStatus());
     constructor(dependencies) {
         this.api = dependencies.api;
         this.store = dependencies.store;
@@ -240,6 +243,8 @@ class MediaArchiveWorker {
             this.reconcileTimer = null;
         }
         this.reconcileIntervalMs = null;
+        this.queueCoalescer.cancel();
+        this.statusCoalescer.cancel();
     }
     /**
      * Re-read configuration, apply a target change, and reschedule timers.
@@ -455,6 +460,8 @@ class MediaArchiveWorker {
             this.lastRunAt = new Date(this.now()).toISOString();
             this.emitQueueUpdated();
             this.emitStatus();
+            this.queueCoalescer.flushNow();
+            this.statusCoalescer.flushNow();
         }
     }
     kick() {
@@ -731,9 +738,15 @@ class MediaArchiveWorker {
         writeMediaArchiveState(this.statePath, this.state, this.logger);
     }
     emitStatus() {
+        this.statusCoalescer.schedule();
+    }
+    flushStatus() {
         this.events.emit(exports.MEDIA_ARCHIVE_EVENT, this.getStatus());
     }
     emitQueueUpdated() {
+        this.queueCoalescer.schedule();
+    }
+    flushQueueUpdated() {
         try {
             this.events.emit('queue:updated', this.api.getQueueStatus());
         }

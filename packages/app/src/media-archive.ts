@@ -21,6 +21,7 @@ import path from 'path';
 import { expandPath, type FileMetadata, type TaskItem, type VFSAPI } from 'vfs';
 import type { ConfigStore } from './config-store';
 import type { EventBus } from './event-bus';
+import { EventCoalescer } from './event-coalescer';
 import {
   DEFAULT_TASK_CONCURRENCY,
   MAX_TASK_CONCURRENCY,
@@ -306,6 +307,8 @@ export class MediaArchiveWorker {
   private lastRunAt?: string;
   private lastError?: string;
   private lastKnownEnabled = false;
+  private readonly queueCoalescer = new EventCoalescer(() => this.flushQueueUpdated());
+  private readonly statusCoalescer = new EventCoalescer(() => this.flushStatus());
 
   constructor(dependencies: MediaArchiveDependencies) {
     this.api = dependencies.api;
@@ -343,6 +346,8 @@ export class MediaArchiveWorker {
       this.reconcileTimer = null;
     }
     this.reconcileIntervalMs = null;
+    this.queueCoalescer.cancel();
+    this.statusCoalescer.cancel();
   }
 
   /**
@@ -582,6 +587,8 @@ export class MediaArchiveWorker {
       this.lastRunAt = new Date(this.now()).toISOString();
       this.emitQueueUpdated();
       this.emitStatus();
+      this.queueCoalescer.flushNow();
+      this.statusCoalescer.flushNow();
     }
   }
 
@@ -905,10 +912,18 @@ export class MediaArchiveWorker {
   }
 
   private emitStatus(): void {
+    this.statusCoalescer.schedule();
+  }
+
+  private flushStatus(): void {
     this.events.emit(MEDIA_ARCHIVE_EVENT, this.getStatus());
   }
 
   private emitQueueUpdated(): void {
+    this.queueCoalescer.schedule();
+  }
+
+  private flushQueueUpdated(): void {
     try {
       this.events.emit('queue:updated', this.api.getQueueStatus());
     } catch (error) {

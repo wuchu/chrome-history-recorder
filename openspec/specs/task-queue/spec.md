@@ -3,9 +3,7 @@
 ## Purpose
 
 Manage typed AI task queues (classification and rename) for media captured and stored in VFS, providing persistence, app-owned scheduling, and status reporting.
-
 ## Requirements
-
 ### Requirement: Multi-type task model
 The system SHALL model AI work as typed tasks that share one queue, where each task has a `task_type` and a `target_hash`, and at most one task exists per `(task_type, target_hash)` pair.
 
@@ -242,7 +240,7 @@ The system SHALL provide a full rescan that requeues all eligible media for one 
 - **THEN** the engine SHALL process them subject to each task type's concurrency limit
 
 ### Requirement: Queue status events
-The system SHALL publish queue and task status changes to connected extension clients.
+The system SHALL publish task lifecycle changes individually and MAY coalesce snapshot-style queue status changes while always exposing the latest counts.
 
 #### Scenario: Task starts processing
 - **WHEN** a task changes from pending to processing
@@ -261,8 +259,19 @@ The system SHALL publish queue and task status changes to connected extension cl
 - **THEN** the system SHALL emit a task status event containing the hash, skipped status, task type, and reason
 
 #### Scenario: Scheduler state changes
-- **WHEN** the scheduler starts or pauses
-- **THEN** the system SHALL emit a scheduler status event containing the new running or paused state
+- **WHEN** the scheduler starts or pauses, or a task type's concurrency changes
+- **THEN** the system SHALL emit a scheduler status event containing the new state without waiting for a coalescing window
+
+#### Scenario: Queue snapshots are coalesced
+- **WHEN** multiple tasks change status within the coalescing window
+- **THEN** the system SHALL emit at most one `queue:updated` snapshot per window
+- **AND** the snapshot SHALL include the latest per-type counts and scheduler state
+- **AND** each task transition SHALL still produce its own lifecycle event
+
+#### Scenario: Processing counts use the latest snapshot
+- **WHEN** the scheduler begins or ends processing a task
+- **THEN** it SHALL NOT emit a standalone scheduler status event solely to publish the processing count
+- **AND** the latest processing count SHALL be available in the next `queue:updated` snapshot
 
 ### Requirement: Trash-aware task claiming
 

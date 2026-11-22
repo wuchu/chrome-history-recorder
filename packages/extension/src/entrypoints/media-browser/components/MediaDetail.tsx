@@ -6,7 +6,7 @@
 
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { buildVfsFileUrl } from '../utils/media';
+import { buildVfsDownloadUrl, buildVfsFileUrl } from '../utils/media';
 import styles from './MediaDetail.module.css';
 
 interface MediaDetailData {
@@ -167,7 +167,7 @@ const MediaDetail = memo(function MediaDetail({
       onDownload(item);
       return;
     }
-    void chrome.downloads.download({ url: imageUrl, saveAs: true });
+    void chrome.downloads.download({ url: buildVfsDownloadUrl(item.hash), saveAs: true });
   };
 
   return (

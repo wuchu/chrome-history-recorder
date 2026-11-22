@@ -9,6 +9,7 @@ import type { VFSAPI, TaskItem, TaskType, QueueStatus } from 'vfs';
 import { isUnprocessableMediaError, type OllamaClient } from 'ai';
 import type { ConfigStore } from './config-store';
 import type { EventBus } from './event-bus';
+import { EventCoalescer } from './event-coalescer';
 import { MediaEligibilityGate, type EnqueueOptions } from './media-eligibility';
 
 export type SchedulerState = 'running' | 'paused';
@@ -32,6 +33,7 @@ export interface SchedulerDependencies {
   config: ConfigStore;
   events: EventBus;
   pollInterval?: number;
+  coalesceWindowMs?: number;
 }
 
 type TaskHandlerResult = Record<string, unknown> | void;
@@ -54,6 +56,8 @@ export class Scheduler {
   private intervalId: ReturnType<typeof setInterval> | null = null;
   private handlers: Map<string, TaskHandler> = new Map();
   private readonly gate: MediaEligibilityGate;
+  private readonly queueCoalescer: EventCoalescer;
+  private readonly tagsCoalescer: EventCoalescer;
 
   constructor(dependencies: SchedulerDependencies) {
     this.api = dependencies.api;
@@ -66,6 +70,9 @@ export class Scheduler {
     this.pausedByType.set('classify', config.classifyPaused);
     this.pausedByType.set('rename', config.renamePaused);
     this.gate = new MediaEligibilityGate(this.api);
+    const coalesceWindowMs = dependencies.coalesceWindowMs ?? 250;
+    this.queueCoalescer = new EventCoalescer(() => this.flushQueueSnapshot(), coalesceWindowMs);
+    this.tagsCoalescer = new EventCoalescer(() => this.flushTagsSnapshot(), coalesceWindowMs);
 
     this.registerHandler('classify', (task) => this.handleClassify(task));
     this.registerHandler('rename', (task) => this.handleRename(task));
@@ -87,6 +94,8 @@ export class Scheduler {
   }
 
   stop(): void {
+    this.queueCoalescer.cancel();
+    this.tagsCoalescer.cancel();
     if (!this.running && !this.intervalId) return;
     this.running = false;
     if (this.intervalId) {
@@ -307,10 +316,7 @@ export class Scheduler {
       modelUsed: result.model,
     });
 
-    this.events.emit('tags:updated', {
-      tags: this.api.listTags({ limit: 200 }),
-      counts: this.api.getTagCounts(),
-    });
+    this.scheduleTagsSnapshot();
 
     return {
       tags: applied.tags,
@@ -360,10 +366,8 @@ export class Scheduler {
         for (const task of tasks) {
           const hash = task.target_hash;
           if (!this.beginProcessing(taskType, hash)) continue;
-          this.broadcastSchedulerStatus();
           void this.runTask(task).finally(() => {
             this.endProcessing(taskType, hash);
-            this.broadcastSchedulerStatus();
             void this.tick();
           });
         }
@@ -472,11 +476,31 @@ export class Scheduler {
   }
 
   private broadcastSchedulerStatus(): void {
-    this.events.emit('classify:scheduler', this.getSchedulerStatus());
-    this.events.emit('task:scheduler', this.getSchedulerStatus());
+    const status = this.getSchedulerStatus();
+    this.events.emit('task:scheduler', status);
+    this.events.emit('classify:scheduler', status);
+  }
+
+  private scheduleTagsSnapshot(): void {
+    this.tagsCoalescer.schedule();
+  }
+
+  private flushTagsSnapshot(): void {
+    try {
+      this.events.emit('tags:updated', {
+        tags: this.api.listTags({ limit: 200 }),
+        counts: this.api.getTagCounts(),
+      });
+    } catch (error) {
+      console.warn('[Scheduler] Failed to broadcast tag update:', error);
+    }
   }
 
   private broadcastQueueUpdated(): void {
+    this.queueCoalescer.schedule();
+  }
+
+  private flushQueueSnapshot(): void {
     try {
       this.events.emit('queue:updated', {
         ...this.api.getQueueStatus(),

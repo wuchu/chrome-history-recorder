@@ -8,6 +8,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Scheduler = void 0;
 const ai_1 = require("ai");
+const event_coalescer_1 = require("./event-coalescer");
 const media_eligibility_1 = require("./media-eligibility");
 const DEFAULT_RETRY_BASE_DELAY_MS = 5000;
 const DEFAULT_RETRY_MAX_DELAY_MS = 120000;
@@ -25,6 +26,8 @@ class Scheduler {
     intervalId = null;
     handlers = new Map();
     gate;
+    queueCoalescer;
+    tagsCoalescer;
     constructor(dependencies) {
         this.api = dependencies.api;
         this.ai = dependencies.ai;
@@ -36,6 +39,9 @@ class Scheduler {
         this.pausedByType.set('classify', config.classifyPaused);
         this.pausedByType.set('rename', config.renamePaused);
         this.gate = new media_eligibility_1.MediaEligibilityGate(this.api);
+        const coalesceWindowMs = dependencies.coalesceWindowMs ?? 250;
+        this.queueCoalescer = new event_coalescer_1.EventCoalescer(() => this.flushQueueSnapshot(), coalesceWindowMs);
+        this.tagsCoalescer = new event_coalescer_1.EventCoalescer(() => this.flushTagsSnapshot(), coalesceWindowMs);
         this.registerHandler('classify', (task) => this.handleClassify(task));
         this.registerHandler('rename', (task) => this.handleRename(task));
     }
@@ -53,6 +59,8 @@ class Scheduler {
         }, this.pollInterval);
     }
     stop() {
+        this.queueCoalescer.cancel();
+        this.tagsCoalescer.cancel();
         if (!this.running && !this.intervalId)
             return;
         this.running = false;
@@ -241,10 +249,7 @@ class Scheduler {
             confidence: result.confidence,
             modelUsed: result.model,
         });
-        this.events.emit('tags:updated', {
-            tags: this.api.listTags({ limit: 200 }),
-            counts: this.api.getTagCounts(),
-        });
+        this.scheduleTagsSnapshot();
         return {
             tags: applied.tags,
             confidence: result.confidence,
@@ -290,10 +295,8 @@ class Scheduler {
                     const hash = task.target_hash;
                     if (!this.beginProcessing(taskType, hash))
                         continue;
-                    this.broadcastSchedulerStatus();
                     void this.runTask(task).finally(() => {
                         this.endProcessing(taskType, hash);
-                        this.broadcastSchedulerStatus();
                         void this.tick();
                     });
                 }
@@ -397,10 +400,28 @@ class Scheduler {
         this.events.emit(type, data);
     }
     broadcastSchedulerStatus() {
-        this.events.emit('classify:scheduler', this.getSchedulerStatus());
-        this.events.emit('task:scheduler', this.getSchedulerStatus());
+        const status = this.getSchedulerStatus();
+        this.events.emit('task:scheduler', status);
+        this.events.emit('classify:scheduler', status);
+    }
+    scheduleTagsSnapshot() {
+        this.tagsCoalescer.schedule();
+    }
+    flushTagsSnapshot() {
+        try {
+            this.events.emit('tags:updated', {
+                tags: this.api.listTags({ limit: 200 }),
+                counts: this.api.getTagCounts(),
+            });
+        }
+        catch (error) {
+            console.warn('[Scheduler] Failed to broadcast tag update:', error);
+        }
     }
     broadcastQueueUpdated() {
+        this.queueCoalescer.schedule();
+    }
+    flushQueueSnapshot() {
         try {
             this.events.emit('queue:updated', {
                 ...this.api.getQueueStatus(),

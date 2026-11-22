@@ -36,10 +36,11 @@ import {
   useCombinedMedia,
   useHistoricalImages,
   useTheme,
+  type BackgroundEvent,
   type CombinedMediaItem,
 } from '../../media-browser/hooks';
 import { appStyles } from '../../media-browser/styles';
-import { buildVfsFileUrl } from '../../media-browser/utils/media';
+import { buildVfsDownloadUrl } from '../../media-browser/utils/media';
 import {
   ExportCancelledError,
   ExportLimitError,
@@ -186,7 +187,35 @@ export function MediaLibrary() {
   const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
   const exportAbortRef = useRef<AbortController | null>(null);
   const theme = useTheme();
-  const { events, vfsConnected, sendMessage } = useBackgroundMessaging();
+
+  const loadTags = useCallback(async () => {
+    try {
+      const [counts, tags] = await Promise.all([getTagCounts(), listTags({ limit: 500 })]);
+      setTagCounts(counts ?? { all: 0 });
+      setTagVocabulary(Array.isArray(tags) ? tags : []);
+    } catch (error) {
+      console.error('[MediaLibrary] Failed to load tag vocabulary:', error);
+    }
+  }, []);
+
+  const handleBackgroundEvent = useCallback(
+    (event: BackgroundEvent) => {
+      if (event.type !== 'tags:updated') return;
+      const data = event.data as { tags?: unknown; counts?: unknown } | null | undefined;
+      if (Array.isArray(data?.tags) && data?.counts && typeof data.counts === 'object') {
+        setTagVocabulary(data.tags as VFSTagRecord[]);
+        setTagCounts(data.counts as TagCounts);
+        return;
+      }
+      // Legacy payload-less event: fall back to one debounced fetch.
+      void loadTags();
+    },
+    [loadTags]
+  );
+
+  const { events, vfsConnected, sendMessage } = useBackgroundMessaging({
+    onEvent: handleBackgroundEvent,
+  });
 
   const { orderBy, order } = splitSort(filters.sort);
   const queryTag =
@@ -232,16 +261,6 @@ export function MediaLibrary() {
 
   const filteredMedia = combinedMedia.items;
   const total = historical.total + (hasActiveFilters ? 0 : combinedMedia.newItemCount);
-
-  const loadTags = useCallback(async () => {
-    try {
-      const [counts, tags] = await Promise.all([getTagCounts(), listTags({ limit: 500 })]);
-      setTagCounts(counts ?? { all: 0 });
-      setTagVocabulary(Array.isArray(tags) ? tags : []);
-    } catch (error) {
-      console.error('[MediaLibrary] Failed to load tag vocabulary:', error);
-    }
-  }, []);
 
   const loadSourceDomains = useCallback(async () => {
     try {
@@ -290,25 +309,6 @@ export function MediaLibrary() {
   }, [vfsConnected, refreshHistorical, loadTags, loadSourceDomains]);
 
   const lastEvent = events.length > 0 ? events[events.length - 1] : null;
-  useEffect(() => {
-    if (!lastEvent) return;
-    if (
-      ![
-        'classify:complete',
-        'file:classified',
-        'tags:updated',
-        'rename:complete',
-        'task:completed',
-      ].includes(lastEvent.type)
-    ) {
-      return;
-    }
-    const timer = setTimeout(() => {
-      void loadTags();
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [lastEvent, loadTags]);
-
   useEffect(() => {
     if (!hasActiveFilters || !lastEvent) return;
     if (
@@ -808,7 +808,7 @@ export function MediaLibrary() {
           onRefreshTask={handleRefreshTask}
           onToggleStar={handleToggleStar}
           onDownload={(item) => {
-            void chrome.downloads.download({ url: buildVfsFileUrl(item.hash), saveAs: true });
+            void chrome.downloads.download({ url: buildVfsDownloadUrl(item.hash), saveAs: true });
           }}
           onNavigate={handleNavigate}
           hasPrev={selectedIndex > 0}

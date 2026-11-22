@@ -9,7 +9,7 @@
 ### 核心特性
 
 - **Chrome 专属**: 支持 Chrome 88+，使用 Manifest V3、Side Panel API 和 debugger/CDP Network API
-- **WebSocket + HTTP 双通道**: WebSocket 用于实时通信和事件推送，HTTP 用于文件下载和缩略图获取
+- **WebSocket + HTTP 双通道**: WebSocket 用于实时通信和事件推送，HTTP 用于流式上传、文件下载和缩略图获取
 - **Side Panel + Options 分工**: Side Panel 是当前标签页的捕获驾驶舱，Options 是全局媒体库与控制台
 - **一次性捕获**: 右键图片直接保存，或在侧栏「抓取本页媒体」扫描页面后预览、多选、批量保存；不需要 debugger，也不会创建捕获会话
 - **智能去重**: 基于 SHA-256 内容哈希，自动防止重复保存
@@ -41,8 +41,9 @@ chrome-history-recorder/
    - 分类队列管理
    - 实时事件广播（文件捕获、移入回收站、恢复、永久删除、分类完成）
 
-2. **HTTP Server (端口 8766)**: 用于文件下载和缩略图获取
-   - 文件下载 (`GET /files/:hash`)
+2. **HTTP Server (端口 8766)**: 用于流式上传、文件下载和缩略图获取
+   - 流式上传 (`POST /upload`，图片与视频共用)
+   - 文件流式下载 (`GET /files/:hash`，支持 Range/inline；`?download=1` 下载)
    - 缩略图获取 (`GET /files/:hash/thumbnail`)
    - 服务状态 (`GET /health`, `GET /stats`)
    - 浏览器原生缓存支持
@@ -110,7 +111,7 @@ pnpm dev
 5. 捕获的图片将自动保存到 `~/.vfs-workspace/`
 6. 在 Options 控制台的「媒体库」中浏览和管理全局媒体
 
-媒体库顶部提供搜索、类型/来源站点/时间/标签/分类状态筛选和排序。点击「选择」进入多选模式后，可以批量移入回收站、重新排队 AI 分类/命名，或把选中的原图导出为 zip；导出目录内会附带 `metadata.json`。单文件下载会优先使用 AI 文件名和真实扩展名。
+媒体库顶部提供搜索、类型/来源站点/时间/标签/分类状态筛选和排序。点击「选择」进入多选模式后，可以批量移入回收站、重新排队 AI 分类/命名，或把选中的原图导出为 zip；导出目录内会附带 `metadata.json`。单文件下载通过 `?download=1` 请求 attachment，并优先使用 AI 文件名和真实扩展名。
 
 Side Panel 只显示当前会话的媒体流和诊断日志；全局历史瀑布流、标签治理、AI 配置和任务队列都在 Options 控制台。切换到其他标签页时，Side Panel 会显示「另一个标签页正在捕获」横幅，并提供切换或停止会话的操作。
 
@@ -159,7 +160,7 @@ AI 只能处理能产出代表性图像的媒体（视觉模型原生格式，�
 
 支持的 API 方法：
 
-- `saveFile`: 保存文件
+- `saveFile`: 保存文件（兼容路径；扩展捕获已改走 `POST /upload`）
 - `getFile`: 获取文件
 - `trashFile`: 移入回收站
 - `restoreFile`: 从回收站恢复
@@ -181,14 +182,16 @@ AI 只能处理能产出代表性图像的媒体（视觉模型原生格式，�
 
 ### HTTP API (http://localhost:8766)
 
-| 端点                         | 说明                                        |
-| ---------------------------- | ------------------------------------------- |
-| `GET /files/:hash`           | 下载文件                                    |
-| `GET /files/:hash/thumbnail` | 获取缩略图（支持 ?size=small/medium/large） |
-| `GET /files/:hash/metadata`  | 获取文件元数据                              |
-| `GET /stats`                 | 获取统计信息                                |
-| `GET /health`                | 健康检查                                    |
-| `GET /`                      | 服务信息                                    |
+| 端点                          | 说明                                        |
+| ----------------------------- | ------------------------------------------- |
+| `POST /upload`                | 流式上传媒体（图片/视频）                   |
+| `GET /files/:hash`            | 流式读取文件；支持单段 `Range`，默认 inline |
+| `GET /files/:hash?download=1` | 以 attachment 下载（AI 文件名）             |
+| `GET /files/:hash/thumbnail`  | 获取缩略图（支持 ?size=small/medium/large） |
+| `GET /files/:hash/metadata`   | 获取文件元数据                              |
+| `GET /stats`                  | 获取统计信息                                |
+| `GET /health`                 | 健康检查                                    |
+| `GET /`                       | 服务信息                                    |
 
 ### 实时事件
 

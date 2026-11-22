@@ -25,6 +25,18 @@ export declare function buildDownloadName(metadata: {
     encodedName: string;
 };
 /**
+ * Result of parsing a single-range `Range` header.
+ *
+ * `null` means no range was requested, `'invalid'` means the header is not a
+ * satisfiable single range (multi-range requests are intentionally rejected),
+ * and an object describes the inclusive byte interval.
+ */
+export type ParsedByteRange = {
+    start: number;
+    end: number;
+} | null | 'invalid';
+export declare function parseByteRange(header: string | undefined, size: number): ParsedByteRange;
+/**
  * HTTP Server configuration
  */
 export interface HTTPServerConfig {
@@ -74,9 +86,14 @@ export declare class VFSHTTPServer {
      */
     private handleFiles;
     /**
-     * Handle file download endpoint
+     * Handle file download endpoint.
+     *
+     * Streams the blob from disk, supports a single byte range, and switches
+     * between inline preview and attachment download.
      */
     private handleFileDownload;
+    private getLastModified;
+    private isNotModified;
     /**
      * Handle thumbnail endpoint
      */

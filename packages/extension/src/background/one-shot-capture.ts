@@ -13,6 +13,7 @@ import type {
   PageScanResult,
 } from '../shared/extension-runtime';
 import { scanPageForMedia } from './page-scan';
+import { UploadMediaError } from './http-upload';
 
 const HTTP_MAX_BYTES = 50 * 1024 * 1024;
 const DATA_MAX_BYTES = 50 * 1024 * 1024;
@@ -22,7 +23,7 @@ const FETCH_TIMEOUT_MS = 15_000;
 
 export interface OneShotSaveDependencies {
   saveMedia: (data: {
-    buffer: number[];
+    buffer: ArrayBuffer | Uint8Array;
     mimeType: string;
     url: string;
     capturedAt: string;
@@ -268,7 +269,7 @@ export async function saveOneShotCandidate(
     }
 
     const result = await dependencies.saveMedia({
-      buffer: Array.from(resolved.bytes),
+      buffer: resolved.bytes,
       mimeType: resolved.mimeType,
       url: candidate.url,
       capturedAt: new Date().toISOString(),
@@ -283,6 +284,17 @@ export async function saveOneShotCandidate(
   } catch (error) {
     if (error instanceof OneShotCaptureError) {
       return failure(candidate, error.code, error.message);
+    }
+    if (error instanceof UploadMediaError) {
+      const code =
+        error.kind === 'network'
+          ? 'vfs-disconnected'
+          : error.status === 413
+            ? 'too-large'
+            : error.status === 415
+              ? 'unsupported-mime'
+              : 'unknown';
+      return failure(candidate, code, error.message);
     }
     const message = error instanceof Error ? error.message : 'Unknown error';
     const vfsDisconnected = /not connected|WebSocket|ECONNREFUSED/i.test(message);

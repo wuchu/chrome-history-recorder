@@ -7,6 +7,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { buildVfsFileUrl, buildVfsThumbnailUrl } from '../utils/media';
+import { debugEventLog } from '../../../shared/debug';
 
 /**
  * Background event structure
@@ -85,7 +86,7 @@ export function useBackgroundMessaging({
     const handleMessage = (message: BackgroundEvent) => {
       if (!mountedRef.current) return;
 
-      console.log('[BackgroundMessaging] Event received:', message.type, message.data);
+      debugEventLog('[BackgroundMessaging] Event received:', message.type, message.data);
 
       // Update connection status
       if (message.type === 'vfs:connected') {

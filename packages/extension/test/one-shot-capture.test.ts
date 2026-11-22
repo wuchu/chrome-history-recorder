@@ -11,6 +11,7 @@ vi.mock('../src/background/capture-session', () => ({
   getCaptureSessionStore: vi.fn(),
 }));
 import type { OneShotMediaCandidate } from '../src/shared/extension-runtime';
+import { UploadMediaError } from '../src/background/http-upload';
 
 function candidate(overrides: Partial<OneShotMediaCandidate> = {}): OneShotMediaCandidate {
   return {
@@ -74,7 +75,7 @@ describe('saveOneShotCandidate', () => {
       expect.objectContaining({
         mimeType: 'image/png',
         url: 'https://example.com/a.png',
-        buffer: expect.any(Array),
+        buffer: expect.any(Uint8Array),
       })
     );
     expect(getCaptureSessionStore).not.toHaveBeenCalled();
@@ -224,6 +225,37 @@ describe('saveOneShotCandidate', () => {
 
     const result = await saveOneShotCandidate(1, candidate(), { saveMedia });
     expect(result.errorCode).toBe('vfs-disconnected');
+  });
+
+  it('maps upload failures to one-shot reasons', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        headers: { get: () => 'image/png' },
+        arrayBuffer: async () => bytes(2048).buffer,
+      }))
+    );
+    const saveMedia = vi.fn(async () => {
+      throw new UploadMediaError('network', 'VFS upload failed: Failed to fetch');
+    });
+    const result = await saveOneShotCandidate(1, candidate(), { saveMedia });
+    expect(result.errorCode).toBe('vfs-disconnected');
+
+    const tooLarge = vi.fn(async () => {
+      throw new UploadMediaError('http', 'too large', 413);
+    });
+    expect((await saveOneShotCandidate(1, candidate(), { saveMedia: tooLarge })).errorCode).toBe(
+      'too-large'
+    );
+
+    const badMime = vi.fn(async () => {
+      throw new UploadMediaError('http', 'unsupported', 415);
+    });
+    expect((await saveOneShotCandidate(1, candidate(), { saveMedia: badMime })).errorCode).toBe(
+      'unsupported-mime'
+    );
   });
 
   it('injects the scanner and returns its result', async () => {

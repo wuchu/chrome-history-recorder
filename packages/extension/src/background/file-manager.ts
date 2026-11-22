@@ -5,6 +5,8 @@
  */
 
 import { getVFSWebSocketClient, VFSFileMetadata } from './vfs-ws-client';
+import { uploadMedia } from './http-upload';
+import { debugEventLog } from '../shared/debug';
 
 /**
  * HTTP Server base URL for thumbnail and file access
@@ -109,19 +111,24 @@ export class FileManager {
    * Handle capture:media message from Content Script
    */
   async handleCaptureMedia(data: {
-    buffer: ArrayBuffer | number[];
+    buffer: ArrayBuffer | Uint8Array | number[];
     mimeType: string;
     url: string;
     capturedAt?: string;
   }): Promise<{ hash: string; duplicate: boolean }> {
     try {
-      const bufferSize = Array.isArray(data.buffer) ? data.buffer.length : data.buffer.byteLength;
+      const bufferSize =
+        data.buffer instanceof ArrayBuffer
+          ? data.buffer.byteLength
+          : Array.isArray(data.buffer)
+            ? data.buffer.length
+            : data.buffer.byteLength;
       console.log(`[FileManager] Capturing media: ${data.mimeType}, ${bufferSize} bytes`);
       if (bufferSize === 0) {
         throw new Error('Cannot capture empty media buffer');
       }
 
-      const result = await this.vfsWsClient.saveFile({
+      const result = await uploadMedia({
         buffer: data.buffer,
         mimeType: data.mimeType,
         sourceUrl: data.url,
@@ -234,7 +241,7 @@ export class FileManager {
    * Broadcast event to all connected DevTools Panels
    */
   broadcastEvent(type: FileEventType | string, data: unknown): void {
-    console.log(`[FileManager] Broadcasting event: ${type}`, data);
+    debugEventLog(`[FileManager] Broadcasting event: ${type}`, data);
     chrome.runtime
       .sendMessage({
         type,

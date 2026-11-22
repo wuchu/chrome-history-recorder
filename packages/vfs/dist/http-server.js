@@ -11,8 +11,10 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.VFSHTTPServer = exports.DEFAULT_MAX_UPLOAD_SIZE = void 0;
 exports.sanitizeDownloadName = sanitizeDownloadName;
 exports.buildDownloadName = buildDownloadName;
+exports.parseByteRange = parseByteRange;
 exports.createHTTPServer = createHTTPServer;
 const http_1 = __importDefault(require("http"));
+const fs_1 = __importDefault(require("fs"));
 const api_1 = require("./api");
 /**
  * Default maximum size accepted by `POST /upload` (200 MiB).
@@ -83,6 +85,32 @@ function buildDownloadName(metadata) {
         .trim() || `${metadata.hash}.${extension}`;
     const encodedName = encodeURIComponent(fullName).replace(/['()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
     return { fullName, asciiName, encodedName };
+}
+function parseByteRange(header, size) {
+    if (!header)
+        return null;
+    const match = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+    if (!match)
+        return 'invalid';
+    const [, rawStart, rawEnd] = match;
+    if (!rawStart && !rawEnd)
+        return 'invalid';
+    if (size <= 0)
+        return 'invalid';
+    if (!rawStart) {
+        const suffixLength = Number(rawEnd);
+        if (!Number.isFinite(suffixLength) || suffixLength <= 0)
+            return 'invalid';
+        return { start: Math.max(0, size - suffixLength), end: size - 1 };
+    }
+    const start = Number(rawStart);
+    if (!Number.isFinite(start) || start < 0 || start >= size)
+        return 'invalid';
+    let end = rawEnd ? Number(rawEnd) : size - 1;
+    if (!Number.isFinite(end) || end < start)
+        return 'invalid';
+    end = Math.min(end, size - 1);
+    return { start, end };
 }
 /**
  * HTTP Server class
@@ -158,7 +186,7 @@ class VFSHTTPServer {
                 this.handleStats(res);
             }
             else if (pathname.startsWith('/files/')) {
-                await this.handleFiles(res, pathname, query);
+                await this.handleFiles(req, res, pathname, query);
             }
             else {
                 this.handleNotFound(res);
@@ -286,7 +314,7 @@ class VFSHTTPServer {
     /**
      * Handle files endpoints
      */
-    async handleFiles(res, pathname, query) {
+    async handleFiles(req, res, pathname, query) {
         // Extract hash from path: /files/:hash/...
         const parts = pathname.split('/').filter(Boolean);
         if (parts.length < 2) {
@@ -303,30 +331,104 @@ class VFSHTTPServer {
             this.handleMetadata(res, hash);
         }
         else if (subpath === '' || subpath === '/') {
-            await this.handleFileDownload(res, hash);
+            await this.handleFileDownload(req, res, hash, query);
         }
         else {
             this.handleNotFound(res);
         }
     }
     /**
-     * Handle file download endpoint
+     * Handle file download endpoint.
+     *
+     * Streams the blob from disk, supports a single byte range, and switches
+     * between inline preview and attachment download.
      */
-    async handleFileDownload(res, hash) {
-        const result = this.api.getFile(hash);
-        if (!result) {
+    async handleFileDownload(req, res, hash, query) {
+        const blob = this.api.getBlobPath(hash);
+        if (!blob) {
             this.handleNotFound(res, 'File not found');
             return;
         }
-        // Set response headers
-        const download = buildDownloadName(result.metadata);
-        res.setHeader('Content-Type', result.mimeType);
-        res.setHeader('Content-Length', result.size);
-        res.setHeader('Cache-Control', 'max-age=3600');
-        res.setHeader('Content-Disposition', `attachment; filename="${download.asciiName}"; filename*=UTF-8''${download.encodedName}`);
+        const etag = `"${hash}"`;
+        const lastModified = this.getLastModified(blob.path);
+        const metadata = this.api.getMetadata(hash);
+        const download = query.get('download') === '1' || query.get('download') === 'true';
+        const range = parseByteRange(req.headers.range, blob.size);
+        res.setHeader('Accept-Ranges', 'bytes');
+        res.setHeader('Cache-Control', 'public, max-age=3600');
+        res.setHeader('ETag', etag);
         res.setHeader('X-Content-Type-Options', 'nosniff');
-        res.writeHead(200);
-        res.end(result.buffer);
+        if (lastModified)
+            res.setHeader('Last-Modified', lastModified);
+        if (download) {
+            const name = buildDownloadName({
+                hash,
+                blob_ext: metadata?.blob_ext ?? 'bin',
+                ai_filename: metadata?.ai_filename,
+            });
+            res.setHeader('Content-Disposition', `attachment; filename="${name.asciiName}"; filename*=UTF-8''${name.encodedName}`);
+        }
+        else {
+            res.setHeader('Content-Disposition', 'inline');
+        }
+        if (this.isNotModified(req.headers['if-none-match'], etag)) {
+            res.writeHead(304);
+            res.end();
+            return;
+        }
+        if (range === 'invalid') {
+            res.setHeader('Content-Range', `bytes */${blob.size}`);
+            res.writeHead(416, { 'Content-Length': '0' });
+            res.end();
+            return;
+        }
+        res.setHeader('Content-Type', blob.mimeType);
+        if (range) {
+            const length = range.end - range.start + 1;
+            res.setHeader('Content-Range', `bytes ${range.start}-${range.end}/${blob.size}`);
+            res.setHeader('Content-Length', String(length));
+        }
+        else {
+            res.setHeader('Content-Length', String(blob.size));
+        }
+        res.writeHead(range ? 206 : 200);
+        if (req.method === 'HEAD') {
+            res.end();
+            return;
+        }
+        const stream = fs_1.default.createReadStream(blob.path, range ?? undefined);
+        const onClose = () => {
+            if (!res.writableEnded)
+                stream.destroy();
+        };
+        res.on('close', onClose);
+        stream.on('error', (error) => {
+            res.off('close', onClose);
+            if (!res.headersSent) {
+                this.handleError(res, error.message);
+            }
+            else {
+                res.destroy();
+            }
+        });
+        stream.pipe(res);
+    }
+    getLastModified(blobPath) {
+        try {
+            return fs_1.default.statSync(blobPath).mtime.toUTCString();
+        }
+        catch {
+            return undefined;
+        }
+    }
+    isNotModified(header, etag) {
+        if (!header)
+            return false;
+        const value = Array.isArray(header) ? header.join(',') : header;
+        return value
+            .split(',')
+            .map((part) => part.trim())
+            .some((part) => part === '*' || part === etag);
     }
     /**
      * Handle thumbnail endpoint

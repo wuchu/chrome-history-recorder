@@ -3,6 +3,7 @@ export {
   useCapturedFiles,
   useClassifyEvents,
 } from './hooks/useBackgroundMessaging';
+export type { BackgroundEvent } from './hooks/useBackgroundMessaging';
 export { useCombinedMedia } from './hooks/useCombinedMedia';
 export type { CombinedMediaItem } from './hooks/useCombinedMedia';
 export { useHistoricalImages } from './hooks/useHistoricalImages';

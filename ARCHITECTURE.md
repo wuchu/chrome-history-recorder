@@ -50,7 +50,7 @@ Extension 只保留浏览器专属能力与界面，不再包含业务调度或 
 - **技术**: Manifest V3 Service Worker
 - **主要模块**:
   - `VFSWebSocketClient`: 薄 RPC/事件客户端，不再持有调度或 Ollama 逻辑
-  - `FileManager`: 捕获入库（图片 `saveFile`、视频 `POST /upload`）
+  - `FileManager`: 捕获入库（图片与视频统一走 `POST /upload` 流式上传）
   - `DebuggerCaptureController`: tab-scoped CDP 捕获与视频候选识别
   - `CaptureSessionStore`: 单捕获会话、计数器、200 条事件日志、`chrome.storage.session` 快照
   - `VideoDownloadManager`: offscreen 下载队列、并发与取消
@@ -78,8 +78,8 @@ Extension 只保留浏览器专属能力与界面，不再包含业务调度或 
 - `bootstrap`: 构造 `VFSAPI`、`ai` 客户端、配置存储、调度器，启动 WS/HTTP transport
 - `Scheduler`: claim → handler → 写回、全局并发、退避、stale recovery、paused/running 意图
 - `ConfigStore`: 配置真源（`workspace/config.json`），一次性迁移 chrome.storage，推送镜像
-- `EventBus`: 聚合 vfs/scheduler/ai 事件，经 transport 推送给 extension
-- 入库钩子: `saveFile` / `POST /upload` 成功后自动 enqueue `classify` + `rename`
+- `EventBus`: 聚合 vfs/scheduler/ai 事件，经 transport 推送给 extension；`queue:updated`、`*:scheduler`、`media-archive:status`、`tags:updated` 按 250ms 窗口合并为最新快照
+- 入库钩子: `POST /upload`（兼容 `saveFile`）成功后自动 enqueue `classify` + `rename`
 
 ### 3. AI（`packages/ai`）
 
@@ -113,7 +113,8 @@ Extension 只保留浏览器专属能力与界面，不再包含业务调度或 
 
 - **地址**: `http://localhost:8766`
 - **职责**:
-  - `GET /files/:hash`: 下载原始文件
+  - `GET /files/:hash`: 流式读取原始文件，支持单段 `Range`/`206`、`ETag`/`304`；默认 inline 预览
+  - `GET /files/:hash?download=1`: 以 attachment 返回，文件名取 `ai_filename` 或 hash
   - `GET /files/:hash/thumbnail?size=small|medium|large`: 获取缩略图
   - `GET /files/:hash/metadata`: 获取单个文件元数据
   - `GET /stats`: 获取统计信息
@@ -422,10 +423,10 @@ blobs/<hash>.<ext>  ──copy──▶  .<hash>.<ext>.part ──rename──�
    ↓
 8. Background FileManager.handleCaptureMedia()
    ↓
-9. VFSWebSocketClient.saveFile() → app（ws://localhost:8765）
+9. FileManager.handleCaptureMedia() → POST /upload（流式二进制，不再经 WS JSON）
    ↓
-10. app: VFS hash、保存 blob、写入 SQLite，并自动 enqueue AI 任务
-    ↓
+10. app: VFS 流式计算 hash、落临时文件并原子入库，自动 enqueue AI 任务
+   ↓
 11. Response: { hash, duplicate, size }
     ↓
 12. app 广播 file:captured；extension 中继给 Options 媒体库
@@ -448,7 +449,7 @@ blobs/<hash>.<ext>  ──copy──▶  .<hash>.<ext>.part ──rename──�
                      http(s) / data: / blob:     用户多选
                               │                       │
                               ▼                       ▼
-                     OneShotCapture.resolve ──▶ FileManager.saveFile
+                     OneShotCapture.resolve ──▶ FileManager (POST /upload)
                               │                       │
                               ▼                       ▼
                      app ingest hook ──▶ AI / archive / file:captured
@@ -462,7 +463,7 @@ blobs/<hash>.<ext>  ──copy──▶  .<hash>.<ext>.part ──rename──�
 ### AI 任务流程
 
 ```
-1. app 在 saveFile / POST /upload 入库成功后触发 ingest hook
+1. app 在 POST /upload（或兼容的 saveFile）入库成功后触发 ingest hook
    ↓
 2. app 自动 enqueue classify + rename（幂等）
    ↓
@@ -475,8 +476,8 @@ blobs/<hash>.<ext>  ──copy──▶  .<hash>.<ext>.part ──rename──�
 5. classify handler（packages/ai）:
    a. 通过 VFSAPI 读取大缩略图（回退原图）
    b. Ollama 融合调用 → tags + aliases + confidence
-   c. VFS applyClassification()：事务解析/创建标签、写别名、保留 system:*、停写 category
-   d. 广播 tags:updated
+   c. VFS applyClassification()：事务解析/创建标签、写别名、按文件差异增量维护 usage_count、保留 system:*、停写 category
+   d. 合并窗口结束后广播一次 tags:updated（含最新 tags + counts）
    ↓
 6. rename handler:
    a. Ollama 视觉调用 → 展示名
@@ -505,7 +506,7 @@ blobs/<hash>.<ext>  ──copy──▶  .<hash>.<ext>.part ──rename──�
 4. VFS HTTP Server reads blob/thumbnail from workspace
 ```
 
-单文件下载使用 `Content-Disposition: attachment`，文件名优先取 `ai_filename` + 真实扩展名，缺失时回退到 `<hash>.<ext>`；文件名会清理路径分隔符、控制字符和保留名，并提供 RFC 5987 的 `filename*`。
+单文件下载默认使用 `Content-Disposition: inline`，供图片预览与 `<video>` 按需读取/seek；显式下载请求 `?download=1` 时返回 `attachment`，文件名优先取 `ai_filename` + 真实扩展名，缺失时回退到 `<hash>.<ext>`；文件名会清理路径分隔符、控制字符和保留名，并提供 RFC 5987 的 `filename*`。文件端点支持单段 `Range`、`ETag`/`If-None-Match` 和 `HEAD`，并以流式响应避免把大视频整体读入内存。
 
 #### 媒体导出
 

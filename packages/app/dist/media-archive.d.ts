@@ -118,6 +118,8 @@ export declare class MediaArchiveWorker {
     private lastRunAt?;
     private lastError?;
     private lastKnownEnabled;
+    private readonly queueCoalescer;
+    private readonly statusCoalescer;
     constructor(dependencies: MediaArchiveDependencies);
     /**
      * Start the runner: restore the baseline, apply a pending target change, and
@@ -177,7 +179,9 @@ export declare class MediaArchiveWorker {
     private getArchiveSummary;
     private persist;
     private emitStatus;
+    private flushStatus;
     private emitQueueUpdated;
+    private flushQueueUpdated;
     private emitEvent;
 }
 //# sourceMappingURL=media-archive.d.ts.map

@@ -14,6 +14,7 @@ import type {
   WorkspaceConfigInfo,
   WorkspacePathUpdateResult,
 } from '../shared/extension-runtime';
+import { debugEventLog } from '../shared/debug';
 
 /**
  * VFS WebSocket Client configuration
@@ -439,6 +440,13 @@ export class VFSWebSocketClient {
   /**
    * Save file
    */
+  /**
+   * Save file.
+   *
+   * @deprecated The extension ingest path now uses `uploadMedia` (`POST
+   * /upload`). This RPC is retained for compatibility with older callers and
+   * tests; do not add new capture call sites.
+   */
   async saveFile(params: {
     buffer: ArrayBuffer | number[];
     mimeType: string;
@@ -449,7 +457,7 @@ export class VFSWebSocketClient {
     const bufferArray = Array.isArray(params.buffer)
       ? params.buffer
       : Array.from(new Uint8Array(params.buffer));
-    console.log(
+    debugEventLog(
       `[VFSWebSocketClient] Sending saveFile: ${params.mimeType}, ${bufferArray.length} bytes`
     );
     return this.send('saveFile', {

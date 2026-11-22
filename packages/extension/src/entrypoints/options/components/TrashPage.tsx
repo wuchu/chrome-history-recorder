@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Button, Empty, Modal, Space, Spin, Tag, Typography, message } from 'antd';
 import { MediaDetail, VirtualMasonryGrid } from '../../media-browser/components';
 import {
   useBackgroundMessaging,
   useHistoricalImages,
   useTheme,
+  type BackgroundEvent,
   type CombinedMediaItem,
 } from '../../media-browser/hooks';
 import { appStyles } from '../../media-browser/styles';
@@ -36,7 +37,14 @@ export function TrashPage() {
   const [selectedHashes, setSelectedHashes] = useState<Set<string>>(new Set());
   const [trashSize, setTrashSize] = useState(0);
   const [busy, setBusy] = useState(false);
-  const { events, vfsConnected, sendMessage } = useBackgroundMessaging();
+  const eventHandlerRef = useRef<(event: BackgroundEvent) => void>(() => {});
+  const onEvent = useCallback((event: BackgroundEvent) => {
+    eventHandlerRef.current(event);
+  }, []);
+  const { vfsConnected, sendMessage } = useBackgroundMessaging({
+    collectEvents: false,
+    onEvent,
+  });
   const theme = useTheme();
 
   const trash = useHistoricalImages({
@@ -59,19 +67,19 @@ export function TrashPage() {
     }
   }, [sendMessage]);
 
-  const lastEventType = events.length > 0 ? events[events.length - 1].type : null;
-
   useEffect(() => {
-    if (
-      lastEventType === 'file:restored' ||
-      lastEventType === 'file:purged' ||
-      lastEventType === 'trash:emptied' ||
-      lastEventType === 'trash:restored-all'
-    ) {
-      refreshTrash();
-      void loadStats();
-    }
-  }, [lastEventType, refreshTrash, loadStats]);
+    eventHandlerRef.current = (event: BackgroundEvent) => {
+      if (
+        event.type === 'file:restored' ||
+        event.type === 'file:purged' ||
+        event.type === 'trash:emptied' ||
+        event.type === 'trash:restored-all'
+      ) {
+        refreshTrash();
+        void loadStats();
+      }
+    };
+  }, [refreshTrash, loadStats]);
 
   useEffect(() => {
     if (!selectedItem) return;

@@ -3,16 +3,14 @@
 ## Purpose
 
 Define user-initiated one-shot media capture that saves individual images or page-scanned candidates into the global media library without creating, modifying, or appearing in a capture session.
-
 ## Requirements
-
 ### Requirement: Image context menu saves to the library
 
 The extension SHALL provide a context menu item on images that saves the clicked image to the media library without starting a capture session.
 
 #### Scenario: Save a clicked image
 - **WHEN** the user right-clicks an image and chooses "保存图片到媒体库"
-- **THEN** the extension SHALL resolve the clicked image URL and save its bytes through the existing `saveFile` ingest path
+- **THEN** the extension SHALL resolve the clicked image URL and save its bytes through the existing streamed upload ingest path
 - **AND** it SHALL NOT attach the debugger
 - **AND** it SHALL NOT create or modify a capture session
 
@@ -107,7 +105,7 @@ The extension SHALL resolve candidate bytes according to the URL scheme.
 
 #### Scenario: Save through the existing pipeline
 - **WHEN** bytes are resolved
-- **THEN** the extension SHALL call the existing `saveFile` ingest path with the bytes, MIME type, source URL, and capture time
+- **THEN** the extension SHALL upload them through the existing `POST /upload` ingest path with the MIME type, source URL, and capture time
 - **AND** AI enqueueing, archive enqueueing, and `file:captured` library updates SHALL happen through the existing app hooks
 
 ### Requirement: Noise filters and duplicate reporting

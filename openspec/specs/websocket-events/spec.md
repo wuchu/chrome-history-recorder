@@ -3,9 +3,7 @@
 ## Purpose
 
 Define the WebSocket event channel used to push capture, classification, service, and error events to connected clients.
-
 ## Requirements
-
 ### Requirement: WebSocket 服务端点
 Proxy 服务必须 (SHALL) 提供 WebSocket 端点用于实时事件推送。
 
@@ -129,7 +127,7 @@ Proxy 服务必须 (SHALL) 推送服务状态变化事件。
 - **AND** 事件数据必须 (SHALL) 包含插件名称和新状态
 
 ### Requirement: 事件订阅过滤
-Proxy 服务应该 (SHOULD) 支持事件订阅过滤。
+Proxy 服务可以 (MAY) 支持事件订阅过滤。若服务端声明支持，它必须 (SHALL) 正确处理订阅与取消订阅消息；未发送订阅消息的客户端默认接收所有事件。
 
 #### Scenario: 订阅特定事件类型
 - **WHEN** 客户端发送订阅消息
@@ -206,3 +204,25 @@ Extension 必须 (SHALL) 实现 WebSocket 客户端连接 VFS Service。
 - **AND** `file:captured` 必须 (SHALL) 添加到实时捕获流
 - **AND** `classify:started` 必须 (SHALL) 更新对应项的状态为分类中
 - **AND** `classify:complete` 必须 (SHALL) 更新对应项的分类结果
+
+### Requirement: Tag snapshot events
+
+The app SHALL push tag vocabulary and count snapshots to connected clients as a single event that clients can render without an additional request.
+
+#### Scenario: Emit a tag snapshot
+- **WHEN** a classification or tag mutation changes the vocabulary or counts
+- **THEN** the system SHALL push a `tags:updated` event
+- **AND** the event data SHALL include:
+  - `tags`: the vocabulary records needed by the UI
+  - `counts`: the tag counts keyed by tag name, including `all`, `image`, `video`, `starred`, and `uncategorized`
+- **AND** a client SHALL be able to update its tag tabs and counts from this payload alone
+
+#### Scenario: Coalesce tag snapshots
+- **WHEN** multiple classifications finish within the coalescing window
+- **THEN** the system SHALL push at most one `tags:updated` event per window
+- **AND** the pushed payload SHALL reflect the latest vocabulary and counts
+
+#### Scenario: Task lifecycle events are not coalesced
+- **WHEN** a task starts, completes, retries, fails, or is skipped
+- **THEN** the task lifecycle event SHALL be pushed immediately
+- **AND** it SHALL NOT be merged into a tag or queue snapshot

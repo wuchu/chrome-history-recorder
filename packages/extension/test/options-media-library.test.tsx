@@ -182,6 +182,47 @@ describe('Options MediaLibrary', () => {
     });
   });
 
+  it('uses the tags:updated payload without refetching tag data', async () => {
+    render(<MediaLibrary />);
+    await screen.findByText('📷 图片');
+
+    const sendMessage = vi.mocked(chrome.runtime.sendMessage);
+    const tagRequests = () =>
+      sendMessage.mock.calls.filter(([request]) => {
+        const type = (request as { type?: string }).type;
+        return type === 'getTagCounts' || type === 'listTags';
+      }).length;
+    const before = tagRequests();
+
+    act(() => {
+      for (const listener of messageListeners) {
+        listener({
+          type: 'tags:updated',
+          data: {
+            tags: [
+              {
+                id: 1,
+                name: 'sunset',
+                label: '🌅 日落',
+                usage_count: 1,
+                created_by: 'ai',
+                is_pinned: 0,
+                created_at: '2026-01-01T00:00:00.000Z',
+                updated_at: '2026-01-01T00:00:00.000Z',
+              },
+            ],
+            counts: { all: 2, image: 2, sunset: 1 },
+          },
+          timestamp: '2026-01-01T00:00:01.000Z',
+        });
+      }
+    });
+
+    expect(await screen.findByText('#🌅 日落')).toBeTruthy();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(tagRequests()).toBe(before);
+  });
+
   it('searches through the library query', async () => {
     render(<MediaLibrary />);
     await screen.findByText('📷 图片');

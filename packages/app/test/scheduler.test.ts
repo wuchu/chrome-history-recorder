@@ -319,4 +319,34 @@ describe('App Scheduler', () => {
       concurrency: 2,
     });
   });
+
+  it('coalesces queue snapshots while keeping lifecycle events immediate', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+    try {
+      const queueSnapshots: Array<{ pending: number; total: number }> = [];
+      const lifecycle: string[] = [];
+      events.subscribe((event, data) => {
+        if (event === 'queue:updated')
+          queueSnapshots.push(data as { pending: number; total: number });
+        if (event === 'task:queued') lifecycle.push(event);
+      });
+
+      const saved = api.saveFile({
+        buffer: Buffer.from('coalesce-content'),
+        mimeType: 'image/jpeg',
+      });
+      await scheduler.enqueuePair(saved.hash);
+
+      expect(lifecycle).toHaveLength(2);
+      expect(queueSnapshots).toHaveLength(1);
+
+      vi.advanceTimersByTime(250);
+      expect(queueSnapshots).toHaveLength(2);
+      expect(queueSnapshots[1]).toMatchObject({ pending: 2, total: 2 });
+    } finally {
+      scheduler.stop();
+      vi.useRealTimers();
+    }
+  });
 });
