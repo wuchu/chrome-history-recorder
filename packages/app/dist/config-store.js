@@ -48,6 +48,7 @@ class ConfigStore {
             ...this.config,
             promptTemplates: this.config.promptTemplates ? { ...this.config.promptTemplates } : undefined,
             enabledVideoTypes: [...this.config.enabledVideoTypes],
+            videoCaptureModeByHost: { ...this.config.videoCaptureModeByHost },
         };
     }
     hasPersistedConfig() {

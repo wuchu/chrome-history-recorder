@@ -13,6 +13,7 @@ Chrome Media Recorder 使用 **四层**架构：薄 extension UX 层、长驻 ap
 │  Background SW                                                     │
 │   ├─ DebuggerCaptureController（CDP 捕获）                          │
 │   ├─ VideoDownloadManager（offscreen 下载）                         │
+│   ├─ VideoAssemblyController（完整缓冲区间组装）                    │
 │   ├─ 薄 VFSWebSocketClient（RPC + 事件中继）                        │
 │   └─ 配置镜像（app 为真源）                                         │
 └──────────────┬────────────────────────────────────┬───────────────┘
@@ -54,6 +55,7 @@ Extension 只保留浏览器专属能力与界面，不再包含业务调度或 
   - `DebuggerCaptureController`: tab-scoped CDP 捕获与视频候选识别
   - `CaptureSessionStore`: 单捕获会话、计数器、200 条事件日志、`chrome.storage.session` 快照
   - `VideoDownloadManager`: offscreen 下载队列、并发与取消
+  - `VideoAssemblyController`: `buffer-only` 模式的区间账本、body 读取与完整覆盖判定
   - `OneShotCapture`: 右键图片保存、页面扫描、data/blob 字节解析；不 attach debugger，不进入捕获会话
   - 配置镜像: 启动/重连时从 app 拉取，`config:updated` 时更新；真源在 app
 
@@ -70,6 +72,30 @@ Extension 只保留浏览器专属能力与界面，不再包含业务调度或 
   - 将捕获的 buffer 交给 `FileManager.handleCaptureMedia`
   - 识别全局资源视频响应，交给 `VideoDownloadManager`
   - 跳过过大文件和不支持格式
+
+#### 视频捕获模式
+
+视频响应按页面主机的配置进入两条互斥链路：
+
+```
+re-download（默认）
+  responseReceived(video/*) → evaluateVideoResponse → 下载候选
+      → offscreen 重新请求完整 URL → POST /upload
+
+buffer-only（抖音相关域名默认）
+  responseReceived(video/*, 200/206)
+      → 解析 Content-Range / Content-Length → 区间账本
+      → loadingFinished: getResponseBody / streamResourceContent
+      → PUT /assemblies/:id/chunks?offset=N
+      → 区间并集覆盖 [0,total) → POST /assemblies/:id/complete → VFS
+      → 有洞 → 默认开启 videoAssemblyFillGaps，只对缺失区间在页面上下文发起带凭证的 Range 请求
+      → 关闭补洞时丢弃并记录 video:skipped（不补洞、不重试、不二次下载）
+```
+
+- 模式配置：全局 `videoCaptureMode` + `videoCaptureModeByHost` 后缀覆盖；Options 中可编辑。
+- 来源验证：`206 + Content-Range` 或重复 Range 直接放行；否则用页面 video source、`__vid` / `aweme_id` / 路径尾段匹配。HLS/DASH 清单、`.ts` / `.m4s` 分片，以及没有任何 Range 证据的全 blob 来源仍跳过。
+- 页面聚焦：页面 URL 暴露 `modal_id` / `aweme_id` / `/video/<id>` 时，只组装 `__vid` 匹配的主视频，并中止不匹配页面标识的活跃 job。
+- 服务端 `AssemblyManager` 持有临时文件和权威区间账本；`complete` 时再次校验覆盖，扩展侧账本只用于进度展示。
 
 ### 2. App（`packages/app`）
 
@@ -117,6 +143,7 @@ Extension 只保留浏览器专属能力与界面，不再包含业务调度或 
   - `GET /files/:hash?download=1`: 以 attachment 返回，文件名取 `ai_filename` 或 hash
   - `GET /files/:hash/thumbnail?size=small|medium|large`: 获取缩略图
   - `GET /files/:hash/metadata`: 获取单个文件元数据
+  - `POST /assemblies` / `PUT /assemblies/:id/chunks` / `POST /assemblies/:id/complete` / `DELETE /assemblies/:id`: 缓冲视频组装（token 保护、按偏移写入、服务端校验完整覆盖）
   - `GET /stats`: 获取统计信息
   - `GET /health`: 健康检查
   - 提供浏览器原生缓存友好的响应头
@@ -357,7 +384,8 @@ packages/app（长驻 Node 进程）:
 
 Chrome Extension（薄层）:
 ├── DebuggerCaptureController  # CDP 捕获
-├── VideoDownloadManager       # offscreen 下载
+├── VideoDownloadManager       # offscreen 下载（re-download）
+├── VideoAssemblyController    # 完整缓冲区间组装（buffer-only）
 ├── 薄 VFSWebSocketClient      # RPC + 事件中继
 ├── 配置镜像                   # app 推送，capture 使用
 └── Side Panel / Options / Offscreen UI

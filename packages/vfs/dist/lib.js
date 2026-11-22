@@ -8,7 +8,7 @@
  * extension over WebSocket/HTTP.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.expandPath = exports.getDefaultWorkspacePath = exports.parseArgs = exports.DEFAULT_MAX_UPLOAD_SIZE = exports.createHTTPServer = exports.VFSHTTPServer = exports.createWebSocketServer = exports.VFSSWebSocketServer = exports.createDispatcher = exports.ThumbnailStorage = exports.getMimeTypeFromExtension = exports.getExtensionFromMimeType = exports.calculateHash = exports.BlobStorage = exports.ensureWorkspace = exports.SQLiteDatabase = exports.InvalidMediaError = exports.UploadEmptyError = exports.UploadTooLargeError = exports.VFSAPI = void 0;
+exports.expandPath = exports.getDefaultWorkspacePath = exports.parseArgs = exports.DEFAULT_ASSEMBLY_MAX_BYTES = exports.AssemblyUnauthorizedError = exports.AssemblyNotFoundError = exports.AssemblyInvalidError = exports.AssemblyIncompleteError = exports.AssemblyCapacityError = exports.AssemblyManager = exports.DEFAULT_MAX_UPLOAD_SIZE = exports.createHTTPServer = exports.VFSHTTPServer = exports.createWebSocketServer = exports.VFSSWebSocketServer = exports.createDispatcher = exports.ThumbnailStorage = exports.getMimeTypeFromExtension = exports.getExtensionFromMimeType = exports.calculateHash = exports.BlobStorage = exports.ensureWorkspace = exports.SQLiteDatabase = exports.InvalidMediaError = exports.UploadEmptyError = exports.UploadTooLargeError = exports.VFSAPI = void 0;
 var api_1 = require("./api");
 Object.defineProperty(exports, "VFSAPI", { enumerable: true, get: function () { return api_1.VFSAPI; } });
 Object.defineProperty(exports, "UploadTooLargeError", { enumerable: true, get: function () { return api_1.UploadTooLargeError; } });
@@ -33,6 +33,14 @@ var http_server_1 = require("./http-server");
 Object.defineProperty(exports, "VFSHTTPServer", { enumerable: true, get: function () { return http_server_1.VFSHTTPServer; } });
 Object.defineProperty(exports, "createHTTPServer", { enumerable: true, get: function () { return http_server_1.createHTTPServer; } });
 Object.defineProperty(exports, "DEFAULT_MAX_UPLOAD_SIZE", { enumerable: true, get: function () { return http_server_1.DEFAULT_MAX_UPLOAD_SIZE; } });
+var assembly_1 = require("./assembly");
+Object.defineProperty(exports, "AssemblyManager", { enumerable: true, get: function () { return assembly_1.AssemblyManager; } });
+Object.defineProperty(exports, "AssemblyCapacityError", { enumerable: true, get: function () { return assembly_1.AssemblyCapacityError; } });
+Object.defineProperty(exports, "AssemblyIncompleteError", { enumerable: true, get: function () { return assembly_1.AssemblyIncompleteError; } });
+Object.defineProperty(exports, "AssemblyInvalidError", { enumerable: true, get: function () { return assembly_1.AssemblyInvalidError; } });
+Object.defineProperty(exports, "AssemblyNotFoundError", { enumerable: true, get: function () { return assembly_1.AssemblyNotFoundError; } });
+Object.defineProperty(exports, "AssemblyUnauthorizedError", { enumerable: true, get: function () { return assembly_1.AssemblyUnauthorizedError; } });
+Object.defineProperty(exports, "DEFAULT_ASSEMBLY_MAX_BYTES", { enumerable: true, get: function () { return assembly_1.DEFAULT_ASSEMBLY_MAX_BYTES; } });
 var config_1 = require("./config");
 Object.defineProperty(exports, "parseArgs", { enumerable: true, get: function () { return config_1.parseArgs; } });
 Object.defineProperty(exports, "getDefaultWorkspacePath", { enumerable: true, get: function () { return config_1.getDefaultWorkspacePath; } });

@@ -98,6 +98,7 @@
       "media": "Media",
       "ai": "AI",
       "videoQueue": "Video",
+      "videoAssembly": "Video buffering {{assembling}} active · {{complete}} complete · {{incomplete}} incomplete",
       "running": "Running {{duration}}",
       "duration": "Took {{duration}}"
     },
@@ -134,6 +135,9 @@
         "failed": "Failed",
         "video:candidate": "Video candidate",
         "video:result": "Video result",
+        "video:assembling": "Video buffering",
+        "video:complete": "Video captured",
+        "video:skipped": "Video skipped",
         "ai": "AI status"
       }
     },

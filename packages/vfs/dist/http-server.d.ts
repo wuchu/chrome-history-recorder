@@ -4,6 +4,7 @@
  * Provides HTTP endpoints for file download, thumbnails, and stats.
  */
 import { VFSAPI } from './api';
+import { AssemblyManager } from './assembly';
 /**
  * Default maximum size accepted by `POST /upload` (200 MiB).
  */
@@ -43,6 +44,7 @@ export interface HTTPServerConfig {
     port: number;
     host?: string;
     maxUploadSize?: number;
+    assembly?: AssemblyManager;
 }
 /**
  * HTTP Server class
@@ -52,6 +54,8 @@ export declare class VFSHTTPServer {
     private api;
     private port;
     private maxUploadSize;
+    private assembly;
+    private readonly ownsAssembly;
     constructor(api: VFSAPI, config: HTTPServerConfig);
     /**
      * Setup HTTP server
@@ -77,6 +81,26 @@ export declare class VFSHTTPServer {
      * Handle `POST /upload`.
      */
     private handleUpload;
+    /**
+     * Handle buffered video assembly jobs.
+     *
+     * Routes:
+     *   POST   /assemblies                     create a job
+     *   PUT    /assemblies/:jobId/chunks      write bytes at ?offset=N
+     *   POST   /assemblies/:jobId/complete    finalize when coverage is complete
+     *   DELETE /assemblies/:jobId             discard the job
+     */
+    private handleAssemblies;
+    private handleAssemblyCreate;
+    private handleAssemblyChunk;
+    private handleAssemblyComplete;
+    private handleAssemblyAbort;
+    private requireAssemblyToken;
+    private handleAssemblyError;
+    /**
+     * Read a bounded request body.
+     */
+    private readBody;
     /**
      * Read a single-valued request header.
      */

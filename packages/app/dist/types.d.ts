@@ -13,6 +13,9 @@ export declare const DEFAULT_MEDIA_ARCHIVE_INTERVAL_MINUTES = 5;
 export declare const MIN_TASK_CONCURRENCY = 1;
 export declare const MAX_TASK_CONCURRENCY = 8;
 export declare const DEFAULT_TASK_CONCURRENCY = 1;
+export type VideoCaptureMode = 'buffer-only' | 're-download';
+export declare const DEFAULT_VIDEO_CAPTURE_MODE: VideoCaptureMode;
+export declare const DEFAULT_VIDEO_CAPTURE_MODE_BY_HOST: Record<string, VideoCaptureMode>;
 export interface AppConfig {
     ollamaEndpoint: string;
     visionModel?: string;
@@ -27,6 +30,9 @@ export interface AppConfig {
     captureVideos: boolean;
     maxVideoSize: number;
     enabledVideoTypes: string[];
+    videoCaptureMode: VideoCaptureMode;
+    videoCaptureModeByHost: Record<string, VideoCaptureMode>;
+    videoAssemblyFillGaps: boolean;
     mediaArchiveEnabled: boolean;
     mediaArchiveTargetPath: string;
     mediaArchiveIntervalMinutes: number;
@@ -42,6 +48,12 @@ export interface LegacySchedulingConfig {
     classificationPaused?: boolean;
 }
 export declare function normalizeConcurrency(value: unknown): number;
+export declare function normalizeVideoCaptureMode(value: unknown, fallback?: VideoCaptureMode): VideoCaptureMode;
+/**
+ * Normalize a host-suffix map. Invalid entries are dropped; a missing or
+ * non-object value falls back to the built-in overrides.
+ */
+export declare function normalizeVideoCaptureModeByHost(value: unknown): Record<string, VideoCaptureMode>;
 /**
  * Map legacy global scheduling settings onto the new per-task fields. The
  * caller must run this before merging defaults so a persisted `false` is not

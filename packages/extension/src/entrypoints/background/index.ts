@@ -20,6 +20,8 @@ import {
   type VideoDownloadResult,
 } from '../../background/video-download';
 import { initCaptureSessionStore, getCaptureSessionStore } from '../../background/capture-session';
+import { initVideoAssemblyController } from '../../background/video-assembly-controller';
+import { probeVideoSources } from '../../background/video-source-probe';
 import {
   ONE_SHOT_MENU_ID,
   handleOneShotContextMenuClick,
@@ -36,6 +38,15 @@ import { DEFAULT_EXTENSION_CONFIG, type ExtensionConfig } from '../../shared/ext
 
 export default defineBackground(() => {
   console.log('[Media Extension] Background service worker starting...');
+
+  function decodeBase64(value: string): Uint8Array {
+    const binary = atob(value);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    return bytes;
+  }
 
   // Open the side panel when the toolbar icon is clicked.
   if (chrome.sidePanel?.setPanelBehavior) {
@@ -139,6 +150,11 @@ export default defineBackground(() => {
       ...mirroredConfig,
       ...config,
       enabledVideoTypes: [...(config.enabledVideoTypes ?? mirroredConfig.enabledVideoTypes)],
+      videoCaptureMode: config.videoCaptureMode ?? mirroredConfig.videoCaptureMode,
+      videoAssemblyFillGaps: config.videoAssemblyFillGaps ?? mirroredConfig.videoAssemblyFillGaps,
+      videoCaptureModeByHost: {
+        ...(config.videoCaptureModeByHost ?? mirroredConfig.videoCaptureModeByHost),
+      },
     };
     getExistingDebuggerCaptureController()?.updateConfig(mirroredConfig);
     if (persist) {
@@ -305,8 +321,160 @@ export default defineBackground(() => {
           captureVideos: mirroredConfig.captureVideos,
           maxVideoSize: mirroredConfig.maxVideoSize,
           enabledVideoTypes: mirroredConfig.enabledVideoTypes,
+          videoCaptureMode: mirroredConfig.videoCaptureMode,
+          videoCaptureModeByHost: mirroredConfig.videoCaptureModeByHost,
         }
       );
+
+      initVideoAssemblyController({
+        sendCommand: (tabId, method, params) =>
+          chrome.debugger.sendCommand({ tabId }, method, params),
+        probeSources: probeVideoSources,
+        getFillGaps: () => mirroredConfig.videoAssemblyFillGaps === true,
+        fetchRange: async (tabId, url, start, end) => {
+          let vid = '';
+          try {
+            vid = new URL(url).searchParams.get('__vid') ?? '';
+          } catch {
+            vid = '';
+          }
+
+          const results = await chrome.scripting.executeScript({
+            target: { tabId },
+            args: [url, start, end, vid],
+            func: async (
+              mediaUrl: string,
+              rangeStart: number,
+              rangeEnd: number,
+              mediaId: string
+            ) => {
+              const candidates = new Set<string>();
+              if (mediaUrl) candidates.add(mediaUrl);
+
+              if (mediaId) {
+                const entries = performance
+                  .getEntriesByType('resource')
+                  .map((entry) => entry.name)
+                  .reverse();
+                for (const entry of entries) {
+                  if (entry.includes(`__vid=${mediaId}`)) candidates.add(entry);
+                }
+                for (const video of Array.from(document.querySelectorAll('video'))) {
+                  for (const source of [video.src, video.currentSrc]) {
+                    if (
+                      source &&
+                      !source.startsWith('blob:') &&
+                      source.includes(`__vid=${mediaId}`)
+                    ) {
+                      candidates.add(source);
+                    }
+                  }
+                }
+              }
+
+              let lastError = 'no candidate URL';
+              for (const candidate of candidates) {
+                try {
+                  // Signed media URLs work without cookies; `include` can trip
+                  // CORS when the CDN returns a wildcard origin.
+                  const response = await fetch(candidate, {
+                    headers: { Range: `bytes=${rangeStart}-${rangeEnd}` },
+                    credentials: 'omit',
+                    cache: 'no-store',
+                  });
+                  if (!response.ok) {
+                    lastError = `status ${response.status}`;
+                    continue;
+                  }
+                  const buffer = new Uint8Array(await response.arrayBuffer());
+                  if (buffer.length !== rangeEnd - rangeStart + 1) {
+                    lastError = `length ${buffer.length}`;
+                    continue;
+                  }
+                  let binary = '';
+                  const chunkSize = 0x8000;
+                  for (let index = 0; index < buffer.length; index += chunkSize) {
+                    binary += String.fromCharCode(
+                      ...buffer.subarray(index, Math.min(index + chunkSize, buffer.length))
+                    );
+                  }
+                  return { data: btoa(binary) };
+                } catch (error) {
+                  lastError = error instanceof Error ? error.message : String(error);
+                }
+              }
+              return { error: lastError };
+            },
+          });
+
+          const value = results?.[0]?.result as { data?: string; error?: string } | undefined;
+          if (!value?.data) {
+            throw new Error(value?.error ?? 'Range fetch failed');
+          }
+          return decodeBase64(value.data);
+        },
+        onAssembling: (info) => {
+          const store = getCaptureSessionStore();
+          if (store.getActiveSession()?.tabId !== info.tabId) return;
+          store.recordVideoAssembling({
+            url: info.url,
+            receivedBytes: info.receivedBytes,
+            totalBytes: info.totalBytes,
+            detail: info.detail,
+            pageUrl: info.pageUrl,
+          });
+        },
+        onActiveJobsChanged: (count) => {
+          getCaptureSessionStore().setVideoAssemblingCount(count);
+        },
+        onComplete: (info) => {
+          const store = getCaptureSessionStore();
+          if (store.getActiveSession()?.tabId === info.tabId) {
+            store.recordVideoAssemblyComplete({
+              hash: info.hash,
+              size: info.size,
+              mimeType: info.mimeType,
+              url: info.url,
+              duplicate: info.duplicate,
+              pageUrl: info.pageUrl,
+            });
+          }
+          getDebuggerCaptureController().recordVideoCaptured(info.tabId, new Date().toISOString());
+        },
+        onSkip: (info) => {
+          const store = getCaptureSessionStore();
+          if (store.getActiveSession()?.tabId === info.tabId) {
+            store.recordVideoAssemblySkipped({
+              url: info.url,
+              reason: info.reason,
+              missingBytes: info.missingBytes,
+              detail: info.detail,
+              pageUrl: info.pageUrl,
+            });
+          }
+          getDebuggerCaptureController().recordBufferedVideoSkipped(
+            info.tabId,
+            info.url,
+            info.reason,
+            info.detail
+          );
+        },
+        onFailed: (info) => {
+          const store = getCaptureSessionStore();
+          if (store.getActiveSession()?.tabId === info.tabId) {
+            store.applyEvent({
+              kind: 'failed',
+              sourceUrl: info.url,
+              error: info.error,
+              pageUrl: info.pageUrl,
+            });
+          }
+          getDebuggerCaptureController().recordVideoFailed(info.tabId, info.url, info.error);
+        },
+      });
+
+      // A restarted worker starts with no active assembly jobs.
+      getCaptureSessionStore().setVideoAssemblingCount(0);
 
       if (restoredAttachedTabId !== null) {
         getDebuggerCaptureController().restoreActiveSession(restoredAttachedTabId);

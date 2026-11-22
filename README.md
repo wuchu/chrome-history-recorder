@@ -132,7 +132,7 @@ Side Panel 只显示当前会话的媒体流和诊断日志；全局历史瀑布
 
 不想开启捕获会话时，可以直接在页面上右键图片选择「保存图片到媒体库」，或在 Side Panel 右上角点击「抓取本页媒体」图标扫描当前页面。扫描结果会先进入预览，你可以全选、取消或只保存一部分。一次性保存复用同一套入库、去重、AI 和归档链路，但不会创建或修改捕获会话，也不会进入会话计数和会话 feed。
 
-持续捕获会话聚焦网络图片响应：不还原 Canvas/WebGL 生成的 `data:` 图片或页面内组装的 `blob:` 图片，也不承诺还原复杂视频流、Range 分片或 MSE 播放内容。一次性捕获会尝试保存页面中已经存在的 `data:` / `blob:` 图片（受页面 CSP、blob 生命周期和跨域限制），但不扫描 canvas 像素本身。
+持续捕获会话聚焦网络图片响应：不还原 Canvas/WebGL 生成的 `data:` 图片或页面内组装的 `blob:` 图片，也不承诺还原 MSE 播放内容。视频捕获有两种模式：`re-download` 会识别直链视频 URL 后重新下载完整文件；`buffer-only` 只使用浏览器已经完整缓冲的字节，多个 `Range` 响应必须无空洞覆盖整个文件才保存，会按缺失区间补齐（默认开启，可在 Options 关闭），但不会重新下载完整文件。抖音相关域名默认使用 `buffer-only`，可在 Options 的「视频捕获」中调整全局默认值和按站点覆盖。如果视频在开始捕获前已经缓冲，扩展会提示刷新页面后重播；也可以在 Options 中关闭默认开启的「补齐缺失区间」；开启时只对缺失区间向同一媒体 URL 发起带页面凭证的 `Range` 请求。一次性捕获会尝试保存页面中已经存在的 `data:` / `blob:` 图片（受页面 CSP、blob 生命周期和跨域限制），但不扫描 canvas 像素本身。
 
 ### 配置 AI 分类
 
@@ -193,16 +193,20 @@ AI 只能处理能产出代表性图像的媒体（视觉模型原生格式，�
 
 ### HTTP API (http://localhost:8766)
 
-| 端点                          | 说明                                        |
-| ----------------------------- | ------------------------------------------- |
-| `POST /upload`                | 流式上传媒体（图片/视频）                   |
-| `GET /files/:hash`            | 流式读取文件；支持单段 `Range`，默认 inline |
-| `GET /files/:hash?download=1` | 以 attachment 下载（AI 文件名）             |
-| `GET /files/:hash/thumbnail`  | 获取缩略图（支持 ?size=small/medium/large） |
-| `GET /files/:hash/metadata`   | 获取文件元数据                              |
-| `GET /stats`                  | 获取统计信息                                |
-| `GET /health`                 | 健康检查                                    |
-| `GET /`                       | 服务信息                                    |
+| 端点                            | 说明                                         |
+| ------------------------------- | -------------------------------------------- |
+| `POST /upload`                  | 流式上传媒体（图片/视频）                    |
+| `POST /assemblies`              | 创建缓冲视频组装任务                         |
+| `PUT /assemblies/:id/chunks`    | 按 `?offset=N` 写入字节（需 assembly token） |
+| `POST /assemblies/:id/complete` | 校验完整覆盖后入库                           |
+| `DELETE /assemblies/:id`        | 丢弃未完成的组装任务                         |
+| `GET /files/:hash`              | 流式读取文件；支持单段 `Range`，默认 inline  |
+| `GET /files/:hash?download=1`   | 以 attachment 下载（AI 文件名）              |
+| `GET /files/:hash/thumbnail`    | 获取缩略图（支持 ?size=small/medium/large）  |
+| `GET /files/:hash/metadata`     | 获取文件元数据                               |
+| `GET /stats`                    | 获取统计信息                                 |
+| `GET /health`                   | 健康检查                                     |
+| `GET /`                         | 服务信息                                     |
 
 ### 实时事件
 

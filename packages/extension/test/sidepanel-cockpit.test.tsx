@@ -52,6 +52,9 @@ function createSession(overrides: Partial<CaptureSession> = {}): CaptureSession 
       aiFailed: 0,
       videosQueued: 1,
       videosDownloading: 0,
+      videosAssembling: 0,
+      videosComplete: 0,
+      videosIncomplete: 0,
     },
     recentItems: [],
     events: [],
@@ -178,6 +181,27 @@ describe('Side Panel cockpit components', () => {
     expect(screen.getByText('已存在')).toBeTruthy();
     fireEvent.click(screen.getByTitle('abc'));
     expect(onOpenItem).toHaveBeenCalledWith('abc');
+  });
+
+  it('renders video thumbnails with a play badge in the live feed', () => {
+    render(
+      <SessionFeed
+        items={[
+          {
+            hash: 'vid',
+            mimeType: 'video/mp4',
+            size: 2048,
+            capturedAt: '2026-01-01T00:00:00.000Z',
+          },
+        ]}
+        onOpenItem={vi.fn()}
+      />
+    );
+
+    const item = screen.getByTitle('vid');
+    const image = item.querySelector('img');
+    expect(image?.getAttribute('src')).toContain('/files/vid/thumbnail');
+    expect(screen.getByText('▶')).toBeTruthy();
   });
 
   it('expands the event log, filters events, and clears', () => {

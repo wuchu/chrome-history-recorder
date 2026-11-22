@@ -6,6 +6,18 @@ import {
 } from '../shared/extension-runtime';
 import { getExistingVideoDownloadManager } from './video-download';
 import { getCaptureSessionStore } from './capture-session';
+import { getExistingVideoAssemblyController } from './video-assembly-controller';
+import {
+  DEFAULT_VIDEO_CAPTURE_MODE,
+  DEFAULT_VIDEO_CAPTURE_MODE_BY_HOST,
+  evaluateBufferedVideoResponse,
+  isMediaForPage,
+  isPlaylistMime,
+  isStreamingSegment,
+  resolveVideoCaptureMode,
+  type VideoAssemblySkipReason,
+  type VideoCaptureMode,
+} from '../shared/video-assembly';
 
 type CaptureStatus = 'idle' | 'capturing' | 'error';
 
@@ -54,6 +66,8 @@ interface CdpResponse {
 interface CdpEventParams {
   requestId?: string;
   response?: CdpResponse;
+  data?: string;
+  dataLength?: number;
 }
 
 interface CaptureDependencies {
@@ -65,12 +79,16 @@ export interface CaptureConfig {
   captureVideos: boolean;
   maxVideoSize: number;
   enabledVideoTypes: string[];
+  videoCaptureMode: VideoCaptureMode;
+  videoCaptureModeByHost: Record<string, VideoCaptureMode>;
 }
 
 const DEBUGGER_PROTOCOL_VERSION = '1.3';
 const MAX_IMAGE_SIZE = 50 * 1024 * 1024;
 const MIN_IMAGE_SIZE = 10 * 1024;
 const MIN_VIDEO_SIZE = 1 * 1024 * 1024;
+/** Short clips are legitimate; only use the 1 MiB floor for re-download mode. */
+const MIN_BUFFERED_VIDEO_SIZE = 100 * 1024;
 const MAX_VIDEO_SKIP_EVENTS_PER_PAGE = 10;
 const SVG_MIME_TYPE = 'image/svg+xml';
 const GENERIC_MIME_TYPES = new Set(['application/octet-stream', 'binary/octet-stream']);
@@ -299,6 +317,7 @@ export class DebuggerCaptureController {
   private states = new Map<number, CaptureState>();
   private candidates = new Map<string, CandidateRequest>();
   private videoUrls = new Map<number, Set<string>>();
+  private bufferedSkipUrls = new Map<number, Set<string>>();
   private videoSkipEvents = new Map<number, number>();
   private config: CaptureConfig;
   private readonly dependencies: CaptureDependencies;
@@ -313,6 +332,10 @@ export class DebuggerCaptureController {
       captureVideos: config?.captureVideos ?? true,
       maxVideoSize: config?.maxVideoSize ?? DEFAULT_MAX_VIDEO_SIZE,
       enabledVideoTypes: config?.enabledVideoTypes ?? [...DEFAULT_ENABLED_VIDEO_TYPES],
+      videoCaptureMode: config?.videoCaptureMode ?? DEFAULT_VIDEO_CAPTURE_MODE,
+      videoCaptureModeByHost: config?.videoCaptureModeByHost ?? {
+        ...DEFAULT_VIDEO_CAPTURE_MODE_BY_HOST,
+      },
     };
   }
 
@@ -320,12 +343,21 @@ export class DebuggerCaptureController {
    * Apply updated video capture settings without restarting capture.
    */
   updateConfig(
-    config: Pick<ExtensionConfig, 'captureVideos' | 'maxVideoSize' | 'enabledVideoTypes'>
+    config: Pick<
+      ExtensionConfig,
+      | 'captureVideos'
+      | 'maxVideoSize'
+      | 'enabledVideoTypes'
+      | 'videoCaptureMode'
+      | 'videoCaptureModeByHost'
+    >
   ): void {
     this.config = {
       captureVideos: config.captureVideos,
       maxVideoSize: config.maxVideoSize,
       enabledVideoTypes: config.enabledVideoTypes,
+      videoCaptureMode: config.videoCaptureMode,
+      videoCaptureModeByHost: config.videoCaptureModeByHost,
     };
   }
 
@@ -445,6 +477,7 @@ export class DebuggerCaptureController {
     this.clearCandidatesForTab(tabId);
     this.clearVideoUrlsForTab(tabId);
     getExistingVideoDownloadManager()?.cancelTab(tabId);
+    void getExistingVideoAssemblyController()?.cancelTab(tabId);
 
     if (state.debuggerAttached) {
       try {
@@ -497,6 +530,12 @@ export class DebuggerCaptureController {
       void this.handleLoadingFinished(source.tabId, params);
     } else if (method === 'Network.loadingFailed') {
       this.handleLoadingFailed(source.tabId, params);
+    } else if (method === 'Network.dataReceived') {
+      getExistingVideoAssemblyController()?.handleDataReceived(source.tabId, {
+        requestId: params?.requestId,
+        data: params?.data,
+        dataLength: params?.dataLength,
+      });
     }
   }
 
@@ -504,16 +543,46 @@ export class DebuggerCaptureController {
     const requestId = params?.requestId;
     const response = params?.response;
     const url = response?.url;
-    if (!requestId || !url || url.startsWith('data:') || url.startsWith('blob:')) return;
+    if (!requestId || !url) return;
+
+    if (url.startsWith('data:') || url.startsWith('blob:')) {
+      if (this.resolveCaptureMode() === 'buffer-only' && this.config.captureVideos) {
+        const mimeType = resolveMimeType(undefined, response?.mimeType, url);
+        if (mimeType?.startsWith('video/')) {
+          this.recordBufferedVideoSkipOnce(tabId, url, 'in-memory', 'url=blob');
+        }
+      }
+      return;
+    }
 
     const headers = normalizeHeaders(response?.headers);
     const mimeType = resolveMimeType(getHeader(headers, 'content-type'), response?.mimeType, url);
     if (!mimeType) return;
 
     const contentLength = Number.parseInt(getHeader(headers, 'content-length') ?? '0', 10) || 0;
+    const mode = this.resolveCaptureMode();
+
+    if (mode === 'buffer-only' && this.config.captureVideos) {
+      if (isPlaylistMime(mimeType) || isStreamingSegment(mimeType, url)) {
+        this.recordBufferedVideoSkipOnce(tabId, url, 'playlist', `mime=${mimeType}`);
+        return;
+      }
+    }
 
     if (mimeType.startsWith('video/')) {
-      this.handleVideoResponse(tabId, url, mimeType, response?.status, headers, contentLength);
+      if (mode === 'buffer-only') {
+        this.handleBufferedVideoResponse(
+          tabId,
+          requestId,
+          url,
+          mimeType,
+          response?.status,
+          headers,
+          contentLength
+        );
+      } else {
+        this.handleVideoResponse(tabId, url, mimeType, response?.status, headers, contentLength);
+      }
       return;
     }
 
@@ -573,9 +642,132 @@ export class DebuggerCaptureController {
     });
   }
 
+  /**
+   * Resolve the capture mode for the active session's page host.
+   */
+  private resolveCaptureMode(): VideoCaptureMode {
+    const pageUrl = getCaptureSessionStore().getActiveSession()?.pageUrl;
+    return resolveVideoCaptureMode(
+      pageUrl,
+      this.config.videoCaptureMode,
+      this.config.videoCaptureModeByHost
+    );
+  }
+
+  /**
+   * In `buffer-only` mode, register a video response with the assembly
+   * controller instead of queuing a re-download.
+   */
+  private handleBufferedVideoResponse(
+    tabId: number,
+    requestId: string,
+    url: string,
+    mimeType: string,
+    status: number | undefined,
+    headers: Record<string, string>,
+    contentLength: number
+  ): void {
+    if (!this.config.captureVideos) return;
+
+    const pageUrl = getCaptureSessionStore().getActiveSession()?.pageUrl ?? '';
+    // Background feed/preload media on a page with a focused modal must not
+    // produce size/source skip events or occupy assembly slots.
+    if (isMediaForPage(url, pageUrl) === false) return;
+
+    const evaluation = evaluateBufferedVideoResponse({
+      url,
+      mimeType,
+      status,
+      contentRange: getHeader(headers, 'content-range'),
+      contentLength,
+      enabledVideoTypes: this.config.enabledVideoTypes,
+      maxVideoSize: this.config.maxVideoSize,
+      minVideoSize: MIN_BUFFERED_VIDEO_SIZE,
+    });
+
+    if (!evaluation.eligible || !evaluation.total || !evaluation.range) {
+      if (evaluation.reason) {
+        this.recordBufferedVideoSkipOnce(
+          tabId,
+          url,
+          evaluation.reason,
+          `status=${status ?? 'unknown'} total=${evaluation.total ?? contentLength} min=${MIN_BUFFERED_VIDEO_SIZE} max=${this.config.maxVideoSize}`
+        );
+      }
+      return;
+    }
+
+    const controller = getExistingVideoAssemblyController();
+    if (!controller) return;
+
+    void controller.registerResponse({
+      tabId,
+      requestId,
+      url,
+      mimeType,
+      status,
+      contentRange: getHeader(headers, 'content-range'),
+      total: evaluation.total,
+      range: evaluation.range,
+      pageUrl,
+      capturedAt: new Date().toISOString(),
+    });
+  }
+
+  /**
+   * Record a buffered-video skip at most once per URL and page session.
+   */
+  private recordBufferedVideoSkipOnce(
+    tabId: number,
+    url: string,
+    reason: VideoAssemblySkipReason,
+    detail?: string
+  ): void {
+    let urls = this.bufferedSkipUrls.get(tabId);
+    if (!urls) {
+      urls = new Set();
+      this.bufferedSkipUrls.set(tabId, urls);
+    }
+    if (urls.has(url)) return;
+    urls.add(url);
+
+    this.recordBufferedVideoSkipped(tabId, url, reason, detail);
+
+    const store = getCaptureSessionStore();
+    if (store.getActiveSession()?.tabId === tabId) {
+      store.recordVideoAssemblySkipped({
+        url,
+        reason,
+        detail,
+        pageUrl: store.getActiveSession()?.pageUrl,
+      });
+    }
+  }
+
+  /**
+   * Update per-tab skip state for a buffered video. Session accounting is
+   * performed by the caller so this path never double-counts.
+   */
+  recordBufferedVideoSkipped(tabId: number, url: string, reason: string, detail?: string): void {
+    const state = this.ensureState(tabId);
+    state.skippedCount += 1;
+
+    const broadcasts = this.videoSkipEvents.get(tabId) ?? 0;
+    const shouldBroadcast = broadcasts < MAX_VIDEO_SKIP_EVENTS_PER_PAGE;
+    if (!shouldBroadcast) return;
+
+    this.videoSkipEvents.set(tabId, broadcasts + 1);
+    this.dependencies
+      .getFileManager()
+      .broadcastEvent('capture:skipped', { tabId, url, reason, detail });
+    this.broadcastState(tabId);
+  }
+
   private async handleLoadingFinished(tabId: number, params?: CdpEventParams): Promise<void> {
     const requestId = params?.requestId;
     if (!requestId) return;
+
+    getExistingVideoAssemblyController()?.handleLoadingFinished(tabId, requestId);
 
     const key = this.candidateKey(tabId, requestId);
     const candidate = this.candidates.get(key);
@@ -638,6 +830,7 @@ export class DebuggerCaptureController {
   private handleLoadingFailed(tabId: number, params?: CdpEventParams): void {
     const requestId = params?.requestId;
     if (!requestId) return;
+    getExistingVideoAssemblyController()?.handleLoadingFailed(tabId, requestId);
     this.candidates.delete(this.candidateKey(tabId, requestId));
   }
 
@@ -728,6 +921,7 @@ export class DebuggerCaptureController {
 
   private clearVideoUrlsForTab(tabId: number): void {
     this.videoUrls.delete(tabId);
+    this.bufferedSkipUrls.delete(tabId);
     this.videoSkipEvents.delete(tabId);
   }
 
@@ -741,6 +935,7 @@ export class DebuggerCaptureController {
     this.clearCandidatesForTab(source.tabId);
     this.clearVideoUrlsForTab(source.tabId);
     getExistingVideoDownloadManager()?.cancelTab(source.tabId);
+    void getExistingVideoAssemblyController()?.cancelTab(source.tabId);
 
     const store = getCaptureSessionStore();
     if (store.getActiveSession()?.tabId === source.tabId) {
@@ -757,6 +952,7 @@ export class DebuggerCaptureController {
     this.clearCandidatesForTab(tabId);
     this.clearVideoUrlsForTab(tabId);
     getExistingVideoDownloadManager()?.cancelTab(tabId);
+    void getExistingVideoAssemblyController()?.cancelTab(tabId);
 
     const store = getCaptureSessionStore();
     if (store.getActiveSession()?.tabId === tabId) {
@@ -785,6 +981,7 @@ export class DebuggerCaptureController {
     this.clearCandidatesForTab(tabId);
     this.clearVideoUrlsForTab(tabId);
     getExistingVideoDownloadManager()?.cancelTab(tabId);
+    void getExistingVideoAssemblyController()?.cancelTab(tabId);
     if (state.isEnabled && state.debuggerAttached) {
       void this.enableNetwork(tabId).catch((error) => {
         const message =

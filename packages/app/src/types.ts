@@ -25,6 +25,18 @@ export const MIN_TASK_CONCURRENCY = 1;
 export const MAX_TASK_CONCURRENCY = 8;
 export const DEFAULT_TASK_CONCURRENCY = 1;
 
+export type VideoCaptureMode = 'buffer-only' | 're-download';
+
+export const DEFAULT_VIDEO_CAPTURE_MODE: VideoCaptureMode = 're-download';
+export const DEFAULT_VIDEO_CAPTURE_MODE_BY_HOST: Record<string, VideoCaptureMode> = {
+  'douyin.com': 'buffer-only',
+  'douyinvod.com': 'buffer-only',
+  'v.douyin.com': 'buffer-only',
+};
+
+const VIDEO_CAPTURE_MODES = new Set<VideoCaptureMode>(['buffer-only', 're-download']);
+const MAX_VIDEO_CAPTURE_HOST_OVERRIDES = 100;
+
 export interface AppConfig {
   ollamaEndpoint: string;
   visionModel?: string;
@@ -39,6 +51,9 @@ export interface AppConfig {
   captureVideos: boolean;
   maxVideoSize: number;
   enabledVideoTypes: string[];
+  videoCaptureMode: VideoCaptureMode;
+  videoCaptureModeByHost: Record<string, VideoCaptureMode>;
+  videoAssemblyFillGaps: boolean;
   mediaArchiveEnabled: boolean;
   mediaArchiveTargetPath: string;
   mediaArchiveIntervalMinutes: number;
@@ -57,6 +72,9 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   captureVideos: true,
   maxVideoSize: DEFAULT_MAX_VIDEO_SIZE,
   enabledVideoTypes: [...DEFAULT_ENABLED_VIDEO_TYPES],
+  videoCaptureMode: DEFAULT_VIDEO_CAPTURE_MODE,
+  videoCaptureModeByHost: { ...DEFAULT_VIDEO_CAPTURE_MODE_BY_HOST },
+  videoAssemblyFillGaps: true,
   mediaArchiveEnabled: false,
   mediaArchiveTargetPath: '',
   mediaArchiveIntervalMinutes: DEFAULT_MEDIA_ARCHIVE_INTERVAL_MINUTES,
@@ -76,6 +94,41 @@ export function normalizeConcurrency(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value)
     ? Math.min(MAX_TASK_CONCURRENCY, Math.max(MIN_TASK_CONCURRENCY, Math.floor(value)))
     : DEFAULT_TASK_CONCURRENCY;
+}
+
+export function normalizeVideoCaptureMode(
+  value: unknown,
+  fallback: VideoCaptureMode = DEFAULT_VIDEO_CAPTURE_MODE
+): VideoCaptureMode {
+  return typeof value === 'string' && VIDEO_CAPTURE_MODES.has(value as VideoCaptureMode)
+    ? (value as VideoCaptureMode)
+    : fallback;
+}
+
+/**
+ * Normalize a host-suffix map. Invalid entries are dropped; a missing or
+ * non-object value falls back to the built-in overrides.
+ */
+export function normalizeVideoCaptureModeByHost(value: unknown): Record<string, VideoCaptureMode> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { ...DEFAULT_VIDEO_CAPTURE_MODE_BY_HOST };
+  }
+
+  const result: Record<string, VideoCaptureMode> = {};
+  for (const [rawHost, rawMode] of Object.entries(value as Record<string, unknown>)) {
+    if (Object.keys(result).length >= MAX_VIDEO_CAPTURE_HOST_OVERRIDES) break;
+    if (typeof rawHost !== 'string') continue;
+    const host = rawHost
+      .trim()
+      .toLowerCase()
+      .replace(/^\*?\./, '');
+    if (!host || host.length > 253) continue;
+    if (typeof rawMode !== 'string' || !VIDEO_CAPTURE_MODES.has(rawMode as VideoCaptureMode)) {
+      continue;
+    }
+    result[host] = rawMode as VideoCaptureMode;
+  }
+  return result;
 }
 
 /**
@@ -138,6 +191,10 @@ export function normalizeAppConfig(config: AppConfig): AppConfig {
     maxVideoSize,
     enabledVideoTypes:
       enabledVideoTypes.length > 0 ? enabledVideoTypes : [...DEFAULT_ENABLED_VIDEO_TYPES],
+    videoCaptureMode: normalizeVideoCaptureMode(config.videoCaptureMode),
+    videoCaptureModeByHost: normalizeVideoCaptureModeByHost(config.videoCaptureModeByHost),
+    videoAssemblyFillGaps:
+      typeof config.videoAssemblyFillGaps === 'boolean' ? config.videoAssemblyFillGaps : true,
     mediaArchiveEnabled: config.mediaArchiveEnabled === true,
     mediaArchiveTargetPath:
       typeof config.mediaArchiveTargetPath === 'string' ? config.mediaArchiveTargetPath.trim() : '',

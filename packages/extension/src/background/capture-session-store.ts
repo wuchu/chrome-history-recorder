@@ -62,6 +62,24 @@ function createEmptyCounters(): SessionCounters {
     aiSkipped: 0,
     videosQueued: 0,
     videosDownloading: 0,
+    videosAssembling: 0,
+    videosComplete: 0,
+    videosIncomplete: 0,
+  };
+}
+
+/**
+ * Fill fields introduced after a snapshot was written so an older session can
+ * be restored without undefined counters or arrays.
+ */
+function normalizeRestoredSession(session: CaptureSession): CaptureSession {
+  return {
+    ...session,
+    counters: { ...createEmptyCounters(), ...(session.counters ?? {}) },
+    recentItems: session.recentItems ?? [],
+    events: session.events ?? [],
+    savedHashes: session.savedHashes ?? [],
+    aiStatuses: session.aiStatuses ?? {},
   };
 }
 
@@ -181,6 +199,54 @@ function applyEventToSession(session: CaptureSession, event: SessionEvent): bool
       }
       break;
     }
+    case 'video:assembling': {
+      break;
+    }
+    case 'video:complete': {
+      if (!event.hash) return false;
+      counters.videosComplete += 1;
+      if (event.duplicate) {
+        counters.duplicate += 1;
+        addSavedItem({
+          hash: event.hash,
+          mimeType: event.mimeType ?? 'video/mp4',
+          size: event.size ?? 0,
+          sourceUrl: event.sourceUrl,
+          capturedAt: event.timestamp,
+          duplicate: true,
+        });
+        break;
+      }
+      counters.saved += 1;
+      counters.videosSaved += 1;
+      counters.bytesSaved += event.size ?? 0;
+      if (!session.savedHashes.includes(event.hash)) {
+        session.savedHashes.push(event.hash);
+      }
+      const bufferedAiStatus: SessionAiStatus = 'pending';
+      session.aiStatuses[event.hash] = bufferedAiStatus;
+      addSavedItem({
+        hash: event.hash,
+        mimeType: event.mimeType ?? 'video/mp4',
+        size: event.size ?? 0,
+        sourceUrl: event.sourceUrl,
+        capturedAt: event.timestamp,
+        aiStatus: bufferedAiStatus,
+      });
+      break;
+    }
+    case 'video:skipped': {
+      counters.skipped += 1;
+      if (
+        event.reason === 'incomplete' ||
+        event.reason === 'body-unavailable' ||
+        event.reason === 'truncated' ||
+        event.reason === 'aborted'
+      ) {
+        counters.videosIncomplete += 1;
+      }
+      break;
+    }
     case 'ai': {
       if (!event.hash || !session.savedHashes.includes(event.hash)) return false;
       if (!event.aiStatus) return false;
@@ -212,7 +278,9 @@ function recomputeAiCounters(session: CaptureSession): void {
 function buildSummary(session: CaptureSession, endedAt: string): SessionSummary {
   const reasonCounts = new Map<string, number>();
   for (const event of session.events) {
-    if (event.kind !== 'skipped' && event.kind !== 'failed') continue;
+    if (event.kind !== 'skipped' && event.kind !== 'failed' && event.kind !== 'video:skipped') {
+      continue;
+    }
     const reason = event.error || event.reason;
     if (!reason) continue;
     reasonCounts.set(reason, (reasonCounts.get(reason) ?? 0) + 1);
@@ -267,7 +335,7 @@ export class CaptureSessionStore {
       const stored = await this.storage.get(CAPTURE_SESSION_STORAGE_KEY);
       const snapshot = stored[CAPTURE_SESSION_STORAGE_KEY] as CaptureSessionSnapshot | undefined;
       if (!snapshot?.session) return;
-      this.session = snapshot.session;
+      this.session = normalizeRestoredSession(snapshot.session);
       this.summary = snapshot.summary ?? null;
       this.notify();
     } catch (error) {
@@ -391,6 +459,10 @@ export class CaptureSessionStore {
       error: input.error,
       aiStatus: input.aiStatus,
       duplicate: input.duplicate,
+      receivedBytes: input.receivedBytes,
+      totalBytes: input.totalBytes,
+      missingBytes: input.missingBytes,
+      detail: input.detail,
     };
 
     const recorded = applyEventToSession(this.session, event);
@@ -401,7 +473,9 @@ export class CaptureSessionStore {
     }
 
     const savedHash =
-      event.kind === 'saved' || (event.kind === 'video:result' && !event.error && !event.duplicate)
+      event.kind === 'saved' ||
+      (event.kind === 'video:result' && !event.error && !event.duplicate) ||
+      (event.kind === 'video:complete' && !event.duplicate)
         ? event.hash
         : undefined;
     if (savedHash) {
@@ -470,6 +544,67 @@ export class CaptureSessionStore {
       sourceUrl: input.url,
       error: input.error,
       duplicate: input.duplicate,
+      pageUrl: input.pageUrl,
+    });
+  }
+
+  recordVideoAssembling(input: {
+    url: string;
+    receivedBytes: number;
+    totalBytes: number;
+    detail?: string;
+    pageUrl?: string;
+  }): void {
+    this.applyEvent({
+      kind: 'video:assembling',
+      sourceUrl: input.url,
+      receivedBytes: input.receivedBytes,
+      totalBytes: input.totalBytes,
+      detail: input.detail,
+      pageUrl: input.pageUrl,
+    });
+  }
+
+  setVideoAssemblingCount(count: number): void {
+    if (!this.session || this.session.status !== 'capturing') return;
+    if (this.session.counters.videosAssembling === count) return;
+    this.session.counters.videosAssembling = count;
+    this.notify();
+    this.schedulePersist();
+  }
+
+  recordVideoAssemblyComplete(input: {
+    hash: string;
+    size: number;
+    mimeType?: string;
+    url: string;
+    duplicate?: boolean;
+    pageUrl?: string;
+  }): void {
+    this.applyEvent({
+      kind: 'video:complete',
+      hash: input.hash,
+      size: input.size,
+      mimeType: input.mimeType,
+      sourceUrl: input.url,
+      duplicate: input.duplicate,
+      pageUrl: input.pageUrl,
+    });
+  }
+
+  recordVideoAssemblySkipped(input: {
+    url: string;
+    reason: string;
+    missingBytes?: number;
+    detail?: string;
+    pageUrl?: string;
+  }): void {
+    this.applyEvent({
+      kind: 'video:skipped',
+      sourceUrl: input.url,
+      reason: input.reason,
+      missingBytes: input.missingBytes,
+      detail: input.detail,
       pageUrl: input.pageUrl,
     });
   }

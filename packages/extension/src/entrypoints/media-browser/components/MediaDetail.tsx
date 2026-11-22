@@ -6,7 +6,7 @@
 
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { buildVfsDownloadUrl, buildVfsFileUrl } from '../utils/media';
+import { buildVfsDownloadUrl, buildVfsFileUrl, buildVfsThumbnailUrl } from '../utils/media';
 import styles from './MediaDetail.module.css';
 
 interface MediaDetailData {
@@ -203,6 +203,7 @@ const MediaDetail = memo(function MediaDetail({
               ) : (
                 <video
                   src={imageUrl}
+                  poster={item.thumbnailUrl || buildVfsThumbnailUrl(item.hash, 'large')}
                   className={`${styles.video} ${imageLoaded ? styles.loaded : ''}`}
                   controls
                   preload="metadata"

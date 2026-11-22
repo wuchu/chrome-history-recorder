@@ -33,6 +33,33 @@ function formatBytes(bytes: number): string {
   return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
 }
 
+function RecentThumb({ hash, mimeType }: { hash: string; mimeType: string }) {
+  const [failed, setFailed] = useState(false);
+  const isVideo = mimeType.startsWith('video/');
+
+  if (!isVideo) {
+    return <img src={buildVfsThumbnailUrl(hash, 'small')} alt="" loading="lazy" />;
+  }
+
+  if (failed) {
+    return <span className={styles.recentVideo}>🎬</span>;
+  }
+
+  return (
+    <>
+      <img
+        src={buildVfsThumbnailUrl(hash, 'small')}
+        alt=""
+        loading="lazy"
+        onError={() => setFailed(true)}
+      />
+      <span className={styles.recentPlayBadge} aria-hidden="true">
+        ▶
+      </span>
+    </>
+  );
+}
+
 export function OverviewTab({
   serviceStatus,
   queueStatus,
@@ -223,11 +250,7 @@ export function OverviewTab({
                   window.location.hash = '#library';
                 }}
               >
-                {item.mimeType.startsWith('video/') ? (
-                  <span className={styles.recentVideo}>🎬</span>
-                ) : (
-                  <img src={buildVfsThumbnailUrl(item.hash, 'small')} alt="" loading="lazy" />
-                )}
+                <RecentThumb hash={item.hash} mimeType={item.mimeType} />
               </button>
             ))}
           </div>

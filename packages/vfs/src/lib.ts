@@ -57,6 +57,18 @@ export {
   type HTTPServerConfig,
 } from './http-server';
 export {
+  AssemblyManager,
+  AssemblyCapacityError,
+  AssemblyIncompleteError,
+  AssemblyInvalidError,
+  AssemblyNotFoundError,
+  AssemblyUnauthorizedError,
+  DEFAULT_ASSEMBLY_MAX_BYTES,
+  type AssemblyCreateInput,
+  type AssemblyJobHandle,
+  type AssemblyManagerOptions,
+} from './assembly';
+export {
   parseArgs,
   getDefaultWorkspacePath,
   expandPath,

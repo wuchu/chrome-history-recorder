@@ -69,6 +69,9 @@ describe('sidepanel utils', () => {
         aiFailed: 0,
         videosQueued: 0,
         videosDownloading: 0,
+        videosAssembling: 0,
+        videosComplete: 0,
+        videosIncomplete: 0,
       },
     });
 

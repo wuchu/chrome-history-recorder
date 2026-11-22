@@ -18,6 +18,41 @@ const AI_STATUS_ICONS = {
   skipped: '⊘',
 } as const;
 
+function FeedThumb({ item }: { item: SessionMediaItem }) {
+  const [failed, setFailed] = useState(false);
+  const isVideo = item.mimeType.startsWith('video/');
+
+  if (!isVideo) {
+    return (
+      <img
+        className={styles.feedThumb}
+        src={buildVfsThumbnailUrl(item.hash, 'medium')}
+        alt=""
+        loading="lazy"
+      />
+    );
+  }
+
+  if (failed) {
+    return <span className={styles.feedVideoIcon}>🎬</span>;
+  }
+
+  return (
+    <>
+      <img
+        className={styles.feedThumb}
+        src={buildVfsThumbnailUrl(item.hash, 'medium')}
+        alt=""
+        loading="lazy"
+        onError={() => setFailed(true)}
+      />
+      <span className={styles.feedPlayBadge} aria-hidden="true">
+        ▶
+      </span>
+    </>
+  );
+}
+
 export function SessionFeed({ items, onOpenItem }: SessionFeedProps) {
   const { t } = useTranslation();
   const [paused, setPaused] = useState(false);
@@ -86,7 +121,6 @@ export function SessionFeed({ items, onOpenItem }: SessionFeedProps) {
       ) : (
         <div className={styles.feed} ref={listRef} onScroll={handleScroll}>
           {displayItems.map((item) => {
-            const isVideo = item.mimeType.startsWith('video/');
             return (
               <button
                 key={`${item.hash}-${item.capturedAt}-${item.duplicate ? 'dup' : 'new'}`}
@@ -100,15 +134,8 @@ export function SessionFeed({ items, onOpenItem }: SessionFeedProps) {
                     <span className={styles.feedDuplicate}>
                       {t('cockpit.feed.exists', '已存在')}
                     </span>
-                  ) : isVideo ? (
-                    <span className={styles.feedVideoIcon}>🎬</span>
                   ) : (
-                    <img
-                      className={styles.feedThumb}
-                      src={buildVfsThumbnailUrl(item.hash, 'medium')}
-                      alt=""
-                      loading="lazy"
-                    />
+                    <FeedThumb item={item} />
                   )}
                   {item.aiStatus && (
                     <span className={`${styles.aiBadge} ${styles[`ai${item.aiStatus}`]}`}>

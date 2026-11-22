@@ -44,6 +44,7 @@ import {
   type ExtensionConfig,
   type TagDefinition,
   type VFSTagRecord,
+  type VideoCaptureMode,
   type WorkspaceConfigInfo,
 } from '../../shared/extension-runtime';
 import { DEFAULT_PROMPT_TEMPLATES, type PromptTemplates } from '../../shared/prompt-templates';
@@ -169,6 +170,7 @@ function App() {
     })
   );
   const [maxVideoSizeMb, setMaxVideoSizeMb] = useState<number>(DEFAULT_MAX_VIDEO_SIZE_MB);
+  const [videoModeHostDraft, setVideoModeHostDraft] = useState('');
   const [ollamaConcurrencyDraft, setOllamaConcurrencyDraft] = useState<number>(
     config.ollamaMaxConcurrency
   );
@@ -185,6 +187,14 @@ function App() {
   useEffect(() => {
     setMaxVideoSizeMb(Math.round(config.maxVideoSize / (1024 * 1024)));
   }, [config.maxVideoSize]);
+
+  useEffect(() => {
+    setVideoModeHostDraft(
+      Object.entries(config.videoCaptureModeByHost ?? {})
+        .map(([host, mode]) => `${host}=${mode}`)
+        .join('\n')
+    );
+  }, [config.videoCaptureModeByHost]);
 
   useEffect(() => {
     setOllamaConcurrencyDraft(config.ollamaMaxConcurrency);
@@ -433,6 +443,40 @@ function App() {
       return;
     }
     await saveSetting({ enabledVideoTypes: types }, 'videoCapture', '视频格式已保存');
+  };
+
+  const handleVideoCaptureModeChange = async (mode: VideoCaptureMode) => {
+    await saveSetting({ videoCaptureMode: mode }, 'videoCaptureMode', '视频捕获模式已保存');
+  };
+
+  const handleFillGapsToggle = async (checked: boolean) => {
+    await saveSetting(
+      { videoAssemblyFillGaps: checked },
+      'videoAssemblyFillGaps',
+      checked ? '已开启缺失区间补齐' : '已关闭缺失区间补齐'
+    );
+  };
+
+  const handleVideoModeHostSave = async () => {
+    const next: Record<string, VideoCaptureMode> = {};
+    for (const rawLine of videoModeHostDraft.split('\n')) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith('#')) continue;
+
+      const [rawHost, rawMode] = line.split('=').map((part) => part.trim());
+      const host = (rawHost ?? '').toLowerCase().replace(/^\*?\./, '');
+      if (!host) {
+        messageApi.error(`无法解析站点覆盖：${line}`);
+        return;
+      }
+      if (rawMode !== 'buffer-only' && rawMode !== 're-download') {
+        messageApi.error(`站点 ${host} 的模式必须是 buffer-only 或 re-download`);
+        return;
+      }
+      next[host] = rawMode;
+    }
+
+    await saveSetting({ videoCaptureModeByHost: next }, 'videoCaptureModeByHost', '站点覆盖已保存');
   };
 
   const handleSyncMediaIndex = async () => {
@@ -932,9 +976,9 @@ function App() {
 
                     <Card className="options-card" title="视频捕获">
                       <Paragraph type="secondary" style={{ marginBottom: 16 }}>
-                        捕获直链视频（如 MP4/WebM
-                        文件）。开启后，侧边栏中的捕获会话会把识别到的完整视频下载到本地
-                        VFS。流媒体分片（MSE/blob）暂不支持。
+                        `re-download` 会识别直链视频后重新下载完整文件；`buffer-only`
+                        只保存浏览器已经完整缓冲的字节（多段 Range
+                        无空洞才算完整），不会二次下载，适合抖音等带签名或防盗链的站点。流媒体分片（MSE/blob）仍不支持。
                       </Paragraph>
                       <Form layout="vertical">
                         <Form.Item label="启用视频捕获">
@@ -979,6 +1023,53 @@ function App() {
                             loading={saving.videoCapture}
                             onChange={handleVideoFormatsChange}
                             placeholder="选择至少一种视频格式"
+                          />
+                        </Form.Item>
+
+                        <Form.Item
+                          label="默认捕获模式"
+                          extra="buffer-only 只接受已完整缓冲的内容，不补洞、不重试、不二次下载。"
+                        >
+                          <Select
+                            value={config.videoCaptureMode}
+                            loading={saving.videoCapture}
+                            onChange={handleVideoCaptureModeChange}
+                            options={[
+                              {
+                                value: 're-download',
+                                label: '重新下载（re-download）',
+                              },
+                              {
+                                value: 'buffer-only',
+                                label: '只收完整缓冲（buffer-only）',
+                              },
+                            ]}
+                          />
+                        </Form.Item>
+
+                        <Form.Item
+                          label="按站点覆盖"
+                          extra="每行 host=mode，例如 douyin.com=buffer-only。默认已包含抖音相关域名。"
+                        >
+                          <Input.TextArea
+                            rows={3}
+                            value={videoModeHostDraft}
+                            onChange={(event) => setVideoModeHostDraft(event.target.value)}
+                            onBlur={handleVideoModeHostSave}
+                            placeholder={'douyin.com=buffer-only\ndouyinvod.com=buffer-only'}
+                          />
+                        </Form.Item>
+
+                        <Form.Item
+                          label="补齐缺失区间"
+                          extra="默认开启。开启后会对缺失区间在页面上下文向同一媒体 URL 发起 Range 请求，可能产生额外网络请求；关闭时只抓取捕获期间实际观察到的字节。"
+                        >
+                          <Switch
+                            checked={config.videoAssemblyFillGaps === true}
+                            loading={saving.videoCapture}
+                            onChange={handleFillGapsToggle}
+                            checkedChildren="开启"
+                            unCheckedChildren="关闭"
                           />
                         </Form.Item>
                       </Form>

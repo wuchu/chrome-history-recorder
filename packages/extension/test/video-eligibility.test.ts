@@ -18,6 +18,8 @@ const config: CaptureConfig = {
   captureVideos: true,
   maxVideoSize: DEFAULT_MAX_VIDEO_SIZE,
   enabledVideoTypes: [...DEFAULT_ENABLED_VIDEO_TYPES],
+  videoCaptureMode: 're-download',
+  videoCaptureModeByHost: {},
 };
 
 const baseInput = {

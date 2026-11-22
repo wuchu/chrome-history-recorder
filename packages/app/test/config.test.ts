@@ -6,12 +6,15 @@ import {
   DEFAULT_APP_CONFIG,
   DEFAULT_MEDIA_ARCHIVE_INTERVAL_MINUTES,
   DEFAULT_TASK_CONCURRENCY,
+  DEFAULT_VIDEO_CAPTURE_MODE,
+  DEFAULT_VIDEO_CAPTURE_MODE_BY_HOST,
   MAX_MEDIA_ARCHIVE_INTERVAL_MINUTES,
   MAX_TASK_CONCURRENCY,
   MIN_MEDIA_ARCHIVE_INTERVAL_MINUTES,
   MIN_TASK_CONCURRENCY,
   migrateLegacyScheduling,
   normalizeAppConfig,
+  normalizeVideoCaptureModeByHost,
   type AppConfig,
 } from '../src/types';
 import { ConfigStore } from '../src/config-store';
@@ -175,5 +178,61 @@ describe('task concurrency configuration', () => {
     } finally {
       fs.rmSync(workspace, { recursive: true, force: true });
     }
+  });
+});
+
+describe('video capture mode configuration', () => {
+  it('defaults to re-download with Douyin overrides', () => {
+    expect(DEFAULT_APP_CONFIG.videoCaptureMode).toBe(DEFAULT_VIDEO_CAPTURE_MODE);
+    expect(DEFAULT_APP_CONFIG.videoCaptureModeByHost).toEqual(DEFAULT_VIDEO_CAPTURE_MODE_BY_HOST);
+    expect(DEFAULT_APP_CONFIG.videoCaptureModeByHost['douyin.com']).toBe('buffer-only');
+  });
+
+  it('rejects unknown modes and falls back to the global default', () => {
+    const normalized = normalizeAppConfig(
+      configWith({ videoCaptureMode: 'unknown' as unknown as AppConfig['videoCaptureMode'] })
+    );
+    expect(normalized.videoCaptureMode).toBe(DEFAULT_VIDEO_CAPTURE_MODE);
+  });
+
+  it('normalizes host suffixes and drops invalid entries', () => {
+    const normalized = normalizeVideoCaptureModeByHost({
+      '*.Example.COM': 'buffer-only',
+      '.douyin.com': 're-download',
+      invalid: 'sometimes',
+      '': 'buffer-only',
+    });
+
+    expect(normalized).toEqual({
+      'example.com': 'buffer-only',
+      'douyin.com': 're-download',
+    });
+  });
+
+  it('defaults optional gap filling to on and preserves an explicit opt-out', () => {
+    expect(DEFAULT_APP_CONFIG.videoAssemblyFillGaps).toBe(true);
+    expect(
+      normalizeAppConfig(configWith({ videoAssemblyFillGaps: false })).videoAssemblyFillGaps
+    ).toBe(false);
+
+    const legacy = { ...DEFAULT_APP_CONFIG } as Partial<AppConfig>;
+    delete legacy.videoAssemblyFillGaps;
+    expect(normalizeAppConfig(legacy as AppConfig).videoAssemblyFillGaps).toBe(true);
+
+    expect(
+      normalizeAppConfig(configWith({ videoAssemblyFillGaps: 'yes' as unknown as boolean }))
+        .videoAssemblyFillGaps
+    ).toBe(true);
+  });
+
+  it('accepts an empty override map', () => {
+    expect(normalizeVideoCaptureModeByHost({})).toEqual({});
+  });
+
+  it('falls back to the built-in overrides for non-object values', () => {
+    expect(normalizeVideoCaptureModeByHost(null)).toEqual(DEFAULT_VIDEO_CAPTURE_MODE_BY_HOST);
+    expect(normalizeVideoCaptureModeByHost('douyin.com')).toEqual(
+      DEFAULT_VIDEO_CAPTURE_MODE_BY_HOST
+    );
   });
 });

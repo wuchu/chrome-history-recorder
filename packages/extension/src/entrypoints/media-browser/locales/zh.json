@@ -98,6 +98,7 @@
       "media": "媒体",
       "ai": "AI",
       "videoQueue": "视频",
+      "videoAssembly": "视频缓冲 {{assembling}} 进行 · {{complete}} 完成 · {{incomplete}} 未完整",
       "running": "运行 {{duration}}",
       "duration": "用时 {{duration}}"
     },
@@ -134,6 +135,9 @@
         "failed": "失败",
         "video:candidate": "视频候选",
         "video:result": "视频完成",
+        "video:assembling": "视频缓冲中",
+        "video:complete": "视频完整捕获",
+        "video:skipped": "视频已跳过",
         "ai": "AI 状态"
       }
     },

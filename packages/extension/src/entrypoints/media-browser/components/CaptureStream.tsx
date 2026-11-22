@@ -4,7 +4,7 @@
  * Displays the latest captured media in a horizontal stream with thumbnails.
  */
 
-import { memo, useCallback } from 'react';
+import { memo, useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { buildVfsThumbnailUrl } from '../utils/media';
 import styles from './CaptureStream.module.css';
@@ -58,6 +58,41 @@ const StatusIndicator = memo(function StatusIndicator({
   return <span className={`${styles.statusIcon} ${colorClass[status]}`}>{icon[status]}</span>;
 });
 
+function CaptureThumb({ file }: { file: CapturedFile }) {
+  const [failed, setFailed] = useState(false);
+  const isVideo = file.mimeType.startsWith('video/');
+  const thumbnailSrc = file.thumbnailUrl || buildVfsThumbnailUrl(file.hash);
+
+  if (!isVideo) {
+    return (
+      <img src={thumbnailSrc} alt={file.filename} className={styles.thumbnail} loading="lazy" />
+    );
+  }
+
+  if (failed) {
+    return (
+      <div className={styles.videoPlaceholder}>
+        <span>🎬</span>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <img
+        src={thumbnailSrc}
+        alt={file.filename}
+        className={styles.thumbnail}
+        loading="lazy"
+        onError={() => setFailed(true)}
+      />
+      <span className={styles.videoBadge} aria-hidden="true">
+        ▶
+      </span>
+    </>
+  );
+}
+
 /**
  * Single capture item
  */
@@ -68,19 +103,10 @@ const CaptureItem = memo(function CaptureItem({
   file: CapturedFile;
   onClick: () => void;
 }) {
-  const isImage = file.mimeType.startsWith('image/');
-  const thumbnailSrc = file.thumbnailUrl || buildVfsThumbnailUrl(file.hash);
-
   return (
     <div className={styles.captureItem} onClick={onClick}>
       <div className={styles.thumbnailContainer}>
-        {isImage ? (
-          <img src={thumbnailSrc} alt={file.filename} className={styles.thumbnail} loading="lazy" />
-        ) : (
-          <div className={styles.videoPlaceholder}>
-            <span>🎬</span>
-          </div>
-        )}
+        <CaptureThumb file={file} />
         {file.classifyStatus && <StatusIndicator status={file.classifyStatus} />}
       </div>
       <div className={styles.captureInfo}>

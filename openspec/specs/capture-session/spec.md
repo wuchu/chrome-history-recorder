@@ -3,9 +3,7 @@
 ## Purpose
 
 Maintain a single tab-scoped capture session with counters, a bounded event log, a restorable snapshot, and a stopped-session summary.
-
 ## Requirements
-
 ### Requirement: Single active capture session
 The system SHALL permit at most one active capture session across all browser tabs at any time.
 
@@ -81,7 +79,7 @@ A capture session SHALL begin only on an explicit capture start and SHALL end on
 ### Requirement: Session counters
 The system SHALL maintain counters for the active session and update them from session-scoped events.
 
-The counters SHALL include saved count, duplicate count, skipped count, failed count, saved bytes, saved image count, saved video count, AI pending count, AI processing count, AI completed count, AI failed count, AI skipped count, queued video count, and downloading video count.
+The counters SHALL include saved count, duplicate count, skipped count, failed count, saved bytes, saved image count, saved video count, AI pending count, AI processing count, AI completed count, AI failed count, AI skipped count, queued video count, downloading video count, assembling video count, completed buffered video count, and incomplete buffered video count.
 
 #### Scenario: Increment on save
 - **WHEN** a media resource is saved as a new file in the session
@@ -100,6 +98,16 @@ The counters SHALL include saved count, duplicate count, skipped count, failed c
 - **WHEN** a capture fails
 - **THEN** the failed count SHALL increase by one
 
+#### Scenario: Count buffered assembly progress
+- **WHEN** an assembly job becomes active for a resource
+- **THEN** the assembling video count SHALL reflect the number of active jobs
+- **AND** when the job finalizes successfully the completed buffered video count SHALL increase
+
+#### Scenario: Count incomplete buffered video
+- **WHEN** an assembly job is discarded because coverage is incomplete
+- **THEN** the incomplete buffered video count SHALL increase by one
+- **AND** the skipped count SHALL increase by one
+
 #### Scenario: Counters survive navigation
 - **WHEN** the session tab navigates to another page
 - **THEN** the session counters SHALL retain their values
@@ -113,7 +121,7 @@ The counters SHALL include saved count, duplicate count, skipped count, failed c
 ### Requirement: Session-scoped capture events
 The Background Service Worker SHALL emit session-scoped capture events carrying the session tab id, current page URL, event type, timestamp, and available hash and source URL.
 
-The event types SHALL include saved, duplicate, skipped, failed, video candidate, video result, and AI status.
+The event types SHALL include saved, duplicate, skipped, failed, video candidate, video result, buffered assembly progress, buffered video complete, buffered video skipped, and AI status.
 
 #### Scenario: Emit saved event
 - **WHEN** an image or video is saved during the session
@@ -134,6 +142,10 @@ The event types SHALL include saved, duplicate, skipped, failed, video candidate
 #### Scenario: Emit video pipeline events
 - **WHEN** a video candidate is detected, queued, completed, or fails
 - **THEN** the Background SHALL emit the corresponding video event containing the tab id, page URL, source URL, and available hash or error
+
+#### Scenario: Emit buffered assembly events
+- **WHEN** an assembly job starts, makes progress, completes, or is discarded
+- **THEN** the Background SHALL emit the corresponding buffered assembly event containing the tab id, page URL, source URL, and available progress, hash, or reason
 
 #### Scenario: Emit AI status for session hashes
 - **WHEN** an AI task for a hash saved in the active session is queued, started, completed, fails, or is skipped
@@ -230,3 +242,35 @@ The capture session model SHALL remain limited to continuous CDP capture, and us
 - **WHEN** a one-shot save creates a new library item
 - **THEN** the item SHALL be visible through the global media library and `file:captured`
 - **AND** it SHALL NOT be added to the session feed or session summary
+
+### Requirement: Buffered assembly progress events
+The system SHALL report buffered assembly state as session-scoped events suitable for live display.
+
+#### Scenario: Assembling progress
+- **WHEN** bytes are committed to an assembly job
+- **THEN** the Background emits an assembling event containing the source URL, received byte count, and total byte count
+- **AND** the event rate is throttled so that rapid chunk writes do not flood the session log
+
+#### Scenario: Buffered video complete
+- **WHEN** an assembly job finalizes successfully
+- **THEN** the Background emits a buffered video complete event containing the hash, size, MIME type, source URL, and whether the content was a duplicate
+
+#### Scenario: Buffered video skipped
+- **WHEN** an assembly job is discarded
+- **THEN** the Background emits a buffered video skipped event containing the source URL, reason, missing byte count when applicable, and bounded diagnostic detail
+- **AND** the detail is omitted or empty when no diagnostic information is available
+
+#### Scenario: Source verification skip is distinguishable from byte incompleteness
+- **WHEN** the skip reason is `unverified-source`
+- **THEN** the event detail describes the source-verification outcome and matching attempts
+- **AND** the missing byte count is absent
+- **AND** the user-visible event label does not claim that received bytes are incomplete
+
+#### Scenario: Diagnostic detail is bounded
+- **WHEN** a skip event includes diagnostic detail
+- **THEN** the detail is truncated to a bounded length suitable for the session event log
+- **AND** the detail does not include the complete signed query string
+
+#### Scenario: Assembly events are bounded by the session log
+- **WHEN** assembling events exceed the session log capacity
+- **THEN** older entries are discarded according to the bounded event log rule

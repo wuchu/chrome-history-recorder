@@ -461,6 +461,23 @@
   font-size: 24px;
 }
 
+.feedPlayBadge {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 9px;
+  line-height: 1;
+  pointer-events: none;
+}
+
 .feedDuplicate {
   font-size: 10px;
   color: var(--text-muted);

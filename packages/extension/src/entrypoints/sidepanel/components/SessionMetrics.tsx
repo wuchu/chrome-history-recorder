@@ -87,6 +87,17 @@ export function SessionMetrics({ counters, startedAt, endedAt, status }: Session
             {counters.videosDownloading} 下载中
           </span>
         )}
+        {counters.videosAssembling + counters.videosComplete + counters.videosIncomplete > 0 && (
+          <span>
+            {t('cockpit.metrics.videoAssembly', {
+              assembling: counters.videosAssembling,
+              complete: counters.videosComplete,
+              incomplete: counters.videosIncomplete,
+              defaultValue:
+                '视频缓冲 {{assembling}} 进行 · {{complete}} 完成 · {{incomplete}} 未完整',
+            })}
+          </span>
+        )}
         <span className={styles.metricDuration}>
           {status === 'capturing'
             ? t('cockpit.metrics.running', {

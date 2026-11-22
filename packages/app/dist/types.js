@@ -3,8 +3,10 @@
  * App configuration types and defaults.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULT_APP_CONFIG = exports.DEFAULT_TASK_CONCURRENCY = exports.MAX_TASK_CONCURRENCY = exports.MIN_TASK_CONCURRENCY = exports.DEFAULT_MEDIA_ARCHIVE_INTERVAL_MINUTES = exports.MAX_MEDIA_ARCHIVE_INTERVAL_MINUTES = exports.MIN_MEDIA_ARCHIVE_INTERVAL_MINUTES = exports.SUPPORTED_VIDEO_MIME_TYPES = exports.DEFAULT_ENABLED_VIDEO_TYPES = exports.DEFAULT_MAX_VIDEO_SIZE = exports.MAX_VIDEO_SIZE_LIMIT = exports.MIN_VIDEO_SIZE_LIMIT = void 0;
+exports.DEFAULT_APP_CONFIG = exports.DEFAULT_VIDEO_CAPTURE_MODE_BY_HOST = exports.DEFAULT_VIDEO_CAPTURE_MODE = exports.DEFAULT_TASK_CONCURRENCY = exports.MAX_TASK_CONCURRENCY = exports.MIN_TASK_CONCURRENCY = exports.DEFAULT_MEDIA_ARCHIVE_INTERVAL_MINUTES = exports.MAX_MEDIA_ARCHIVE_INTERVAL_MINUTES = exports.MIN_MEDIA_ARCHIVE_INTERVAL_MINUTES = exports.SUPPORTED_VIDEO_MIME_TYPES = exports.DEFAULT_ENABLED_VIDEO_TYPES = exports.DEFAULT_MAX_VIDEO_SIZE = exports.MAX_VIDEO_SIZE_LIMIT = exports.MIN_VIDEO_SIZE_LIMIT = void 0;
 exports.normalizeConcurrency = normalizeConcurrency;
+exports.normalizeVideoCaptureMode = normalizeVideoCaptureMode;
+exports.normalizeVideoCaptureModeByHost = normalizeVideoCaptureModeByHost;
 exports.migrateLegacyScheduling = migrateLegacyScheduling;
 exports.normalizeAppConfig = normalizeAppConfig;
 exports.MIN_VIDEO_SIZE_LIMIT = 1 * 1024 * 1024;
@@ -25,6 +27,14 @@ exports.DEFAULT_MEDIA_ARCHIVE_INTERVAL_MINUTES = 5;
 exports.MIN_TASK_CONCURRENCY = 1;
 exports.MAX_TASK_CONCURRENCY = 8;
 exports.DEFAULT_TASK_CONCURRENCY = 1;
+exports.DEFAULT_VIDEO_CAPTURE_MODE = 're-download';
+exports.DEFAULT_VIDEO_CAPTURE_MODE_BY_HOST = {
+    'douyin.com': 'buffer-only',
+    'douyinvod.com': 'buffer-only',
+    'v.douyin.com': 'buffer-only',
+};
+const VIDEO_CAPTURE_MODES = new Set(['buffer-only', 're-download']);
+const MAX_VIDEO_CAPTURE_HOST_OVERRIDES = 100;
 exports.DEFAULT_APP_CONFIG = {
     ollamaEndpoint: 'http://localhost:11434',
     language: 'zh-CN',
@@ -37,6 +47,9 @@ exports.DEFAULT_APP_CONFIG = {
     captureVideos: true,
     maxVideoSize: exports.DEFAULT_MAX_VIDEO_SIZE,
     enabledVideoTypes: [...exports.DEFAULT_ENABLED_VIDEO_TYPES],
+    videoCaptureMode: exports.DEFAULT_VIDEO_CAPTURE_MODE,
+    videoCaptureModeByHost: { ...exports.DEFAULT_VIDEO_CAPTURE_MODE_BY_HOST },
+    videoAssemblyFillGaps: true,
     mediaArchiveEnabled: false,
     mediaArchiveTargetPath: '',
     mediaArchiveIntervalMinutes: exports.DEFAULT_MEDIA_ARCHIVE_INTERVAL_MINUTES,
@@ -46,6 +59,38 @@ function normalizeConcurrency(value) {
     return typeof value === 'number' && Number.isFinite(value)
         ? Math.min(exports.MAX_TASK_CONCURRENCY, Math.max(exports.MIN_TASK_CONCURRENCY, Math.floor(value)))
         : exports.DEFAULT_TASK_CONCURRENCY;
+}
+function normalizeVideoCaptureMode(value, fallback = exports.DEFAULT_VIDEO_CAPTURE_MODE) {
+    return typeof value === 'string' && VIDEO_CAPTURE_MODES.has(value)
+        ? value
+        : fallback;
+}
+/**
+ * Normalize a host-suffix map. Invalid entries are dropped; a missing or
+ * non-object value falls back to the built-in overrides.
+ */
+function normalizeVideoCaptureModeByHost(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return { ...exports.DEFAULT_VIDEO_CAPTURE_MODE_BY_HOST };
+    }
+    const result = {};
+    for (const [rawHost, rawMode] of Object.entries(value)) {
+        if (Object.keys(result).length >= MAX_VIDEO_CAPTURE_HOST_OVERRIDES)
+            break;
+        if (typeof rawHost !== 'string')
+            continue;
+        const host = rawHost
+            .trim()
+            .toLowerCase()
+            .replace(/^\*?\./, '');
+        if (!host || host.length > 253)
+            continue;
+        if (typeof rawMode !== 'string' || !VIDEO_CAPTURE_MODES.has(rawMode)) {
+            continue;
+        }
+        result[host] = rawMode;
+    }
+    return result;
 }
 /**
  * Map legacy global scheduling settings onto the new per-task fields. The
@@ -92,6 +137,11 @@ function normalizeAppConfig(config) {
         captureVideos: config.captureVideos !== false,
         maxVideoSize,
         enabledVideoTypes: enabledVideoTypes.length > 0 ? enabledVideoTypes : [...exports.DEFAULT_ENABLED_VIDEO_TYPES],
+        videoCaptureMode: normalizeVideoCaptureMode(config.videoCaptureMode),
+        videoCaptureModeByHost: normalizeVideoCaptureModeByHost(config.videoCaptureModeByHost),
+        videoAssemblyFillGaps: typeof config.videoAssemblyFillGaps === 'boolean'
+            ? config.videoAssemblyFillGaps
+            : true,
         mediaArchiveEnabled: config.mediaArchiveEnabled === true,
         mediaArchiveTargetPath: typeof config.mediaArchiveTargetPath === 'string' ? config.mediaArchiveTargetPath.trim() : '',
         mediaArchiveIntervalMinutes,

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   CaptureSessionStore,
+  CAPTURE_SESSION_STORAGE_KEY,
   createSessionStorageForTests,
   MAX_SESSION_EVENTS,
 } from '../src/background/capture-session-store';
@@ -204,6 +205,65 @@ describe('CaptureSessionStore', () => {
     expect(restored.getActiveSession()?.tabId).toBe(1);
     expect(restored.getSnapshot().session?.counters.saved).toBe(1);
     expect(restored.hasSavedHash('abc')).toBe(true);
+  });
+
+  it('fills counters and arrays missing from a legacy snapshot', async () => {
+    const storage = createSessionStorageForTests();
+    await storage.set({
+      [CAPTURE_SESSION_STORAGE_KEY]: {
+        session: {
+          id: 'legacy',
+          tabId: 1,
+          tabTitle: 'Legacy',
+          pageUrl: 'https://example.com/legacy',
+          origin: 'https://example.com',
+          startedAt: '2026-01-01T00:00:00.000Z',
+          status: 'capturing',
+          counters: { saved: 2 },
+        },
+        summary: null,
+      },
+    });
+
+    const store = new CaptureSessionStore({
+      storage,
+      persist: true,
+      persistThrottleMs: 1,
+    });
+    await store.restore();
+
+    const session = store.getSnapshot().session;
+    expect(session?.counters.saved).toBe(2);
+    expect(session?.counters.videosAssembling).toBe(0);
+    expect(session?.counters.videosIncomplete).toBe(0);
+    expect(session?.events).toEqual([]);
+    expect(session?.recentItems).toEqual([]);
+    expect(session?.savedHashes).toEqual([]);
+  });
+
+  it('records buffered assembly progress and skip detail', () => {
+    const { store } = createStore();
+    start(store);
+
+    store.recordVideoAssembling({
+      url: 'https://cdn.example.com/v.mp4',
+      receivedBytes: 5,
+      totalBytes: 10,
+    });
+    const assembling = store.getSnapshot().session?.events[0];
+    expect(assembling?.kind).toBe('video:assembling');
+    expect(assembling?.receivedBytes).toBe(5);
+    expect(assembling?.totalBytes).toBe(10);
+
+    store.recordVideoAssemblySkipped({
+      url: 'https://cdn.example.com/v.mp4',
+      reason: 'unverified-source',
+      detail: 'probe=unverified sources=0 attempts=3',
+    });
+    const skipped = store.getSnapshot().session?.events[0];
+    expect(skipped?.kind).toBe('video:skipped');
+    expect(skipped?.detail).toBe('probe=unverified sources=0 attempts=3');
+    expect(skipped?.missingBytes).toBeUndefined();
   });
 
   it('tracks video queue and download counters', () => {

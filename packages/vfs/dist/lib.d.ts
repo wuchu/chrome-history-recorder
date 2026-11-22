@@ -13,5 +13,6 @@ export { ThumbnailStorage, type ThumbnailSize } from './thumbnail';
 export { createDispatcher, type VFSRequest, type VFSResponse, type ExternalHandler, } from './dispatcher';
 export { VFSSWebSocketServer, createWebSocketServer, type WebSocketServerConfig, } from './websocket-server';
 export { VFSHTTPServer, createHTTPServer, DEFAULT_MAX_UPLOAD_SIZE, type HTTPServerConfig, } from './http-server';
+export { AssemblyManager, AssemblyCapacityError, AssemblyIncompleteError, AssemblyInvalidError, AssemblyNotFoundError, AssemblyUnauthorizedError, DEFAULT_ASSEMBLY_MAX_BYTES, type AssemblyCreateInput, type AssemblyJobHandle, type AssemblyManagerOptions, } from './assembly';
 export { parseArgs, getDefaultWorkspacePath, expandPath, type VFSConfig, type WorkspaceSource, } from './config';
 //# sourceMappingURL=lib.d.ts.map

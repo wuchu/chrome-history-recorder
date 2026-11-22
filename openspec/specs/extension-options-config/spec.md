@@ -3,9 +3,7 @@
 ## Purpose
 
 Provide a dedicated extension Options console as the source of truth for active Extension Background and VFS runtime configuration, organized into Overview, Media Library, Tags, Tasks, and Settings sections.
-
 ## Requirements
-
 ### Requirement: Dedicated extension options page
 The extension SHALL provide a dedicated Options page for active program configuration.
 
@@ -205,6 +203,22 @@ The Options page SHALL provide a video capture settings section for the active c
 - **THEN** the system persists the selected MIME types to extension configuration
 - **AND** the active capture runtime only records candidates matching the selected formats
 
+#### Scenario: Select default capture mode
+- **WHEN** the user selects `re-download` or `buffer-only` as the default video capture mode
+- **THEN** the system persists the value to extension configuration
+- **AND** pages without a host override use the new mode
+
+#### Scenario: Configure per-host capture mode overrides
+- **WHEN** the user edits the host override list in the form `host=mode`
+- **THEN** the system persists the normalized host suffixes and modes to extension configuration
+- **AND** invalid hosts or modes are rejected with a visible error
+
+#### Scenario: Toggle optional gap filling
+- **WHEN** the user enables or disables "补齐缺失区间"
+- **THEN** the system persists `videoAssemblyFillGaps` to extension configuration
+- **AND** the section explains that it issues additional Range requests for missing bytes
+- **AND** the default is enabled and the user can turn it off
+
 #### Scenario: Reject invalid maximum size
 - **WHEN** the user enters a maximum video size outside the supported range or not a number
 - **THEN** the Options page shows a validation error
@@ -212,7 +226,7 @@ The Options page SHALL provide a video capture settings section for the active c
 
 #### Scenario: Default video settings
 - **WHEN** the Options page loads with no saved video settings
-- **THEN** it displays video capture enabled, a maximum size of 200 MiB, and MP4 and WebM selected
+- **THEN** it displays video capture enabled, a maximum size of 200 MiB, MP4 and WebM selected, the global `re-download` mode, and gap filling enabled
 
 ### Requirement: Console section grouping of configuration sections
 The Options page SHALL group its existing configuration and management sections under the console navigation.

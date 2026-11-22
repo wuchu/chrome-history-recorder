@@ -1,6 +1,12 @@
 import type { PromptTemplates } from './prompt-templates';
+import {
+  DEFAULT_VIDEO_CAPTURE_MODE,
+  DEFAULT_VIDEO_CAPTURE_MODE_BY_HOST,
+  type VideoCaptureMode,
+} from './video-assembly';
 
 export type { PromptTemplates };
+export type { VideoCaptureMode };
 
 /**
  * Tag definition for user-defined and system tags
@@ -47,6 +53,9 @@ export interface ExtensionConfig {
   captureVideos: boolean;
   maxVideoSize: number;
   enabledVideoTypes: string[];
+  videoCaptureMode: VideoCaptureMode;
+  videoCaptureModeByHost: Record<string, VideoCaptureMode>;
+  videoAssemblyFillGaps: boolean;
   mediaArchiveEnabled: boolean;
   mediaArchiveTargetPath: string;
   mediaArchiveIntervalMinutes: number;
@@ -68,6 +77,9 @@ export const DEFAULT_EXTENSION_CONFIG: ExtensionConfig = {
   captureVideos: true,
   maxVideoSize: DEFAULT_MAX_VIDEO_SIZE,
   enabledVideoTypes: [...DEFAULT_ENABLED_VIDEO_TYPES],
+  videoCaptureMode: DEFAULT_VIDEO_CAPTURE_MODE,
+  videoCaptureModeByHost: { ...DEFAULT_VIDEO_CAPTURE_MODE_BY_HOST },
+  videoAssemblyFillGaps: true,
   mediaArchiveEnabled: false,
   mediaArchiveTargetPath: '',
   mediaArchiveIntervalMinutes: 5,
@@ -204,6 +216,9 @@ export type SessionEventKind =
   | 'failed'
   | 'video:candidate'
   | 'video:result'
+  | 'video:assembling'
+  | 'video:complete'
+  | 'video:skipped'
   | 'ai';
 
 export interface SessionCounters {
@@ -221,6 +236,9 @@ export interface SessionCounters {
   aiSkipped: number;
   videosQueued: number;
   videosDownloading: number;
+  videosAssembling: number;
+  videosComplete: number;
+  videosIncomplete: number;
 }
 
 export interface SessionMediaItem {
@@ -248,6 +266,10 @@ export interface SessionEvent {
   error?: string;
   aiStatus?: SessionAiStatus;
   duplicate?: boolean;
+  receivedBytes?: number;
+  totalBytes?: number;
+  missingBytes?: number;
+  detail?: string;
 }
 
 export interface SessionEventInput {
@@ -262,6 +284,10 @@ export interface SessionEventInput {
   timestamp?: string;
   pageUrl?: string;
   duplicate?: boolean;
+  receivedBytes?: number;
+  totalBytes?: number;
+  missingBytes?: number;
+  detail?: string;
 }
 
 export interface SessionTopReason {
