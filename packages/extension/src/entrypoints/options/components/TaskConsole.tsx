@@ -3,16 +3,16 @@ import {
   Button,
   Card,
   Col,
-  Divider,
+  Collapse,
+  Dropdown,
   Input,
   InputNumber,
-  Popconfirm,
+  Modal,
   Progress,
   Row,
   Space,
   Statistic,
   Switch,
-  Tag,
   Typography,
 } from 'antd';
 import type { QueueStatus, TaskTypeSummary } from '../../../shared/extension-runtime';
@@ -134,6 +134,28 @@ const TaskConsole = memo(function TaskConsole({
     });
   }, [status]);
 
+  const confirmMaintenance = (taskType: AiTaskType, label: string, action: 'clear' | 'rescan') => {
+    if (action === 'clear') {
+      Modal.confirm({
+        title: `清空 ${label} 队列`,
+        content: '这会删除该类型当前队列记录，确定继续吗？',
+        okText: '清空',
+        okType: 'danger',
+        cancelText: '取消',
+        onOk: () => onClearQueue(taskType),
+      });
+      return;
+    }
+
+    Modal.confirm({
+      title: `全量重扫 ${label}`,
+      content: '重新扫描全部媒体的该任务类型，确定继续吗？',
+      okText: '重扫',
+      cancelText: '取消',
+      onOk: () => onRescan(taskType),
+    });
+  };
+
   return (
     <Space direction="vertical" size="large" className="full-width">
       {typeRows.map((row) => {
@@ -150,19 +172,7 @@ const TaskConsole = memo(function TaskConsole({
           row.failed > 0 ? 'exception' : schedulerRunning ? 'active' : 'normal';
 
         return (
-          <Card
-            key={row.key}
-            className="options-card"
-            title={row.label}
-            loading={loading}
-            extra={
-              templateKey ? (
-                <Button size="small" onClick={() => onTemplateReset(templateKey)}>
-                  恢复默认
-                </Button>
-              ) : undefined
-            }
-          >
+          <Card key={row.key} className="options-card" title={row.label} loading={loading}>
             {taskType && (
               <Row gutter={[16, 16]} align="middle">
                 <Col xs={24} md={8}>
@@ -183,9 +193,6 @@ const TaskConsole = memo(function TaskConsole({
                           }
                         }}
                       />
-                      <Tag color={schedulerRunning ? 'processing' : 'default'}>
-                        {schedulerRunning ? '运行中' : '已暂停'}
-                      </Tag>
                     </Space>
                     <Text type="secondary">暂停时仍可入队，但不会消费该类型的任务。</Text>
                   </Space>
@@ -248,48 +255,59 @@ const TaskConsole = memo(function TaskConsole({
                 >
                   重试失败任务
                 </Button>
-                <Popconfirm
-                  title={`清空 ${row.label} 队列`}
-                  description="这会删除该类型当前队列记录，确定继续吗？"
-                  okText="清空"
-                  cancelText="取消"
-                  onConfirm={() => void onClearQueue(taskType)}
+                <Dropdown
+                  trigger={['click']}
+                  menu={{
+                    items: [
+                      {
+                        key: 'clear',
+                        label: '清空本类队列',
+                        danger: true,
+                        disabled: busy[`${taskType}:clear`],
+                      },
+                      {
+                        key: 'rescan',
+                        label: '全量重扫',
+                        disabled: busy[`${taskType}:rescan`],
+                      },
+                    ],
+                    onClick: ({ key }) =>
+                      confirmMaintenance(taskType, row.label, key as 'clear' | 'rescan'),
+                  }}
                 >
-                  <Button danger loading={busy[`${taskType}:clear`]}>
-                    清空本类队列
-                  </Button>
-                </Popconfirm>
-                <Popconfirm
-                  title={`全量重扫 ${row.label}`}
-                  description="重新扫描全部媒体的该任务类型，确定继续吗？"
-                  okText="重扫"
-                  cancelText="取消"
-                  onConfirm={() => void onRescan(taskType)}
-                >
-                  <Button loading={busy[`${taskType}:rescan`]}>全量重扫</Button>
-                </Popconfirm>
+                  <Button>更多</Button>
+                </Dropdown>
               </Space>
             )}
 
             {templateKey && templateMeta && (
-              <>
-                <Divider style={{ margin: '18px 0 12px' }} />
-                <Text strong>提示词模板</Text>
-                <div style={{ marginTop: 8 }}>
-                  <TextArea
-                    rows={5}
-                    value={templateDrafts[templateKey]}
-                    onChange={(event) => onTemplateChange(templateKey, event.target.value)}
-                    onBlur={() => onTemplateSave(templateKey)}
-                    placeholder={templateMeta.placeholder}
-                  />
-                </div>
-                <div style={{ marginTop: 6 }}>
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    {templateMeta.description} 留空时使用内置默认模板。
-                  </Text>
-                </div>
-              </>
+              <Collapse
+                ghost
+                style={{ marginTop: 16 }}
+                items={[
+                  {
+                    key: templateKey,
+                    label: '高级：提示词模板',
+                    children: (
+                      <Space direction="vertical" size={8} className="full-width">
+                        <TextArea
+                          rows={5}
+                          value={templateDrafts[templateKey]}
+                          onChange={(event) => onTemplateChange(templateKey, event.target.value)}
+                          onBlur={() => onTemplateSave(templateKey)}
+                          placeholder={templateMeta.placeholder}
+                        />
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          {templateMeta.description} 留空时使用内置默认模板。
+                        </Text>
+                        <Button size="small" onClick={() => onTemplateReset(templateKey)}>
+                          恢复默认
+                        </Button>
+                      </Space>
+                    ),
+                  },
+                ]}
+              />
             )}
           </Card>
         );

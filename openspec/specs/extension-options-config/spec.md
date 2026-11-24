@@ -79,10 +79,15 @@ The Options page SHALL provide a dedicated Ollama card for the active classifier
 - **AND** it SHALL NOT navigate away from the card
 
 ### Requirement: AI prompt template editors
-The Options page SHALL provide editable AI prompt templates in the AI task cards.
+The Options page SHALL provide editable AI prompt templates inside a collapsed advanced disclosure in each AI task card.
+
+#### Scenario: Templates are collapsed by default
+- **WHEN** the Options page renders the AI task cards
+- **THEN** each card SHALL show an "高级：提示词模板" disclosure in the collapsed state
+- **AND** the prompt text areas SHALL NOT occupy space until the user expands it
 
 #### Scenario: Show editable templates
-- **WHEN** the Options page renders the AI task cards
+- **WHEN** the user expands the prompt-template disclosure on an AI task card
 - **THEN** it SHALL show one text area per prompt type (`classify`, `rename`)
 - **AND** each text area SHALL display its current value, defaulting to the built-in default when unset
 
@@ -352,12 +357,17 @@ The Options Tasks section SHALL provide a media archive card that configures the
 
 ### Requirement: Per-task controls section
 
-The Options page SHALL provide independent run/pause and concurrency controls for each task type.
+The Options page SHALL provide independent run/pause and concurrency controls for each task type without duplicating state indicators.
 
 #### Scenario: Show AI task controls
 - **WHEN** the Options page renders the AI task cards
 - **THEN** the AI 分类 card SHALL show its own run/pause switch and concurrency input
 - **AND** the AI 重命名 card SHALL show its own run/pause switch and concurrency input
+
+#### Scenario: Single scheduler state indicator
+- **WHEN** an AI task card renders its run/pause state
+- **THEN** it SHALL show that state once through the run/pause switch
+- **AND** it SHALL NOT repeat the same state as a separate status tag
 
 #### Scenario: Pause one AI task type
 - **WHEN** the user pauses AI 分类 while AI 重命名 is running
@@ -373,6 +383,12 @@ The Options page SHALL provide independent run/pause and concurrency controls fo
 - **WHEN** the Options page loads a configuration without saved per-type pause state
 - **THEN** both AI task cards SHALL show paused
 - **AND** the archive card SHALL show archiving disabled
+
+#### Scenario: Maintenance actions stay reachable
+- **WHEN** an AI task card renders its maintenance actions
+- **THEN** retry-failed SHALL remain directly visible
+- **AND** clear-queue and full-rescan SHALL remain reachable from a single overflow menu
+- **AND** both destructive actions SHALL keep their confirmation dialogs
 
 ### Requirement: Ollama chat concurrency control
 
@@ -396,3 +412,25 @@ The Ollama card SHALL provide a control for `ollamaMaxConcurrency` and SHALL exp
 - **WHEN** the user enters a value outside `1–8`
 - **THEN** the UI SHALL prevent saving or show a validation message
 - **AND** it SHALL NOT present the invalid value as successfully saved
+
+### Requirement: Advanced settings disclosure
+
+The Settings section SHALL separate routine settings from advanced and diagnostic controls.
+
+#### Scenario: Routine settings are expanded
+- **WHEN** the user opens the Settings section
+- **THEN** appearance, Ollama model/endpoint/language/chat concurrency, and the primary video-capture controls SHALL be visible without expanding anything
+
+#### Scenario: Advanced controls are collapsed
+- **WHEN** the Settings section renders
+- **THEN** service status, media index maintenance, workspace path, enabled video formats, default capture mode, per-host overrides, and gap filling SHALL be grouped under a collapsed "高级与诊断" section
+
+#### Scenario: All controls remain reachable
+- **WHEN** the user expands the "高级与诊断" section
+- **THEN** every previously available control SHALL be visible
+- **AND** each setting SHALL keep its existing persistence and feedback behavior
+
+#### Scenario: Workspace path stays discoverable
+- **WHEN** the Settings section renders
+- **THEN** the current workspace path SHALL be visible as a read-only summary even while the advanced section is collapsed
+- **AND** changing the path SHALL remain available through the advanced section

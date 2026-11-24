@@ -131,27 +131,30 @@ afterEach(() => {
 });
 
 describe('Options MediaLibrary', () => {
-  it('loads global media and tag tabs', async () => {
+  it('loads global media and exposes a view switch', async () => {
     render(<MediaLibrary />);
 
-    expect(await screen.findByText('📷 图片')).toBeTruthy();
     await waitFor(() => {
       expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'listFiles',
-          query: expect.objectContaining({ limit: 50, offset: 0 }),
+          query: expect.objectContaining({ limit: 50, offset: 0, status: 'active' }),
         })
       );
     });
     expect(await screen.findByTestId('masonry')).toBeTruthy();
+    expect(screen.getByRole('radio', { name: /媒体库/ })).toBeTruthy();
+    expect(screen.getByRole('radio', { name: /回收站/ })).toBeTruthy();
     expect(document.querySelector('img[src*="hash-one"]')).toBeTruthy();
   });
 
-  it('reloads by tag when a tag tab is selected', async () => {
+  it('filters by tag through the search query', async () => {
     render(<MediaLibrary />);
-    await screen.findByText('📷 图片');
+    await screen.findByTestId('masonry');
 
-    fireEvent.click(screen.getByText('📷 图片'));
+    fireEvent.change(screen.getByPlaceholderText('搜索文件名、标签、站点、备注…'), {
+      target: { value: 'tag:image' },
+    });
 
     await waitFor(() => {
       expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(
@@ -161,11 +164,12 @@ describe('Options MediaLibrary', () => {
         })
       );
     });
+    expect(screen.queryByText('📷 图片')).toBeNull();
   });
 
   it('merges live captured media into the library', async () => {
     render(<MediaLibrary />);
-    await screen.findByText('📷 图片');
+    await screen.findByTestId('masonry');
 
     act(() => {
       for (const listener of messageListeners) {
@@ -184,7 +188,7 @@ describe('Options MediaLibrary', () => {
 
   it('uses the tags:updated payload without refetching tag data', async () => {
     render(<MediaLibrary />);
-    await screen.findByText('📷 图片');
+    await screen.findByTestId('masonry');
 
     const sendMessage = vi.mocked(chrome.runtime.sendMessage);
     const tagRequests = () =>
@@ -218,14 +222,18 @@ describe('Options MediaLibrary', () => {
       }
     });
 
-    expect(await screen.findByText('#🌅 日落')).toBeTruthy();
+    const input = screen.getByPlaceholderText('搜索文件名、标签、站点、备注…');
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: 'tag:' } });
+
+    expect(await screen.findByText(/🌅 日落/)).toBeTruthy();
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(tagRequests()).toBe(before);
   });
 
   it('searches through the library query', async () => {
     render(<MediaLibrary />);
-    await screen.findByText('📷 图片');
+    await screen.findByTestId('masonry');
 
     fireEvent.change(screen.getByPlaceholderText('搜索文件名、标签、站点、备注…'), {
       target: { value: 'beach' },
@@ -243,7 +251,7 @@ describe('Options MediaLibrary', () => {
 
   it('selects visible media for batch actions', async () => {
     render(<MediaLibrary />);
-    await screen.findByText('📷 图片');
+    await screen.findByTestId('masonry');
 
     fireEvent.click(screen.getByRole('button', { name: /选\s*择/ }));
     fireEvent.click(screen.getByLabelText('选择媒体'));
@@ -310,7 +318,7 @@ describe('Options MediaLibrary', () => {
 
     try {
       render(<MediaLibrary />);
-      await screen.findByText('📷 图片');
+      await screen.findByTestId('masonry');
 
       fireEvent.click(screen.getByRole('button', { name: /选\s*择/ }));
       fireEvent.click(screen.getAllByLabelText('选择媒体')[0]);
@@ -333,7 +341,7 @@ describe('Options MediaLibrary', () => {
 
     try {
       render(<MediaLibrary />);
-      await screen.findByText('📷 图片');
+      await screen.findByTestId('masonry');
 
       fireEvent.click(screen.getByRole('button', { name: /选\s*择/ }));
       fireEvent.click(screen.getByLabelText('选择媒体'));
@@ -349,7 +357,7 @@ describe('Options MediaLibrary', () => {
 
   it('renders one search input instead of the old filter row', async () => {
     render(<MediaLibrary />);
-    await screen.findByText('📷 图片');
+    await screen.findByPlaceholderText('搜索文件名、标签、站点、备注…');
 
     expect(screen.getAllByRole('textbox')).toHaveLength(1);
     expect(screen.getByPlaceholderText('搜索文件名、标签、站点、备注…')).toBeTruthy();
@@ -361,7 +369,7 @@ describe('Options MediaLibrary', () => {
 
   it('parses dimension tokens into the query and applied chips', async () => {
     render(<MediaLibrary />);
-    await screen.findByText('📷 图片');
+    await screen.findByTestId('masonry');
 
     fireEvent.change(screen.getByPlaceholderText('搜索文件名、标签、站点、备注…'), {
       target: { value: 'tag:cat site:example.com type:image' },
@@ -387,7 +395,7 @@ describe('Options MediaLibrary', () => {
 
   it('removes one condition chip without clearing the others', async () => {
     render(<MediaLibrary />);
-    await screen.findByText('📷 图片');
+    await screen.findByTestId('masonry');
 
     fireEvent.change(screen.getByPlaceholderText('搜索文件名、标签、站点、备注…'), {
       target: { value: 'tag:cat site:example.com' },
@@ -435,7 +443,7 @@ describe('Options MediaLibrary', () => {
     );
 
     render(<MediaLibrary />);
-    await screen.findByText('📷 图片');
+    await screen.findByTestId('masonry');
 
     const input = screen.getByPlaceholderText('搜索文件名、标签、站点、备注…') as HTMLInputElement;
     expect(input.value).toContain('beach');
@@ -470,7 +478,7 @@ describe('Options MediaLibrary', () => {
 
   it('persists the raw query for the Options session', async () => {
     render(<MediaLibrary />);
-    await screen.findByText('📷 图片');
+    await screen.findByTestId('masonry');
 
     fireEvent.change(screen.getByPlaceholderText('搜索文件名、标签、站点、备注…'), {
       target: { value: 'beach' },
@@ -492,19 +500,18 @@ describe('Options MediaLibrary', () => {
     });
 
     render(<MediaLibrary />);
-    await screen.findByText('📷 图片');
+    expect(await screen.findByText('还没有捕获媒体')).toBeTruthy();
 
     fireEvent.change(screen.getByPlaceholderText('搜索文件名、标签、站点、备注…'), {
       target: { value: 'beach' },
     });
-
     expect(await screen.findByText('没有匹配的媒体')).toBeTruthy();
     expect(screen.getByRole('button', { name: '清除全部条件' })).toBeTruthy();
   });
 
   it('does not query until Chinese input composition ends', async () => {
     render(<MediaLibrary />);
-    await screen.findByText('📷 图片');
+    await screen.findByTestId('masonry');
     const input = screen.getByPlaceholderText('搜索文件名、标签、站点、备注…');
 
     const listQueries = () =>

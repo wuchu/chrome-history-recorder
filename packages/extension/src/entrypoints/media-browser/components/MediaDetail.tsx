@@ -5,6 +5,7 @@
  */
 
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { Dropdown } from 'antd';
 import { useTranslation } from 'react-i18next';
 import { buildVfsDownloadUrl, buildVfsFileUrl, buildVfsThumbnailUrl } from '../utils/media';
 import styles from './MediaDetail.module.css';
@@ -95,6 +96,7 @@ const MediaDetail = memo(function MediaDetail({
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageError, setImageError] = useState(false);
   const [videoError, setVideoError] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   const handleBackdropClick = useCallback(
     (e: React.MouseEvent) => {
@@ -138,6 +140,7 @@ const MediaDetail = memo(function MediaDetail({
     setImageLoaded(false);
     setImageError(false);
     setVideoError(false);
+    setDetailsOpen(false);
   }, [item?.hash]);
 
   if (!item) return null;
@@ -168,6 +171,23 @@ const MediaDetail = memo(function MediaDetail({
       return;
     }
     void chrome.downloads.download({ url: buildVfsDownloadUrl(item.hash), saveAs: true });
+  };
+
+  const secondaryActions: Array<{ key: string; label: string }> = [];
+  if (mode !== 'trash' && onRefreshTask) {
+    secondaryActions.push({ key: 'classify', label: '重新分类' });
+    secondaryActions.push({ key: 'rename', label: '重新命名' });
+  }
+  if (mode === 'trash' && onRestore) {
+    secondaryActions.push({ key: 'restore', label: t('trash.restore', '恢复') });
+  }
+
+  const handleSecondaryAction = (key: string) => {
+    if (key === 'classify' || key === 'rename') {
+      onRefreshTask?.(key, item.hash);
+    } else if (key === 'restore') {
+      onRestore?.(item.hash);
+    }
   };
 
   return (
@@ -217,7 +237,17 @@ const MediaDetail = memo(function MediaDetail({
         </div>
 
         <div className={styles.metadata}>
-          <div className={styles.metadataTitle}>{t('mediaDetail.fileInfo', '文件信息')}</div>
+          <div className={styles.metadataHeader}>
+            <div className={styles.metadataTitle}>{t('mediaDetail.fileInfo', '文件信息')}</div>
+            <button
+              type="button"
+              className={styles.detailsToggle}
+              aria-expanded={detailsOpen}
+              onClick={() => setDetailsOpen((open) => !open)}
+            >
+              {detailsOpen ? '收起' : '详情'}
+            </button>
+          </div>
           <div className={styles.metadataRow}>
             <span>{t('mediaDetail.type', '类型')}</span>
             <span>{item.mimeType}</span>
@@ -230,30 +260,6 @@ const MediaDetail = memo(function MediaDetail({
             <span>{t('mediaDetail.capturedAt', '捕获时间')}</span>
             <span>{item.capturedAt ? new Date(item.capturedAt).toLocaleString() : '-'}</span>
           </div>
-          <div className={styles.metadataRow}>
-            <span>{t('mediaDetail.hash', 'Hash')}</span>
-            <span className={styles.metadataMono}>{item.hash}</span>
-          </div>
-          {item.deletedAt && (
-            <div className={styles.metadataRow}>
-              <span>{t('mediaDetail.deletedAt', '删除时间')}</span>
-              <span>{new Date(item.deletedAt).toLocaleString()}</span>
-            </div>
-          )}
-          {item.sourceUrl && (
-            <div className={styles.metadataRow}>
-              <span>{t('mediaDetail.source', '来源')}</span>
-              <a
-                className={styles.metadataLink}
-                href={item.sourceUrl}
-                target="_blank"
-                rel="noreferrer"
-                title={item.sourceUrl}
-              >
-                {item.sourceUrl}
-              </a>
-            </div>
-          )}
           {tags.length > 0 && (
             <div className={styles.metadataRow}>
               <span>{t('mediaDetail.tags', '标签')}</span>
@@ -264,17 +270,46 @@ const MediaDetail = memo(function MediaDetail({
               </span>
             </div>
           )}
-          {item.model_used && (
-            <div className={styles.metadataRow}>
-              <span>{t('mediaDetail.modelUsed', '模型')}</span>
-              <span>{item.model_used}</span>
-            </div>
-          )}
-          {typeof item.confidence === 'number' && item.confidence > 0 && (
-            <div className={styles.metadataRow}>
-              <span>{t('mediaDetail.confidence', '置信度')}</span>
-              <span>{Math.round(item.confidence * 100)}%</span>
-            </div>
+
+          {detailsOpen && (
+            <>
+              <div className={styles.metadataRow}>
+                <span>{t('mediaDetail.hash', 'Hash')}</span>
+                <span className={styles.metadataMono}>{item.hash}</span>
+              </div>
+              {item.deletedAt && (
+                <div className={styles.metadataRow}>
+                  <span>{t('mediaDetail.deletedAt', '删除时间')}</span>
+                  <span>{new Date(item.deletedAt).toLocaleString()}</span>
+                </div>
+              )}
+              {item.sourceUrl && (
+                <div className={styles.metadataRow}>
+                  <span>{t('mediaDetail.source', '来源')}</span>
+                  <a
+                    className={styles.metadataLink}
+                    href={item.sourceUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={item.sourceUrl}
+                  >
+                    {item.sourceUrl}
+                  </a>
+                </div>
+              )}
+              {item.model_used && (
+                <div className={styles.metadataRow}>
+                  <span>{t('mediaDetail.modelUsed', '模型')}</span>
+                  <span>{item.model_used}</span>
+                </div>
+              )}
+              {typeof item.confidence === 'number' && item.confidence > 0 && (
+                <div className={styles.metadataRow}>
+                  <span>{t('mediaDetail.confidence', '置信度')}</span>
+                  <span>{Math.round(item.confidence * 100)}%</span>
+                </div>
+              )}
+            </>
           )}
         </div>
 
@@ -321,35 +356,23 @@ const MediaDetail = memo(function MediaDetail({
               ⬇️
             </button>
           )}
-          {mode !== 'trash' && onRefreshTask && (
-            <>
-              <button
-                type="button"
-                className={styles.refreshButton}
-                title="重新分类"
-                onClick={() => onRefreshTask('classify', item.hash)}
-              >
-                🏷️
-              </button>
-              <button
-                type="button"
-                className={styles.refreshButton}
-                title="重新命名"
-                onClick={() => onRefreshTask('rename', item.hash)}
-              >
-                ✏️
-              </button>
-            </>
-          )}
-          {mode === 'trash' && onRestore && (
-            <button
-              type="button"
-              className={styles.refreshButton}
-              title={t('trash.restore', '恢复')}
-              onClick={() => onRestore(item.hash)}
+          {secondaryActions.length > 0 && (
+            <Dropdown
+              trigger={['click']}
+              menu={{
+                items: secondaryActions,
+                onClick: ({ key }) => handleSecondaryAction(key),
+              }}
             >
-              ♻️
-            </button>
+              <button
+                type="button"
+                className={styles.refreshButton}
+                title="更多操作"
+                aria-label="更多操作"
+              >
+                …
+              </button>
+            </Dropdown>
           )}
           {(onDelete || onDeleteRequest || (mode === 'trash' && onPurgeRequest)) && (
             <button

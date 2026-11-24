@@ -37,7 +37,7 @@ Extension 只保留浏览器专属能力与界面，不再包含业务调度或 
 #### Side Panel / Options / Offscreen (UI Layer)
 
 - **Side Panel（捕获驾驶舱）**: 当前标签页身份、单会话捕获控制、抓取本页（一次性页面扫描/预览/批量保存）、会话指标、实时捕获流、可展开事件日志、会话总结。
-- **Options（控制台）**: `概览 / 媒体库 / 标签 / 任务 / 设置` 五个 Tab；全局媒体库从 Side Panel 迁移到 Options，配置和标签治理在此分组。
+- **Options（控制台）**: `概览 / 媒体库 / 标签 / 任务 / 设置` 五个 Tab；全局媒体库从 Side Panel 迁移到 Options，回收站作为媒体库内的视图存在，配置和标签治理在此分组。
 - **Offscreen**: 视频下载执行上下文。
 - **技术**: React 18, TypeScript, Ant Design (Options), CSS Modules, 扩展 offscreen document
 - **主要功能**:

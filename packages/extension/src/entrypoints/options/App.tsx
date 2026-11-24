@@ -5,6 +5,7 @@ import {
   Button,
   Card,
   Col,
+  Collapse,
   ConfigProvider,
   Dropdown,
   Form,
@@ -28,7 +29,6 @@ import {
 } from 'antd';
 import {
   DashboardOutlined,
-  DeleteOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   PictureOutlined,
@@ -53,9 +53,14 @@ import { useTaskQueue, type AiTaskType } from './hooks/useTaskQueue';
 import TaskConsole from './components/TaskConsole';
 import OverviewTab from './components/OverviewTab';
 import MediaLibrary from './components/MediaLibrary';
-import TrashPage from './components/TrashPage';
 import MediaArchiveCard from './components/MediaArchiveCard';
-import { consoleTabHash, isConsoleTab, readConsoleTabFromHash, type ConsoleTab } from './tabs';
+import {
+  consoleTabHash,
+  isConsoleTab,
+  readConsoleRouteFromHash,
+  type ConsoleRoute,
+  type LibraryView,
+} from './tabs';
 import { useTheme } from '../media-browser/hooks/useTheme';
 
 const { Content } = Layout;
@@ -66,7 +71,6 @@ const NAV_ITEMS: MenuProps['items'] = [
   { key: 'library', icon: <PictureOutlined />, label: '媒体库' },
   { key: 'tags', icon: <TagsOutlined />, label: '标签' },
   { key: 'tasks', icon: <ThunderboltOutlined />, label: '任务' },
-  { key: 'trash', icon: <DeleteOutlined />, label: '回收站' },
   { key: 'settings', icon: <SettingOutlined />, label: '设置' },
 ];
 
@@ -74,6 +78,16 @@ const LANGUAGE_OPTIONS = [
   { value: 'zh-CN', label: '中文' },
   { value: 'en-US', label: 'English' },
 ];
+
+const LIBRARY_VIEW_STORAGE_KEY = 'media-library-view-v1';
+
+function readStoredLibraryView(): LibraryView {
+  try {
+    return sessionStorage.getItem(LIBRARY_VIEW_STORAGE_KEY) === 'trash' ? 'trash' : 'active';
+  } catch {
+    return 'active';
+  }
+}
 
 const AI_TASK_LABELS: Record<AiTaskType, string> = {
   classify: 'AI 分类',
@@ -581,28 +595,52 @@ function App() {
     }
   };
 
-  const readTabFromHash = useCallback(
-    (): ConsoleTab => readConsoleTabFromHash(window.location.hash),
+  const readRouteFromHash = useCallback(
+    (): ConsoleRoute => readConsoleRouteFromHash(window.location.hash),
     []
   );
 
-  const [activeTab, setActiveTab] = useState<ConsoleTab>(() => readTabFromHash());
+  const [route, setRoute] = useState<ConsoleRoute>(() => readRouteFromHash());
   const [navCollapsed, setNavCollapsed] = useState(true);
+  const activeTab = route.tab;
 
   useEffect(() => {
-    const handleHashChange = () => setActiveTab(readTabFromHash());
+    const handleHashChange = () => setRoute(readRouteFromHash());
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
-  }, [readTabFromHash]);
+  }, [readRouteFromHash]);
 
-  const handleTabChange = (key: string) => {
-    const next = isConsoleTab(key) ? key : 'overview';
-    setActiveTab(next);
-    const hash = consoleTabHash(next);
+  const applyRoute = useCallback((next: ConsoleRoute) => {
+    setRoute(next);
+    const hash = consoleTabHash(next.tab, next.view);
     if (window.location.hash !== hash) {
       window.history.replaceState(null, '', hash);
     }
+  }, []);
+
+  useEffect(() => {
+    if (route.tab !== 'library') return;
+    try {
+      sessionStorage.setItem(LIBRARY_VIEW_STORAGE_KEY, route.view);
+    } catch {
+      // Session storage is optional; the hash still carries the view.
+    }
+  }, [route.tab, route.view]);
+
+  const handleTabChange = (key: string) => {
+    const nextTab = isConsoleTab(key) ? key : 'overview';
+    applyRoute({
+      tab: nextTab,
+      view: nextTab === 'library' ? readStoredLibraryView() : 'active',
+    });
   };
+
+  const handleLibraryViewChange = useCallback(
+    (view: LibraryView) => {
+      applyRoute({ tab: 'library', view });
+    },
+    [applyRoute]
+  );
 
   return (
     <ConfigProvider
@@ -667,7 +705,7 @@ function App() {
               {
                 key: 'library',
                 label: '媒体库',
-                children: <MediaLibrary />,
+                children: <MediaLibrary view={route.view} onViewChange={handleLibraryViewChange} />,
               },
               {
                 key: 'tags',
@@ -813,173 +851,11 @@ function App() {
                 ),
               },
               {
-                key: 'trash',
-                label: '回收站',
-                children: <TrashPage />,
-              },
-              {
                 key: 'settings',
                 label: '设置',
                 children: (
                   <Space direction="vertical" size="large" className="full-width">
-                    <Card
-                      className="options-card"
-                      title="服务状态"
-                      extra={<Button onClick={refreshAll}>全部刷新</Button>}
-                    >
-                      <Row gutter={[16, 16]}>
-                        <Col xs={24} md={12}>
-                          <div className="status-row">
-                            <Space direction="vertical" size={2}>
-                              <Text strong>VFS WebSocket</Text>
-                              <Badge
-                                status={serviceStatus.vfsConnected ? 'success' : 'error'}
-                                text={serviceStatus.vfsConnected ? '已连接' : '未连接'}
-                              />
-                            </Space>
-                            <Button loading={saving.vfsReconnect} onClick={reconnectVfsService}>
-                              重连 VFS
-                            </Button>
-                          </div>
-                        </Col>
-                      </Row>
-                    </Card>
-
-                    <Card className="options-card" title="媒体索引维护">
-                      <div className="status-row">
-                        <Space direction="vertical" size={2}>
-                          <Text strong>原始媒体索引</Text>
-                          <Badge
-                            status={serviceStatus.vfsConnected ? 'success' : 'error'}
-                            text={serviceStatus.vfsConnected ? 'VFS 已连接' : 'VFS 未连接'}
-                          />
-                        </Space>
-                        <Space>
-                          <Popconfirm
-                            title="清空索引"
-                            description="确定要清空所有索引吗？物理文件不会被删除，你可以随后重新同步。"
-                            onConfirm={handleClearIndex}
-                            okText="清空"
-                            cancelText="取消"
-                          >
-                            <Button
-                              danger
-                              loading={saving.clearIndex}
-                              disabled={!serviceStatus.vfsConnected}
-                            >
-                              清空索引
-                            </Button>
-                          </Popconfirm>
-                          <Button
-                            type="primary"
-                            loading={saving.syncBlobsToIndex}
-                            disabled={!serviceStatus.vfsConnected}
-                            onClick={handleSyncMediaIndex}
-                          >
-                            同步原始媒体到索引
-                          </Button>
-                        </Space>
-                      </div>
-                    </Card>
-
-                    <Card
-                      className="options-card"
-                      title="存储与工作空间"
-                      extra={
-                        <Button
-                          loading={workspaceLoading}
-                          onClick={() => void handleRefreshWorkspace()}
-                        >
-                          刷新
-                        </Button>
-                      }
-                    >
-                      {!workspaceInfo ? (
-                        <Alert
-                          type="info"
-                          showIcon
-                          message="未连接后端"
-                          description="连接后端后可以查看和修改 VFS 工作区路径。"
-                        />
-                      ) : (
-                        <Form layout="vertical">
-                          <Form.Item label="当前路径">
-                            <Space.Compact className="full-width">
-                              <Input readOnly value={workspaceInfo.path} />
-                              <Button
-                                onClick={() => void handleCopyWorkspacePath(workspaceInfo.path)}
-                              >
-                                复制
-                              </Button>
-                            </Space.Compact>
-                          </Form.Item>
-
-                          {workspaceInfo.pendingPath && (
-                            <Alert
-                              type="warning"
-                              showIcon
-                              style={{ marginBottom: 16 }}
-                              message={`待生效路径：${workspaceInfo.pendingPath}`}
-                              description="重启后端进程后才会切换；当前仍写入上面的当前路径。"
-                            />
-                          )}
-
-                          <Form.Item
-                            label="路径来源"
-                            extra={`默认路径：${workspaceInfo.defaultPath}`}
-                          >
-                            <Text>{WORKSPACE_SOURCE_LABELS[workspaceInfo.source]}</Text>
-                          </Form.Item>
-
-                          <Form.Item
-                            label="更改工作区"
-                            extra={
-                              workspaceOverride
-                                ? '当前路径由启动参数或环境变量指定，修改 Options 不会生效。'
-                                : '输入绝对路径。保存后需要重启后端才会生效；旧工作区的数据不会被移动或删除。'
-                            }
-                          >
-                            <Space.Compact className="full-width">
-                              <Input
-                                value={workspaceDraft}
-                                disabled={workspaceOverride}
-                                placeholder="例如 /Volumes/SSD/vfs-workspace"
-                                onChange={(event) => setWorkspaceDraft(event.target.value)}
-                                onPressEnter={handleWorkspaceSave}
-                              />
-                              <Button
-                                type="primary"
-                                loading={saving.workspace}
-                                disabled={
-                                  workspaceOverride ||
-                                  !workspaceDraft.trim() ||
-                                  workspaceDraft.trim() === workspaceInfo.path
-                                }
-                                onClick={handleWorkspaceSave}
-                              >
-                                保存
-                              </Button>
-                            </Space.Compact>
-                          </Form.Item>
-
-                          {workspaceOverride && (
-                            <Alert
-                              type="info"
-                              showIcon
-                              message="工作区路径由启动配置决定"
-                              description="请通过 --workspace 参数或 VFS_WORKSPACE 环境变量修改，然后重启后端。"
-                            />
-                          )}
-                        </Form>
-                      )}
-                    </Card>
-
                     <Card className="options-card" title="视频捕获">
-                      <Paragraph type="secondary" style={{ marginBottom: 16 }}>
-                        `re-download` 会识别直链视频后重新下载完整文件；`buffer-only`
-                        只保存浏览器已经完整缓冲的字节（多段 Range
-                        无空洞才算完整），不会二次下载，适合抖音等带签名或防盗链的站点。流媒体分片（MSE/blob）仍不支持。
-                      </Paragraph>
                       <Form layout="vertical">
                         <Form.Item label="启用视频捕获">
                           <Switch
@@ -1009,67 +885,6 @@ function App() {
                             }
                             onBlur={handleMaxVideoSizeSave}
                             onPressEnter={handleMaxVideoSizeSave}
-                          />
-                        </Form.Item>
-
-                        <Form.Item
-                          label="捕获格式"
-                          extra="仅这些 MIME 类型的视频会被识别为下载候选。"
-                        >
-                          <Select
-                            mode="multiple"
-                            value={config.enabledVideoTypes}
-                            options={VIDEO_TYPE_OPTIONS}
-                            loading={saving.videoCapture}
-                            onChange={handleVideoFormatsChange}
-                            placeholder="选择至少一种视频格式"
-                          />
-                        </Form.Item>
-
-                        <Form.Item
-                          label="默认捕获模式"
-                          extra="buffer-only 只接受已完整缓冲的内容，不补洞、不重试、不二次下载。"
-                        >
-                          <Select
-                            value={config.videoCaptureMode}
-                            loading={saving.videoCapture}
-                            onChange={handleVideoCaptureModeChange}
-                            options={[
-                              {
-                                value: 're-download',
-                                label: '重新下载（re-download）',
-                              },
-                              {
-                                value: 'buffer-only',
-                                label: '只收完整缓冲（buffer-only）',
-                              },
-                            ]}
-                          />
-                        </Form.Item>
-
-                        <Form.Item
-                          label="按站点覆盖"
-                          extra="每行 host=mode，例如 douyin.com=buffer-only。默认已包含抖音相关域名。"
-                        >
-                          <Input.TextArea
-                            rows={3}
-                            value={videoModeHostDraft}
-                            onChange={(event) => setVideoModeHostDraft(event.target.value)}
-                            onBlur={handleVideoModeHostSave}
-                            placeholder={'douyin.com=buffer-only\ndouyinvod.com=buffer-only'}
-                          />
-                        </Form.Item>
-
-                        <Form.Item
-                          label="补齐缺失区间"
-                          extra="默认开启。开启后会对缺失区间在页面上下文向同一媒体 URL 发起 Range 请求，可能产生额外网络请求；关闭时只抓取捕获期间实际观察到的字节。"
-                        >
-                          <Switch
-                            checked={config.videoAssemblyFillGaps === true}
-                            loading={saving.videoCapture}
-                            onChange={handleFillGapsToggle}
-                            checkedChildren="开启"
-                            unCheckedChildren="关闭"
                           />
                         </Form.Item>
                       </Form>
@@ -1214,6 +1029,268 @@ function App() {
                         />
                       </div>
                     </Card>
+
+                    <Card className="options-card" title="工作区">
+                      {!workspaceInfo ? (
+                        <Text type="secondary">未连接后端，无法读取工作区路径。</Text>
+                      ) : (
+                        <Space direction="vertical" size={4}>
+                          <Text type="secondary">当前路径</Text>
+                          <Text code>{workspaceInfo.path}</Text>
+                          <Text type="secondary" style={{ fontSize: 12 }}>
+                            修改路径请展开下方「高级与诊断」；保存后需要重启后端才会生效。
+                          </Text>
+                        </Space>
+                      )}
+                    </Card>
+
+                    <Collapse
+                      ghost
+                      items={[
+                        {
+                          key: 'advanced',
+                          label: '高级与诊断',
+                          children: (
+                            <Space direction="vertical" size="large" className="full-width">
+                              <Card
+                                className="options-card"
+                                title="服务状态"
+                                extra={<Button onClick={refreshAll}>全部刷新</Button>}
+                              >
+                                <Row gutter={[16, 16]}>
+                                  <Col xs={24} md={12}>
+                                    <div className="status-row">
+                                      <Space direction="vertical" size={2}>
+                                        <Text strong>VFS WebSocket</Text>
+                                        <Badge
+                                          status={serviceStatus.vfsConnected ? 'success' : 'error'}
+                                          text={serviceStatus.vfsConnected ? '已连接' : '未连接'}
+                                        />
+                                      </Space>
+                                      <Button
+                                        loading={saving.vfsReconnect}
+                                        onClick={reconnectVfsService}
+                                      >
+                                        重连 VFS
+                                      </Button>
+                                    </div>
+                                  </Col>
+                                </Row>
+                              </Card>
+
+                              <Card className="options-card" title="媒体索引维护">
+                                <div className="status-row">
+                                  <Space direction="vertical" size={2}>
+                                    <Text strong>原始媒体索引</Text>
+                                    <Badge
+                                      status={serviceStatus.vfsConnected ? 'success' : 'error'}
+                                      text={
+                                        serviceStatus.vfsConnected ? 'VFS 已连接' : 'VFS 未连接'
+                                      }
+                                    />
+                                  </Space>
+                                  <Space>
+                                    <Popconfirm
+                                      title="清空索引"
+                                      description="确定要清空所有索引吗？物理文件不会被删除，你可以随后重新同步。"
+                                      onConfirm={handleClearIndex}
+                                      okText="清空"
+                                      cancelText="取消"
+                                    >
+                                      <Button
+                                        danger
+                                        loading={saving.clearIndex}
+                                        disabled={!serviceStatus.vfsConnected}
+                                      >
+                                        清空索引
+                                      </Button>
+                                    </Popconfirm>
+                                    <Button
+                                      type="primary"
+                                      loading={saving.syncBlobsToIndex}
+                                      disabled={!serviceStatus.vfsConnected}
+                                      onClick={handleSyncMediaIndex}
+                                    >
+                                      同步原始媒体到索引
+                                    </Button>
+                                  </Space>
+                                </div>
+                              </Card>
+
+                              <Card
+                                className="options-card"
+                                title="存储与工作空间"
+                                extra={
+                                  <Button
+                                    loading={workspaceLoading}
+                                    onClick={() => void handleRefreshWorkspace()}
+                                  >
+                                    刷新
+                                  </Button>
+                                }
+                              >
+                                {!workspaceInfo ? (
+                                  <Alert
+                                    type="info"
+                                    showIcon
+                                    message="未连接后端"
+                                    description="连接后端后可以查看和修改 VFS 工作区路径。"
+                                  />
+                                ) : (
+                                  <Form layout="vertical">
+                                    <Form.Item label="当前路径">
+                                      <Space.Compact className="full-width">
+                                        <Input readOnly value={workspaceInfo.path} />
+                                        <Button
+                                          onClick={() =>
+                                            void handleCopyWorkspacePath(workspaceInfo.path)
+                                          }
+                                        >
+                                          复制
+                                        </Button>
+                                      </Space.Compact>
+                                    </Form.Item>
+
+                                    {workspaceInfo.pendingPath && (
+                                      <Alert
+                                        type="warning"
+                                        showIcon
+                                        style={{ marginBottom: 16 }}
+                                        message={`待生效路径：${workspaceInfo.pendingPath}`}
+                                        description="重启后端进程后才会切换；当前仍写入上面的当前路径。"
+                                      />
+                                    )}
+
+                                    <Form.Item
+                                      label="路径来源"
+                                      extra={`默认路径：${workspaceInfo.defaultPath}`}
+                                    >
+                                      <Text>{WORKSPACE_SOURCE_LABELS[workspaceInfo.source]}</Text>
+                                    </Form.Item>
+
+                                    <Form.Item
+                                      label="更改工作区"
+                                      extra={
+                                        workspaceOverride
+                                          ? '当前路径由启动参数或环境变量指定，修改 Options 不会生效。'
+                                          : '输入绝对路径。保存后需要重启后端才会生效；旧工作区的数据不会被移动或删除。'
+                                      }
+                                    >
+                                      <Space.Compact className="full-width">
+                                        <Input
+                                          value={workspaceDraft}
+                                          disabled={workspaceOverride}
+                                          placeholder="例如 /Volumes/SSD/vfs-workspace"
+                                          onChange={(event) =>
+                                            setWorkspaceDraft(event.target.value)
+                                          }
+                                          onPressEnter={handleWorkspaceSave}
+                                        />
+                                        <Button
+                                          type="primary"
+                                          loading={saving.workspace}
+                                          disabled={
+                                            workspaceOverride ||
+                                            !workspaceDraft.trim() ||
+                                            workspaceDraft.trim() === workspaceInfo.path
+                                          }
+                                          onClick={handleWorkspaceSave}
+                                        >
+                                          保存
+                                        </Button>
+                                      </Space.Compact>
+                                    </Form.Item>
+
+                                    {workspaceOverride && (
+                                      <Alert
+                                        type="info"
+                                        showIcon
+                                        message="工作区路径由启动配置决定"
+                                        description="请通过 --workspace 参数或 VFS_WORKSPACE 环境变量修改，然后重启后端。"
+                                      />
+                                    )}
+                                  </Form>
+                                )}
+                              </Card>
+
+                              <Card className="options-card" title="视频捕获（高级）">
+                                <Paragraph type="secondary" style={{ marginBottom: 16 }}>
+                                  `re-download` 会识别直链视频后重新下载完整文件；`buffer-only`
+                                  只保存浏览器已经完整缓冲的字节（多段 Range
+                                  无空洞才算完整），不会二次下载，适合抖音等带签名或防盗链的站点。流媒体分片（MSE/blob）仍不支持。
+                                </Paragraph>
+                                <Form layout="vertical">
+                                  <Form.Item
+                                    label="捕获格式"
+                                    extra="仅这些 MIME 类型的视频会被识别为下载候选。"
+                                  >
+                                    <Select
+                                      mode="multiple"
+                                      value={config.enabledVideoTypes}
+                                      options={VIDEO_TYPE_OPTIONS}
+                                      loading={saving.videoCapture}
+                                      onChange={handleVideoFormatsChange}
+                                      placeholder="选择至少一种视频格式"
+                                    />
+                                  </Form.Item>
+
+                                  <Form.Item
+                                    label="默认捕获模式"
+                                    extra="buffer-only 只接受已完整缓冲的内容，不补洞、不重试、不二次下载。"
+                                  >
+                                    <Select
+                                      value={config.videoCaptureMode}
+                                      loading={saving.videoCapture}
+                                      onChange={handleVideoCaptureModeChange}
+                                      options={[
+                                        {
+                                          value: 're-download',
+                                          label: '重新下载（re-download）',
+                                        },
+                                        {
+                                          value: 'buffer-only',
+                                          label: '只收完整缓冲（buffer-only）',
+                                        },
+                                      ]}
+                                    />
+                                  </Form.Item>
+
+                                  <Form.Item
+                                    label="按站点覆盖"
+                                    extra="每行 host=mode，例如 douyin.com=buffer-only。默认已包含抖音相关域名。"
+                                  >
+                                    <Input.TextArea
+                                      rows={3}
+                                      value={videoModeHostDraft}
+                                      onChange={(event) =>
+                                        setVideoModeHostDraft(event.target.value)
+                                      }
+                                      onBlur={handleVideoModeHostSave}
+                                      placeholder={
+                                        'douyin.com=buffer-only\ndouyinvod.com=buffer-only'
+                                      }
+                                    />
+                                  </Form.Item>
+
+                                  <Form.Item
+                                    label="补齐缺失区间"
+                                    extra="默认开启。开启后会对缺失区间在页面上下文向同一媒体 URL 发起 Range 请求，可能产生额外网络请求；关闭时只抓取捕获期间实际观察到的字节。"
+                                  >
+                                    <Switch
+                                      checked={config.videoAssemblyFillGaps === true}
+                                      loading={saving.videoCapture}
+                                      onChange={handleFillGapsToggle}
+                                      checkedChildren="开启"
+                                      unCheckedChildren="关闭"
+                                    />
+                                  </Form.Item>
+                                </Form>
+                              </Card>
+                            </Space>
+                          ),
+                        },
+                      ]}
+                    />
                   </Space>
                 ),
               },

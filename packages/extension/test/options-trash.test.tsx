@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
 import zh from '../src/entrypoints/media-browser/locales/zh.json';
-import TrashPage from '../src/entrypoints/options/components/TrashPage';
+import MediaLibrary from '../src/entrypoints/options/components/MediaLibrary';
 
 vi.mock('@virtuoso.dev/masonry', () => ({
   VirtuosoMasonry: ({
@@ -65,6 +65,7 @@ beforeAll(async () => {
 let sendMessage: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
+  sessionStorage.clear();
   sendMessage = vi.fn(async (message: { type?: string }) => {
     switch (message.type) {
       case 'listFiles':
@@ -86,10 +87,14 @@ beforeEach(() => {
         };
       case 'getStats':
         return { success: true, data: { trashFiles: 1, trashSize: 2048 } };
+      case 'listTags':
+        return { success: true, data: [] };
+      case 'getSourceDomains':
+        return { success: true, data: [] };
       case 'get-status':
         return { vfsConnected: true, ollamaAvailable: true };
       default:
-        return { success: true, count: 1 };
+        return { success: true };
     }
   });
 
@@ -120,15 +125,20 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe('Options TrashPage', () => {
+describe('Media library trash view', () => {
   it('loads only trashed media', async () => {
-    render(<TrashPage />);
+    render(<MediaLibrary view="trash" />);
 
     await waitFor(() => {
       expect(sendMessage).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'listFiles',
-          query: expect.objectContaining({ status: 'trashed', offset: 0 }),
+          query: expect.objectContaining({
+            status: 'trashed',
+            orderBy: 'deleted_at',
+            order: 'desc',
+            offset: 0,
+          }),
         })
       );
     });
@@ -138,11 +148,12 @@ describe('Options TrashPage', () => {
   });
 
   it('restores a file from the detail view', async () => {
-    render(<TrashPage />);
+    render(<MediaLibrary view="trash" />);
     await screen.findByTestId('masonry');
 
     fireEvent.click(screen.getByLabelText('打开媒体'));
-    fireEvent.click(await screen.findByTitle('恢复'));
+    fireEvent.click(await screen.findByLabelText('更多操作'));
+    fireEvent.click(await screen.findByText('恢复'));
 
     await waitFor(() => {
       expect(sendMessage).toHaveBeenCalledWith({ type: 'restoreFile', hash: 'trash-one' });
@@ -150,10 +161,49 @@ describe('Options TrashPage', () => {
   });
 
   it('offers restore-all and empty-trash controls', async () => {
-    render(<TrashPage />);
+    render(<MediaLibrary view="trash" />);
     await screen.findByTestId('masonry');
 
     expect(screen.getByRole('button', { name: '恢复全部' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '清空回收站' })).toBeTruthy();
+    expect(screen.queryByText('开始捕获')).toBeNull();
+  });
+
+  it('searches trashed media with the unified query', async () => {
+    render(<MediaLibrary view="trash" />);
+    await screen.findByTestId('masonry');
+
+    fireEvent.change(screen.getByPlaceholderText('搜索文件名、标签、站点、备注…'), {
+      target: { value: 'beach' },
+    });
+
+    await waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'listFiles',
+          query: expect.objectContaining({ status: 'trashed', terms: ['beach'] }),
+        })
+      );
+    });
+  });
+
+  it('shows an empty state when the trash is empty', async () => {
+    sendMessage.mockImplementation(async (message: { type?: string }) => {
+      if (message.type === 'listFiles') {
+        return { success: true, data: { items: [], total: 0, hasMore: false } };
+      }
+      if (message.type === 'getStats') {
+        return { success: true, data: { trashFiles: 0, trashSize: 0 } };
+      }
+      if (message.type === 'get-status') {
+        return { vfsConnected: true, ollamaAvailable: true };
+      }
+      return { success: true };
+    });
+
+    render(<MediaLibrary view="trash" />);
+    expect(await screen.findByText('回收站是空的')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '恢复全部' })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('button', { name: '清空回收站' })).toHaveProperty('disabled', true);
   });
 });

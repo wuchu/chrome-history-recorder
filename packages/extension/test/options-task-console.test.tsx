@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import TaskConsole from '../src/entrypoints/options/components/TaskConsole';
 import type { TaskActionKey } from '../src/entrypoints/options/hooks/useTaskQueue';
 import type { QueueStatus } from '../src/shared/extension-runtime';
@@ -109,7 +109,7 @@ describe('TaskConsole per-task controls', () => {
     expect(callbacks.onStart).toHaveBeenCalledWith('rename');
   });
 
-  it('updates concurrency and maintenance actions per type', () => {
+  it('updates concurrency and maintenance actions per type', async () => {
     const callbacks = renderConsole();
 
     fireEvent.change(screen.getByLabelText('AI 分类最大并发数'), { target: { value: '3' } });
@@ -118,6 +118,12 @@ describe('TaskConsole per-task controls', () => {
     fireEvent.click(screen.getAllByRole('button', { name: /重试失败任务/ })[0]);
     expect(callbacks.onRetryFailed).toHaveBeenCalledWith('classify');
 
-    expect(screen.getAllByRole('textbox').length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByPlaceholderText('{{vocabulary}}')).toBeNull();
+    for (const disclosure of screen.getAllByText('高级：提示词模板')) {
+      fireEvent.click(disclosure);
+    }
+    await waitFor(() => {
+      expect(screen.getAllByRole('textbox').length).toBeGreaterThanOrEqual(2);
+    });
   });
 });

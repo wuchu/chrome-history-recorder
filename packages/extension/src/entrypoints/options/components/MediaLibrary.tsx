@@ -14,6 +14,7 @@ import {
   Button,
   Input,
   Modal,
+  Segmented,
   Select,
   Space,
   Spin,
@@ -24,22 +25,14 @@ import {
 } from 'antd';
 import {
   getSourceDomains,
-  getTagCounts,
   listTags,
   reconnectVFS,
   refreshTask,
   setFileStarred,
   type SourceDomainCount,
-  type TagCounts,
   type VFSTagRecord,
 } from '../../../shared/extension-runtime';
-import { getVisibleTabsFromVocabulary } from '../../../shared/tag-utils';
-import {
-  MediaDetail,
-  ScrollableTabBar,
-  VirtualMasonryGrid,
-  type Tab,
-} from '../../media-browser/components';
+import { MediaDetail, VirtualMasonryGrid } from '../../media-browser/components';
 import {
   useBackgroundMessaging,
   useCombinedMedia,
@@ -63,7 +56,6 @@ import {
   loadRecentSearches,
   parseMediaQuery,
   removeMediaSearchChip,
-  replaceMediaQueryTagTokens,
   saveRecentSearch,
   type MediaSearchChip,
 } from '../media-search-query';
@@ -74,6 +66,7 @@ import {
   type MediaSearchSuggestionKind,
 } from '../media-search-suggestions';
 import styles from './MediaLibrary.module.css';
+import type { LibraryView } from '../tabs';
 
 const { Text, Title } = Typography;
 
@@ -258,14 +251,32 @@ function suggestionLabel(suggestion: MediaSearchSuggestion): string {
   }
 }
 
+const TRASH_REFRESH_EVENTS = new Set([
+  'file:trashed',
+  'file:restored',
+  'file:purged',
+  'trash:emptied',
+  'trash:restored-all',
+]);
+
+interface MediaLibraryProps {
+  view?: LibraryView;
+  onViewChange?: (view: LibraryView) => void;
+}
+
+interface TrashStats {
+  files: number;
+  size: number;
+}
+
 /**
  * Global media library for the Options console.
  *
- * Reuses the historical-media and masonry components from the former Side
- * Panel media browser, but owns only browse/curate/export actions. Capture
- * control and the live session cockpit stay in the Side Panel.
+ * Owns browse, search, curation, export, and the trash view. Capture control
+ * and the live session cockpit stay in the Side Panel.
  */
-export function MediaLibrary() {
+export function MediaLibrary({ view = 'active', onViewChange }: MediaLibraryProps) {
+  const isTrash = view === 'trash';
   const [initialView] = useState(loadInitialView);
   const [queryDraft, setQueryDraft] = useState(initialView.rawQuery);
   const [rawQuery, setRawQuery] = useState(initialView.rawQuery);
@@ -279,14 +290,19 @@ export function MediaLibrary() {
   const inputRef = useRef<InputRef>(null);
 
   const [selectedItem, setSelectedItem] = useState<CombinedMediaItem | null>(null);
+  const [loadedView, setLoadedView] = useState<LibraryView>(view);
   const [tagVocabulary, setTagVocabulary] = useState<VFSTagRecord[]>([]);
-  const [tagCounts, setTagCounts] = useState<TagCounts>({ all: 0 });
   const [sourceDomains, setSourceDomains] = useState<SourceDomainCount[]>([]);
+  const [trashStats, setTrashStats] = useState<TrashStats>({ files: 0, size: 0 });
+  const [trashBusy, setTrashBusy] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedHashes, setSelectedHashes] = useState<Set<string>>(new Set());
   const [exporting, setExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
   const exportAbortRef = useRef<AbortController | null>(null);
+  const trashRefreshTimerRef = useRef<number | null>(null);
+  const refreshHistoricalRef = useRef<() => void>(() => {});
+  const refreshTrashStatsRef = useRef<() => void>(() => {});
   const theme = useTheme();
 
   const parsed = useMemo(() => parseMediaQuery(rawQuery), [rawQuery]);
@@ -351,8 +367,7 @@ export function MediaLibrary() {
 
   const loadTags = useCallback(async () => {
     try {
-      const [counts, tags] = await Promise.all([getTagCounts(), listTags({ limit: 500 })]);
-      setTagCounts(counts ?? { all: 0 });
+      const tags = await listTags({ limit: 500 });
       setTagVocabulary(Array.isArray(tags) ? tags : []);
     } catch (error) {
       console.error('[MediaLibrary] Failed to load tag vocabulary:', error);
@@ -361,22 +376,68 @@ export function MediaLibrary() {
 
   const handleBackgroundEvent = useCallback(
     (event: BackgroundEvent) => {
-      if (event.type !== 'tags:updated') return;
-      const data = event.data as { tags?: unknown; counts?: unknown } | null | undefined;
-      if (Array.isArray(data?.tags) && data?.counts && typeof data.counts === 'object') {
-        setTagVocabulary(data.tags as VFSTagRecord[]);
-        setTagCounts(data.counts as TagCounts);
+      if (event.type === 'tags:updated') {
+        const data = event.data as { tags?: unknown } | null | undefined;
+        if (Array.isArray(data?.tags)) {
+          setTagVocabulary(data.tags as VFSTagRecord[]);
+          return;
+        }
+        // Legacy payload-less event: fall back to one debounced fetch.
+        void loadTags();
         return;
       }
-      // Legacy payload-less event: fall back to one debounced fetch.
-      void loadTags();
+
+      if (!TRASH_REFRESH_EVENTS.has(event.type)) return;
+
+      if (!isTrash) {
+        refreshTrashStatsRef.current();
+        return;
+      }
+
+      if (trashRefreshTimerRef.current !== null) {
+        window.clearTimeout(trashRefreshTimerRef.current);
+      }
+      trashRefreshTimerRef.current = window.setTimeout(() => {
+        trashRefreshTimerRef.current = null;
+        refreshHistoricalRef.current();
+        refreshTrashStatsRef.current();
+      }, 200);
     },
-    [loadTags]
+    [isTrash, loadTags]
   );
 
   const { events, vfsConnected, sendMessage } = useBackgroundMessaging({
+    collectEvents: !isTrash,
     onEvent: handleBackgroundEvent,
   });
+
+  const loadTrashStats = useCallback(async () => {
+    try {
+      const response = (await sendMessage({ type: 'getStats' })) as
+        | { success?: boolean; data?: { trashSize?: number; trashFiles?: number } }
+        | { trashSize?: number; trashFiles?: number }
+        | null;
+      const data = response && 'data' in response && response.data ? response.data : response;
+      setTrashStats({
+        files: (data as { trashFiles?: number } | null)?.trashFiles ?? 0,
+        size: (data as { trashSize?: number } | null)?.trashSize ?? 0,
+      });
+    } catch (error) {
+      console.error('[MediaLibrary] Failed to load trash statistics:', error);
+    }
+  }, [sendMessage]);
+
+  useEffect(() => {
+    refreshTrashStatsRef.current = () => void loadTrashStats();
+  }, [loadTrashStats]);
+
+  useEffect(() => {
+    return () => {
+      if (trashRefreshTimerRef.current !== null) {
+        window.clearTimeout(trashRefreshTimerRef.current);
+      }
+    };
+  }, []);
 
   const { orderBy, order } = splitSort(sort);
   const historical = useHistoricalImages({
@@ -393,21 +454,33 @@ export function MediaLibrary() {
     capturedTo: parsed.capturedTo,
     starred: parsed.starred,
     classifyStatus: parsed.classifyStatus,
-    orderBy,
-    order,
+    status: isTrash ? 'trashed' : 'active',
+    orderBy: isTrash ? 'deleted_at' : orderBy,
+    order: isTrash ? 'desc' : order,
   });
+
+  useEffect(() => {
+    refreshHistoricalRef.current = historical.refresh;
+  }, [historical.refresh]);
 
   const hasAppliedQuery = parsed.chips.length > 0;
   const hasQueryText = rawQuery.trim().length > 0;
-  const liveEvents = useMemo(() => (hasAppliedQuery ? [] : events), [hasAppliedQuery, events]);
+  const liveEvents = useMemo(
+    () => (!isTrash && !hasAppliedQuery ? events : []),
+    [isTrash, hasAppliedQuery, events]
+  );
 
   const combinedMedia = useCombinedMedia({
     historicalItems: historical.items,
     backgroundEvents: liveEvents,
   });
 
-  const filteredMedia = combinedMedia.items;
-  const total = historical.total + (hasAppliedQuery ? 0 : combinedMedia.newItemCount);
+  const viewReady = loadedView === view;
+  const filteredMedia = viewReady ? combinedMedia.items : [];
+  const total = viewReady
+    ? historical.total + (!isTrash && !hasAppliedQuery ? combinedMedia.newItemCount : 0)
+    : 0;
+  const trashCount = isTrash ? total : trashStats.files;
 
   const loadSourceDomains = useCallback(async () => {
     try {
@@ -421,12 +494,20 @@ export function MediaLibrary() {
   useEffect(() => {
     void loadTags();
     void loadSourceDomains();
-  }, [loadTags, loadSourceDomains]);
+    void loadTrashStats();
+  }, [loadTags, loadSourceDomains, loadTrashStats]);
 
-  const filterSignature = `${rawQuery}\u0000${sort}`;
+  const filterSignature = `${view}\u0000${rawQuery}\u0000${sort}`;
   useEffect(() => {
     setSelectedHashes(new Set());
   }, [filterSignature]);
+
+  useEffect(() => {
+    setLoadedView(view);
+    setSelectionMode(false);
+    setSelectedHashes(new Set());
+    setSelectedItem(null);
+  }, [view]);
 
   const prevConnectedRef = useRef<boolean | null>(null);
   const refreshHistorical = historical.refresh;
@@ -442,7 +523,7 @@ export function MediaLibrary() {
 
   const lastEvent = events.length > 0 ? events[events.length - 1] : null;
   useEffect(() => {
-    if (!hasAppliedQuery || !lastEvent) return;
+    if (isTrash || !hasAppliedQuery || !lastEvent) return;
     if (
       ![
         'file:captured',
@@ -458,7 +539,7 @@ export function MediaLibrary() {
     }
     const timer = setTimeout(() => refreshHistorical(), 500);
     return () => clearTimeout(timer);
-  }, [hasAppliedQuery, lastEvent, refreshHistorical]);
+  }, [isTrash, hasAppliedQuery, lastEvent, refreshHistorical]);
 
   useEffect(() => {
     if (!selectedItem) return;
@@ -471,18 +552,6 @@ export function MediaLibrary() {
       setSelectedItem(next);
     }
   }, [filteredMedia, selectedItem]);
-
-  const visibleTabs = useMemo((): Tab[] => {
-    return getVisibleTabsFromVocabulary(tagVocabulary, tagCounts);
-  }, [tagVocabulary, tagCounts]);
-
-  const activeTagId = useMemo(() => {
-    if (parsed.tags.length === 1 && parsed.tagGroups.length === 0) {
-      const tag = parsed.tags[0];
-      return ['image', 'video', 'starred', 'uncategorized'].includes(tag) ? `system:${tag}` : tag;
-    }
-    return parsed.tags.length === 0 && parsed.tagGroups.length === 0 ? 'all' : '';
-  }, [parsed]);
 
   const handleRefreshTask = useCallback((taskType: 'classify' | 'rename', hash: string) => {
     refreshTask(taskType, hash)
@@ -502,12 +571,13 @@ export function MediaLibrary() {
         await sendMessage({ type: 'trashFile', hash });
         if (selectedItem?.hash === hash) setSelectedItem(null);
         void loadTags();
+        void loadTrashStats();
       } catch (error) {
         console.error('[MediaLibrary] Failed to move item to trash:', error);
         message.error('移入回收站失败');
       }
     },
-    [selectedItem, sendMessage, loadTags]
+    [selectedItem, sendMessage, loadTags, loadTrashStats]
   );
 
   const requestDelete = useCallback(
@@ -523,6 +593,126 @@ export function MediaLibrary() {
     },
     [handleDelete]
   );
+
+  const handleRestore = useCallback(
+    async (hash: string) => {
+      try {
+        const result = await sendMessage({ type: 'restoreFile', hash });
+        if (!rpcSucceeded(result)) {
+          message.error('恢复失败');
+          return;
+        }
+        if (selectedItem?.hash === hash) setSelectedItem(null);
+        refreshHistorical();
+        void loadTrashStats();
+        message.success('已恢复');
+      } catch (error) {
+        console.error('[MediaLibrary] Failed to restore item:', error);
+        message.error('恢复失败');
+      }
+    },
+    [selectedItem, sendMessage, refreshHistorical, loadTrashStats]
+  );
+
+  const handlePurge = useCallback(
+    async (hash: string) => {
+      setTrashBusy(true);
+      try {
+        const result = await sendMessage({ type: 'purgeFile', hash });
+        if (!rpcSucceeded(result)) {
+          message.error('永久删除失败');
+          return;
+        }
+        if (selectedItem?.hash === hash) setSelectedItem(null);
+        refreshHistorical();
+        void loadTrashStats();
+        message.success('已永久删除');
+      } catch (error) {
+        console.error('[MediaLibrary] Failed to purge item:', error);
+        message.error('永久删除失败');
+      } finally {
+        setTrashBusy(false);
+      }
+    },
+    [selectedItem, sendMessage, refreshHistorical, loadTrashStats]
+  );
+
+  const requestPurge = useCallback(
+    (hash: string) => {
+      Modal.confirm({
+        title: '永久删除',
+        content: '该媒体将从磁盘永久删除，归档副本也会被删除，且无法恢复。确定继续吗？',
+        okText: '永久删除',
+        okType: 'danger',
+        cancelText: '取消',
+        onOk: () => handlePurge(hash),
+      });
+    },
+    [handlePurge]
+  );
+
+  const handleRestoreAll = useCallback(() => {
+    if (total === 0) return;
+    Modal.confirm({
+      title: '恢复全部',
+      content: `将恢复回收站中的全部 ${total} 个媒体。确定继续吗？`,
+      okText: '恢复全部',
+      cancelText: '取消',
+      onOk: async () => {
+        setTrashBusy(true);
+        try {
+          const result = (await sendMessage({ type: 'restoreAll' })) as {
+            success?: boolean;
+            count?: number;
+          } | null;
+          if (!result?.success) {
+            message.error('恢复全部失败');
+            return;
+          }
+          refreshHistorical();
+          void loadTrashStats();
+          message.success(`已恢复 ${result.count ?? 0} 个媒体`);
+        } catch (error) {
+          console.error('[MediaLibrary] Failed to restore all:', error);
+          message.error('恢复全部失败');
+        } finally {
+          setTrashBusy(false);
+        }
+      },
+    });
+  }, [total, sendMessage, refreshHistorical, loadTrashStats]);
+
+  const handleEmptyTrash = useCallback(() => {
+    if (total === 0) return;
+    Modal.confirm({
+      title: '清空回收站',
+      content: `将永久删除回收站中的全部 ${total} 个媒体，归档副本也会被删除，且无法恢复。确定继续吗？`,
+      okText: '清空回收站',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: async () => {
+        setTrashBusy(true);
+        try {
+          const result = (await sendMessage({ type: 'emptyTrash' })) as {
+            success?: boolean;
+            count?: number;
+          } | null;
+          if (!result?.success) {
+            message.error('清空回收站失败');
+            return;
+          }
+          refreshHistorical();
+          void loadTrashStats();
+          message.success(`已永久删除 ${result.count ?? 0} 个媒体`);
+        } catch (error) {
+          console.error('[MediaLibrary] Failed to empty trash:', error);
+          message.error('清空回收站失败');
+        } finally {
+          setTrashBusy(false);
+        }
+      },
+    });
+  }, [total, sendMessage, refreshHistorical, loadTrashStats]);
 
   const toggleSelect = useCallback((hash: string) => {
     setSelectedHashes((prev) => {
@@ -558,6 +748,7 @@ export function MediaLibrary() {
         });
         setSelectedHashes(new Set());
         void loadTags();
+        void loadTrashStats();
         if (failed > 0) {
           message.warning(`${failed} 项移入回收站失败`);
         } else {
@@ -565,7 +756,7 @@ export function MediaLibrary() {
         }
       },
     });
-  }, [selectedItems, sendMessage, loadTags]);
+  }, [selectedItems, sendMessage, loadTags, loadTrashStats]);
 
   const handleBulkRequeue = useCallback(
     async (taskType: 'classify' | 'rename') => {
@@ -588,6 +779,71 @@ export function MediaLibrary() {
     },
     [selectedItems]
   );
+
+  const handleBulkRestore = useCallback(() => {
+    if (selectedItems.length === 0) return;
+    Modal.confirm({
+      title: '恢复选中的媒体',
+      content: `将恢复选中的 ${selectedItems.length} 个媒体。确定继续吗？`,
+      okText: '恢复',
+      cancelText: '取消',
+      onOk: async () => {
+        setTrashBusy(true);
+        let failed = 0;
+        try {
+          await mapLimit(selectedItems, 4, async (item) => {
+            try {
+              const result = await sendMessage({ type: 'restoreFile', hash: item.hash });
+              if (!rpcSucceeded(result)) failed += 1;
+            } catch (error) {
+              failed += 1;
+              console.error('[MediaLibrary] Batch restore failed:', item.hash, error);
+            }
+          });
+          setSelectedHashes(new Set());
+          refreshHistorical();
+          void loadTrashStats();
+          if (failed > 0) message.warning(`${failed} 个媒体恢复失败`);
+          else message.success(`已恢复 ${selectedItems.length} 个媒体`);
+        } finally {
+          setTrashBusy(false);
+        }
+      },
+    });
+  }, [selectedItems, sendMessage, refreshHistorical, loadTrashStats]);
+
+  const handleBulkPurge = useCallback(() => {
+    if (selectedItems.length === 0) return;
+    Modal.confirm({
+      title: '永久删除选中的媒体',
+      content: `将永久删除选中的 ${selectedItems.length} 个媒体及其归档副本，且无法恢复。确定继续吗？`,
+      okText: '永久删除',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: async () => {
+        setTrashBusy(true);
+        let failed = 0;
+        try {
+          await mapLimit(selectedItems, 4, async (item) => {
+            try {
+              const result = await sendMessage({ type: 'purgeFile', hash: item.hash });
+              if (!rpcSucceeded(result)) failed += 1;
+            } catch (error) {
+              failed += 1;
+              console.error('[MediaLibrary] Batch purge failed:', item.hash, error);
+            }
+          });
+          setSelectedHashes(new Set());
+          refreshHistorical();
+          void loadTrashStats();
+          if (failed > 0) message.warning(`${failed} 个媒体永久删除失败`);
+          else message.success(`已永久删除 ${selectedItems.length} 个媒体`);
+        } finally {
+          setTrashBusy(false);
+        }
+      },
+    });
+  }, [selectedItems, sendMessage, refreshHistorical, loadTrashStats]);
 
   const handleBulkExport = useCallback(async () => {
     if (selectedItems.length === 0) return;
@@ -654,7 +910,7 @@ export function MediaLibrary() {
     : -1;
 
   const themeClass = theme.themeClass(appStyles.lightTheme, appStyles.darkTheme);
-  const showInitialLoading = historical.loading && historical.items.length === 0;
+  const showInitialLoading = (!viewReady || historical.loading) && filteredMedia.length === 0;
 
   const applyQuery = useCallback((next: string, options: { saveRecent?: boolean } = {}) => {
     setQueryDraft(next);
@@ -712,20 +968,6 @@ export function MediaLibrary() {
       setRawQuery(next);
     },
     [rawQuery]
-  );
-
-  const handleTagTabChange = useCallback(
-    (tabId: string) => {
-      const tagName =
-        tabId === 'all'
-          ? undefined
-          : tabId.startsWith('system:')
-            ? tabId.slice('system:'.length)
-            : tabId;
-      const next = replaceMediaQueryTagTokens(rawQuery, tagName);
-      applyQuery(next);
-    },
-    [applyQuery, rawQuery]
   );
 
   const handleClearRecentSearches = useCallback(() => {
@@ -790,29 +1032,46 @@ export function MediaLibrary() {
       <div className={styles.header}>
         <div>
           <Title level={4} className={styles.title}>
-            媒体库
+            {isTrash ? '回收站' : '媒体库'}
           </Title>
           <Text type="secondary">
-            全局浏览、搜索和管理所有已捕获的图片与视频。捕获会话仍在侧边栏中进行。
+            {isTrash
+              ? '移入回收站的媒体会保留原始文件和归档副本，可随时恢复或永久删除。'
+              : '全局浏览、搜索和管理所有已捕获的图片与视频。捕获会话仍在侧边栏中进行。'}
           </Text>
         </div>
         <Space wrap>
+          <Segmented
+            value={view}
+            onChange={(value) => onViewChange?.(value as LibraryView)}
+            options={[
+              { label: '媒体库', value: 'active' },
+              {
+                label: trashCount > 0 ? `回收站 (${trashCount})` : '回收站',
+                value: 'trash',
+              },
+            ]}
+          />
           <Tag>共 {total} 个</Tag>
+          {isTrash && trashStats.size > 0 && <Tag>占用 {formatSize(trashStats.size)}</Tag>}
           <Tag color={vfsConnected ? 'green' : 'red'}>
             {vfsConnected ? 'VFS 已连接' : 'VFS 未连接'}
           </Tag>
-          <Button onClick={historical.refresh} loading={historical.loading}>
-            刷新
-          </Button>
-          <Button
-            disabled={!vfsConnected}
-            onClick={() => {
-              setSelectionMode((prev) => !prev);
-              setSelectedHashes(new Set());
-            }}
-          >
-            {selectionMode ? '退出选择' : '选择'}
-          </Button>
+          {isTrash && (
+            <>
+              <Button size="small" onClick={handleRestoreAll} disabled={trashBusy || total === 0}>
+                恢复全部
+              </Button>
+              <Button
+                size="small"
+                danger
+                onClick={handleEmptyTrash}
+                disabled={trashBusy || total === 0}
+              >
+                清空回收站
+              </Button>
+            </>
+          )}
         </Space>
       </div>
 
@@ -923,13 +1182,27 @@ export function MediaLibrary() {
             )}
           </div>
 
-          <Select
-            value={sort}
-            options={SORT_OPTIONS}
-            aria-label="排序"
-            style={{ width: 132, flex: '0 0 132px' }}
-            onChange={(value: SortValue) => setSort(value)}
-          />
+          {!isTrash && (
+            <Select
+              value={sort}
+              options={SORT_OPTIONS}
+              aria-label="排序"
+              style={{ width: 132, flex: '0 0 132px' }}
+              onChange={(value: SortValue) => setSort(value)}
+            />
+          )}
+          <Button onClick={historical.refresh} loading={historical.loading}>
+            刷新
+          </Button>
+          <Button
+            disabled={!vfsConnected}
+            onClick={() => {
+              setSelectionMode((prev) => !prev);
+              setSelectedHashes(new Set());
+            }}
+          >
+            {selectionMode ? '退出选择' : '选择'}
+          </Button>
         </div>
 
         {parsed.chips.length > 0 && (
@@ -967,36 +1240,63 @@ export function MediaLibrary() {
             <Button size="small" onClick={() => setSelectedHashes(new Set())}>
               清空
             </Button>
-            <Button size="small" danger disabled={!selectedHashes.size} onClick={handleBulkTrash}>
-              移入回收站
-            </Button>
-            <Button
-              size="small"
-              disabled={!selectedHashes.size}
-              onClick={() => void handleBulkRequeue('classify')}
-            >
-              重新分类
-            </Button>
-            <Button
-              size="small"
-              disabled={!selectedHashes.size}
-              onClick={() => void handleBulkRequeue('rename')}
-            >
-              重新命名
-            </Button>
-            <Button
-              size="small"
-              type="primary"
-              disabled={!selectedHashes.size || exporting}
-              loading={exporting}
-              onClick={() => void handleBulkExport()}
-            >
-              导出
-            </Button>
-            {exporting && (
-              <Button size="small" onClick={handleCancelExport}>
-                取消导出
-              </Button>
+            {isTrash ? (
+              <>
+                <Button
+                  size="small"
+                  disabled={!selectedHashes.size || trashBusy}
+                  onClick={handleBulkRestore}
+                >
+                  恢复选中
+                </Button>
+                <Button
+                  size="small"
+                  danger
+                  disabled={!selectedHashes.size || trashBusy}
+                  onClick={handleBulkPurge}
+                >
+                  永久删除选中
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  size="small"
+                  danger
+                  disabled={!selectedHashes.size}
+                  onClick={handleBulkTrash}
+                >
+                  移入回收站
+                </Button>
+                <Button
+                  size="small"
+                  disabled={!selectedHashes.size}
+                  onClick={() => void handleBulkRequeue('classify')}
+                >
+                  重新分类
+                </Button>
+                <Button
+                  size="small"
+                  disabled={!selectedHashes.size}
+                  onClick={() => void handleBulkRequeue('rename')}
+                >
+                  重新命名
+                </Button>
+                <Button
+                  size="small"
+                  type="primary"
+                  disabled={!selectedHashes.size || exporting}
+                  loading={exporting}
+                  onClick={() => void handleBulkExport()}
+                >
+                  导出
+                </Button>
+                {exporting && (
+                  <Button size="small" onClick={handleCancelExport}>
+                    取消导出
+                  </Button>
+                )}
+              </>
             )}
           </div>
         )}
@@ -1010,28 +1310,24 @@ export function MediaLibrary() {
           />
         )}
 
-        <ScrollableTabBar
-          tabs={visibleTabs}
-          activeTabId={activeTagId}
-          onTabChange={handleTagTabChange}
-        />
-
         {showInitialLoading ? (
           <div className={styles.loading}>
-            <Spin tip="加载媒体中…" />
+            <Spin tip={isTrash ? '加载回收站中…' : '加载媒体中…'} />
           </div>
         ) : (
           <VirtualMasonryGrid
             items={filteredMedia}
             onLoadMore={historical.loadMore}
             onItemClick={setSelectedItem}
-            onItemDeleteRequest={requestDelete}
+            onItemDeleteRequest={isTrash ? requestPurge : requestDelete}
             hasMore={historical.hasMore}
             loading={historical.loading}
             selectionMode={selectionMode}
             selectedHashes={selectedHashes}
             onToggleSelect={toggleSelect}
-            emptyMessage={hasQueryText ? '没有匹配的媒体' : '还没有捕获媒体'}
+            emptyMessage={
+              isTrash ? '回收站是空的' : hasQueryText ? '没有匹配的媒体' : '还没有捕获媒体'
+            }
             emptyAction={
               hasQueryText ? (
                 <div className={styles.noResults}>
@@ -1048,6 +1344,8 @@ export function MediaLibrary() {
                     ))}
                   </Space>
                 </div>
+              ) : isTrash ? (
+                <Text type="secondary">移入回收站的媒体会出现在这里。</Text>
               ) : (
                 <Text type="secondary">在侧边栏开始捕获后，媒体会出现在这里。</Text>
               )
@@ -1056,7 +1354,20 @@ export function MediaLibrary() {
         )}
       </div>
 
-      {selectedItem && (
+      {viewReady && selectedItem && isTrash && (
+        <MediaDetail
+          item={selectedItem}
+          mode="trash"
+          onClose={() => setSelectedItem(null)}
+          onRestore={handleRestore}
+          onPurgeRequest={requestPurge}
+          onNavigate={handleNavigate}
+          hasPrev={selectedIndex > 0}
+          hasNext={selectedIndex >= 0 && selectedIndex < filteredMedia.length - 1}
+        />
+      )}
+
+      {viewReady && selectedItem && !isTrash && (
         <MediaDetail
           item={selectedItem}
           onClose={() => setSelectedItem(null)}
@@ -1073,6 +1384,27 @@ export function MediaLibrary() {
       )}
     </div>
   );
+}
+
+function rpcSucceeded(response: unknown): boolean {
+  if (!response || typeof response !== 'object') return false;
+  const record = response as {
+    success?: boolean;
+    data?: { success?: boolean } | null;
+  };
+  return record.data?.success ?? record.success ?? false;
+}
+
+function formatSize(bytes: number): string {
+  if (!bytes) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
 }
 
 export default MediaLibrary;

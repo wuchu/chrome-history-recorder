@@ -1,7 +1,7 @@
 /**
  * Tag utilities
  */
-import type { TagDefinition, VFSTagRecord } from './extension-runtime';
+import type { TagDefinition } from './extension-runtime';
 
 /**
  * System tag definitions
@@ -110,51 +110,4 @@ export function combineTags(systemTags: string[], userTags: string[]): string[] 
  */
 export function isSystemTag(tagIdOrName: string): boolean {
   return SYSTEM_TAGS.some((t) => t.id === tagIdOrName || t.name === tagIdOrName);
-}
-
-/**
- * Maximum number of unpinned vocabulary tags shown as tabs.
- */
-const MAX_VOCAB_TABS = 12;
-
-/**
- * Build Side Panel tabs from the VFS tag vocabulary.
- *
- * System tabs are always present. Pinned vocabulary tags are always shown;
- * unpinned tags follow the top-usage rule, bounded by MAX_VOCAB_TABS.
- */
-export function getVisibleTabsFromVocabulary(
-  vocabulary: VFSTagRecord[],
-  tagCounts: Record<string, number>
-): (TagDefinition & { count: number })[] {
-  const tabs: (TagDefinition & { count: number })[] = [
-    { ...ALL_TAG, count: tagCounts['all'] || 0 },
-    ...SYSTEM_TAGS.map((tag) => ({ ...tag, count: tagCounts[tag.name] || 0 })),
-  ];
-
-  const systemNames = new Set(SYSTEM_TAGS.map((tag) => tag.name));
-  const countFor = (tag: VFSTagRecord) => tagCounts[tag.name] ?? tag.usage_count ?? 0;
-
-  const pinned = vocabulary.filter((tag) => tag.is_pinned === 1 && !systemNames.has(tag.name));
-  const topUsage = vocabulary
-    .filter((tag) => tag.is_pinned !== 1 && !systemNames.has(tag.name) && countFor(tag) > 0)
-    .sort((a, b) => countFor(b) - countFor(a))
-    .slice(0, MAX_VOCAB_TABS);
-
-  const seen = new Set<string>();
-  for (const tag of [...pinned, ...topUsage]) {
-    if (seen.has(tag.name)) continue;
-    seen.add(tag.name);
-    tabs.push({
-      id: tag.name,
-      name: tag.name,
-      label: `#${tag.label || tag.name}`,
-      isSystem: false,
-      sortOrder: 200 + tabs.length,
-      count: countFor(tag),
-    });
-  }
-
-  tabs.sort((a, b) => a.sortOrder - b.sortOrder);
-  return tabs;
 }

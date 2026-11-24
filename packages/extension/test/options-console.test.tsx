@@ -153,19 +153,22 @@ describe('MediaDetail metadata and actions', () => {
     confidence: 0.9,
   };
 
-  it('renders metadata including the source URL', () => {
+  it('renders primary metadata and expands secondary details', () => {
     render(<MediaDetail item={item} onClose={() => {}} />);
 
-    expect(screen.getByText('https://cdn.example.com/image.png')).toBeTruthy();
-    expect(screen.getAllByText('abc123').length).toBeGreaterThan(0);
     expect(screen.getByText('image/png')).toBeTruthy();
     expect(screen.getByText('2.0 KB')).toBeTruthy();
     expect(screen.getByText('#cat')).toBeTruthy();
     expect(screen.getByText('#image')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '详情' }));
+
+    expect(screen.getByText('https://cdn.example.com/image.png')).toBeTruthy();
+    expect(screen.getAllByText('abc123').length).toBeGreaterThan(0);
     expect(screen.getByText('llava:7b')).toBeTruthy();
   });
 
-  it('requests deletion and AI requeue from the toolbar', () => {
+  it('requests deletion and AI requeue from the toolbar', async () => {
     const onDeleteRequest = vi.fn();
     const onRefreshTask = vi.fn();
     render(
@@ -177,8 +180,10 @@ describe('MediaDetail metadata and actions', () => {
       />
     );
 
-    fireEvent.click(screen.getByTitle('重新分类'));
-    fireEvent.click(screen.getByTitle('重新命名'));
+    fireEvent.click(screen.getByLabelText('更多操作'));
+    fireEvent.click(await screen.findByText('重新分类'));
+    fireEvent.click(screen.getByLabelText('更多操作'));
+    fireEvent.click(await screen.findByText('重新命名'));
     fireEvent.click(screen.getByTitle('删除'));
 
     expect(onRefreshTask).toHaveBeenNthCalledWith(1, 'classify', 'abc123');
